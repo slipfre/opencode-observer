@@ -1,0 +1,808 @@
+import { afterEach, expect, mock, test } from "bun:test";
+import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { ExportResultCode } from "@opentelemetry/core";
+import {
+  BasicTracerProvider,
+  BatchSpanProcessor,
+  type ReadableSpan,
+  type SpanExporter,
+} from "@opentelemetry/sdk-trace-base";
+import type { InteractionStart, LlmStart, Observer, RunStart } from "../src/contract/observer.js";
+import { createObserver, type ObserverOptions } from "../src/telemetry/observer.js";
+import type { ModelInput, ModelMessage } from "../src/contract/messages.js";
+
+const observers: Observer[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    observers.splice(0).map((observer) => observer.shutdown().catch(() => undefined)),
+  );
+});
+
+function setup(
+  options: Partial<Omit<ObserverOptions, "provider" | "scope">> = {},
+  exporting?: SpanExporter["export"],
+) {
+  const spans: ReadableSpan[] = [];
+  const shutdown = mock(async () => {});
+  const exporter: SpanExporter = {
+    export(batch, callback) {
+      spans.push(...batch);
+
+      if (exporting) {
+        exporting(batch, callback);
+
+        return;
+      }
+
+      callback({ code: ExportResultCode.SUCCESS });
+    },
+    shutdown,
+  };
+  const provider = new BasicTracerProvider({
+    spanProcessors: [
+      new BatchSpanProcessor(exporter, { scheduledDelayMillis: 60_000, exportTimeoutMillis: 1000 }),
+    ],
+  });
+  const observer = createObserver({
+    provider,
+    scope: { name: "test" },
+    captureContent: true,
+    now: () => 3000,
+    ...options,
+  });
+  observers.push(observer);
+
+  return { observer, spans, shutdown };
+}
+
+function start(id = "u1", sessionID = "s1"): RunStart {
+  return { id, sessionID, startedAt: 1000, parent: undefined, parentSessionID: undefined };
+}
+
+function interaction(id = "u1", run = start()): InteractionStart {
+  return {
+    run: { sessionID: run.sessionID, id: run.id },
+    id,
+    startedAt: 1000,
+    input: "question",
+    agentName: "build",
+    agentType: undefined,
+    parentSessionID: undefined,
+  };
+}
+
+function llm(id = "a1", parent = interaction()): LlmStart {
+  return {
+    id,
+    interaction: { id: parent.id, run: parent.run },
+    startedAt: 1100,
+    providerID: "custom-google",
+    providerName: "gcp.gemini",
+    model: "gemini",
+    operation: "generate_content",
+    stream: true,
+    agentName: "build",
+    input: "question",
+    agentType: undefined,
+    parentSessionID: undefined,
+    compactionID: undefined,
+  };
+}
+
+test("structured LLM messages encode GenAI parts and take precedence over fallback text", async () => {
+  const h = setup();
+  const input: ModelInput = {
+    messages: [
+      {
+        role: "user",
+        parts: [
+          { type: "text", text: "full history" },
+          {
+            type: "media",
+            modality: "image",
+            mimeType: "image/png",
+            source: { type: "base64", data: "AQID" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        parts: [{ type: "tool-result", id: "read1", response: { content: "file contents" } }],
+      },
+    ],
+    systemInstructions: [{ type: "text", text: "system" }],
+  };
+  const output: ModelMessage[] = [
+    {
+      role: "assistant",
+      parts: [
+        { type: "reasoning", text: "plan" },
+        { type: "tool-call", id: "read2", name: "read", arguments: { path: "a.ts" } },
+        {
+          type: "media",
+          modality: "image",
+          source: { type: "uri", uri: "https://example.test/image.png" },
+        },
+      ],
+    },
+  ];
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+  h.observer.updateLlm({ ...llm(), input, output });
+  input.messages.length = 0;
+  output.length = 0;
+  h.observer.finishLlm({ ...llm(), endedAt: 2000, output: "fallback output" });
+  h.observer.updateLlm({ ...llm(), input: { messages: [] }, output: [] });
+  await h.observer.flush();
+
+  const attrs = h.spans[0]?.attributes;
+  expect(JSON.parse(String(attrs?.["gen_ai.input.messages"]))).toEqual([
+    {
+      role: "user",
+      parts: [
+        { type: "text", content: "full history" },
+        { type: "blob", modality: "image", mime_type: "image/png", content: "AQID" },
+      ],
+    },
+    {
+      role: "tool",
+      parts: [{ type: "tool_call_response", id: "read1", response: { content: "file contents" } }],
+    },
+  ]);
+  expect(JSON.parse(String(attrs?.["gen_ai.output.messages"]))).toEqual([
+    {
+      role: "assistant",
+      parts: [
+        { type: "reasoning", content: "plan" },
+        { type: "tool_call", id: "read2", name: "read", arguments: { path: "a.ts" } },
+        { type: "uri", modality: "image", uri: "https://example.test/image.png" },
+      ],
+    },
+  ]);
+  expect(attrs?.["gen_ai.system_instructions"]).toBe('[{"type":"text","content":"system"}]');
+  expect(JSON.stringify(attrs)).not.toContain("fallback output");
+});
+
+test("a new LLM input clears previous step instructions/output and a known empty response wins", async () => {
+  const h = setup();
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+  h.observer.updateLlm({
+    ...llm(),
+    input: { messages: [], systemInstructions: [{ type: "text", text: "old" }] },
+    output: [{ role: "assistant", parts: [{ type: "text", text: "old" }] }],
+  });
+  h.observer.updateLlm({
+    ...llm(),
+    input: { messages: [{ role: "user", parts: [{ type: "text", text: "retry" }] }] },
+  });
+  h.observer.updateLlm({ ...llm(), input: undefined, output: [] });
+  h.observer.finishLlm({ ...llm(), endedAt: 2000, output: "fallback" });
+  await h.observer.flush();
+
+  expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toContain("retry");
+  expect(h.spans[0]?.attributes["gen_ai.system_instructions"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBe("[]");
+  expect(JSON.stringify(h.spans[0]?.attributes)).not.toContain("old");
+});
+
+test("disabled content capture never reads structured LLM message payloads", async () => {
+  const h = setup({ captureContent: false });
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+  h.observer.updateLlm({
+    ...llm(),
+    get input(): ModelInput {
+      throw new Error("must not read body");
+    },
+  });
+  h.observer.finishLlm({ ...llm(), endedAt: 2000, output: "secret" });
+  await h.observer.flush();
+
+  expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["gen_ai.system_instructions"]).toBeUndefined();
+});
+
+test("contract calls create only run spans and deduplicate inputs, starts, ends and late updates", async () => {
+  const h = setup();
+
+  h.observer.startRun(start());
+  h.observer.startRun({ ...start(), startedAt: 1500 });
+  h.observer.updateRun({ ...start(), input: { id: "u1", text: "first" } });
+  h.observer.updateRun({ ...start(), input: { id: "u1", text: "duplicate" } });
+  h.observer.updateRun({ ...start(), input: { id: "u2", text: "steer" } });
+  await h.observer.flush();
+
+  expect(h.spans).toHaveLength(0);
+
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: "answer" });
+  h.observer.startRun(start());
+  h.observer.updateRun({ ...start(), input: { id: "u3", text: "late" } });
+  h.observer.finishRun({ ...start(), endedAt: 9000, output: "changed", error: { type: "late" } });
+  await h.observer.flush();
+
+  expect(h.spans).toHaveLength(1);
+  expect(h.spans[0]).toMatchObject({
+    name: "opencode.run",
+    kind: SpanKind.INTERNAL,
+    startTime: [1, 0],
+    endTime: [2, 0],
+    status: { code: SpanStatusCode.UNSET },
+  });
+  expect(h.spans[0]?.attributes).toMatchObject({
+    "session.id": "s1",
+    "gen_ai.conversation.id": "s1",
+    "gen_ai.operation.name": "invoke_workflow",
+    "opencode.run.id": "u1",
+    "gen_ai.input.messages":
+      '[{"role":"user","parts":[{"type":"text","content":"first"}]},{"role":"user","parts":[{"type":"text","content":"steer"}]}]',
+    "gen_ai.output.messages": '[{"role":"assistant","parts":[{"type":"text","content":"answer"}]}]',
+  });
+  expect(h.spans[0]?.attributes["opencode.session.parent_id"]).toBeUndefined();
+  expect(h.spans[0]?.parentSpanContext).toBeUndefined();
+  expect(h.spans[0]?.attributes["error.type"]).toBeUndefined();
+});
+
+test("run identity is scoped by session and unknown objects cannot create spans through updates", async () => {
+  const h = setup();
+
+  h.observer.updateRun({ ...start("missing"), input: { id: "missing", text: "ignored" } });
+  h.observer.finishRun({ ...start("missing"), endedAt: 2000, output: "ignored" });
+  h.observer.startRun(start("same", "s1"));
+  h.observer.startRun(start("same", "s2"));
+  h.observer.finishRun({ ...start("same", "s1"), endedAt: 2000, output: undefined });
+  h.observer.finishRun({ ...start("same", "s2"), endedAt: 2000, output: undefined });
+  await h.observer.flush();
+
+  expect(h.spans.map((span) => span.attributes["session.id"])).toEqual(["s1", "s2"]);
+  expect(new Set(h.spans.map((span) => span.spanContext().traceId)).size).toBe(2);
+});
+
+test("missing input suppresses partial content while known empty output is preserved", async () => {
+  const h = setup();
+
+  h.observer.startRun(start());
+  h.observer.updateRun({ ...start(), input: { id: "u1", text: "known" } });
+  h.observer.updateRun({ ...start(), input: { id: "u2", text: undefined } });
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: "" });
+  await h.observer.flush();
+
+  expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBe(
+    '[{"role":"assistant","parts":[{"type":"text","content":""}]}]',
+  );
+});
+
+test("implementation enforces content capture even when a caller supplies content", async () => {
+  const h = setup({
+    captureContent: false,
+    attributes: {
+      "gen_ai.input.messages": "leak",
+      "gen_ai.output.messages": "leak",
+      "opencode.session.parent_id": "fake",
+      "error.type": "fake",
+    },
+  });
+
+  h.observer.startRun(start());
+  h.observer.updateRun({ ...start(), input: { id: "u1", text: "secret" } });
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: "secret" });
+  await h.observer.flush();
+
+  expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["opencode.session.parent_id"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["error.type"]).toBeUndefined();
+});
+
+test("shutdown ends unfinished runs once and rejects all later recording", async () => {
+  const h = setup();
+
+  h.observer.startRun(start());
+  h.observer.updateRun({ ...start(), input: { id: "u1", text: "question" } });
+  const closing = h.observer.shutdown();
+
+  expect(h.observer.shutdown()).toBe(closing);
+
+  h.observer.startRun(start("ignored"));
+  h.observer.updateRun({ ...start(), input: { id: "u2", text: "late" } });
+  h.observer.finishRun({ ...start(), endedAt: 9000, output: "late" });
+  await closing;
+  await h.observer.flush();
+
+  expect(h.spans).toHaveLength(1);
+  expect(h.spans[0]).toMatchObject({
+    endTime: [3, 0],
+    status: { code: SpanStatusCode.ERROR, message: "plugin disposed before run completed" },
+  });
+  expect(h.spans[0]?.attributes["error.type"]).toBe("_OTHER");
+  expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toContain("question");
+  expect(h.shutdown).toHaveBeenCalledTimes(1);
+});
+
+test("shutdown waits for an in-flight flush without changing observed end times", async () => {
+  const exporting = Promise.withResolvers<Parameters<SpanExporter["export"]>[1]>();
+  const h = setup({}, (_batch, callback) => exporting.resolve(callback));
+
+  h.observer.startRun(start());
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
+  const flushing = h.observer.flush();
+  const complete = await exporting.promise;
+  const closing = h.observer.shutdown();
+
+  expect(h.shutdown).not.toHaveBeenCalled();
+  expect(h.spans[0]?.endTime).toEqual([2, 0]);
+
+  complete({ code: ExportResultCode.SUCCESS });
+  await Promise.all([flushing, closing]);
+
+  expect(h.shutdown).toHaveBeenCalledTimes(1);
+});
+
+test("failed export rejects flush but does not poison later flushes or shutdown", async () => {
+  const failure = new Error("collector unavailable");
+  const h = setup({}, (batch, callback) =>
+    callback(
+      batch[0]?.attributes["opencode.run.id"] === "u1"
+        ? { code: ExportResultCode.FAILED, error: failure }
+        : { code: ExportResultCode.SUCCESS },
+    ),
+  );
+
+  h.observer.startRun(start());
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
+
+  await expect(h.observer.flush()).rejects.toBeDefined();
+
+  h.observer.startRun(start("u2"));
+  h.observer.finishRun({ ...start("u2"), endedAt: 2500, output: undefined });
+  await h.observer.flush();
+  await h.observer.shutdown();
+
+  expect(h.spans.map((span) => span.attributes["opencode.run.id"])).toEqual(["u1", "u2"]);
+  expect(h.spans.map((span) => span.status.code)).toEqual([
+    SpanStatusCode.UNSET,
+    SpanStatusCode.UNSET,
+  ]);
+  expect(h.shutdown).toHaveBeenCalledTimes(1);
+});
+
+test("interaction spans use explicit run ancestry and keep completed and superseded output distinct", async () => {
+  const h = setup({ tracePrefix: "custom." });
+
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.finishInteraction({ ...interaction(), endedAt: 1500, status: "superseded" });
+  h.observer.startInteraction({
+    ...interaction("u2"),
+    startedAt: 1500,
+    input: "steer",
+    agentName: "review",
+  });
+  h.observer.finishInteraction({
+    ...interaction("u2"),
+    endedAt: 1800,
+    status: "completed",
+    output: "final",
+  });
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: "final" });
+  await h.observer.flush();
+
+  expect(h.spans.map((span) => span.name)).toEqual([
+    "custom.interaction",
+    "custom.interaction",
+    "custom.run",
+  ]);
+  const run = h.spans[2];
+
+  expect(h.spans.slice(0, 2).map((span) => span.parentSpanContext?.spanId)).toEqual([
+    run?.spanContext().spanId,
+    run?.spanContext().spanId,
+  ]);
+  expect(new Set(h.spans.map((span) => span.spanContext().traceId)).size).toBe(1);
+  expect(h.spans[0]).toMatchObject({
+    kind: SpanKind.INTERNAL,
+    startTime: [1, 0],
+    endTime: [1, 500_000_000],
+    status: { code: SpanStatusCode.UNSET },
+  });
+  expect(h.spans[0]?.attributes).toMatchObject({
+    "session.id": "s1",
+    "gen_ai.conversation.id": "s1",
+    "opencode.interaction.id": "u1",
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": "build",
+    "gen_ai.output.messages": "[]",
+  });
+  expect(h.spans[1]?.attributes).toMatchObject({
+    "gen_ai.agent.name": "review",
+    "gen_ai.input.messages": '[{"role":"user","parts":[{"type":"text","content":"steer"}]}]',
+    "gen_ai.output.messages": '[{"role":"assistant","parts":[{"type":"text","content":"final"}]}]',
+  });
+  expect(h.spans[1]?.endTime).toEqual([1, 800_000_000]);
+  expect(h.spans[1]?.attributes["opencode.agent.type"]).toBeUndefined();
+  expect(h.spans[1]?.attributes["opencode.session.parent_id"]).toBeUndefined();
+});
+
+test("interaction starts need a live exact parent and repeated starts or ends cannot rewrite spans", async () => {
+  const h = setup();
+
+  h.observer.startInteraction(interaction());
+  await h.observer.flush();
+
+  expect(h.spans).toHaveLength(0);
+
+  h.observer.startRun(start());
+  h.observer.startInteraction({ ...interaction(), userID: "alice" });
+  h.observer.startInteraction({ ...interaction(), userID: "bob", input: "replacement" });
+  h.observer.finishInteraction({
+    ...interaction(),
+    endedAt: 1500,
+    status: "completed",
+    output: "answer",
+  });
+  h.observer.startInteraction(interaction());
+  h.observer.finishInteraction({
+    ...interaction(),
+    endedAt: 9000,
+    status: "failed",
+    error: { type: "late" },
+  });
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: "answer" });
+  h.observer.startInteraction(interaction("after-run"));
+  await h.observer.flush();
+
+  expect(h.spans).toHaveLength(2);
+  expect(h.spans[0]?.attributes["user.id"]).toBe("alice");
+  expect(h.spans[0]?.attributes["error.type"]).toBeUndefined();
+  expect(h.spans[0]?.endTime).toEqual([1, 500_000_000]);
+});
+
+test.each([true, false])(
+  "interaction content distinguishes unknown, known empty and superseded with capture=%s",
+  async (captureContent) => {
+    const h = setup({
+      captureContent,
+      attributes: {
+        "gen_ai.input.messages": "leak",
+        "gen_ai.output.messages": "leak",
+        "gen_ai.agent.name": "fake",
+        "opencode.interaction.id": "fake",
+        "opencode.agent.type": "subagent",
+        "opencode.session.parent_id": "fake",
+      },
+    });
+
+    h.observer.startRun(start());
+    h.observer.startInteraction({ ...interaction("empty"), input: "" });
+    h.observer.finishInteraction({
+      ...interaction("empty"),
+      endedAt: 1500,
+      status: "completed",
+      output: "",
+    });
+    h.observer.startInteraction({ ...interaction("unknown"), input: undefined });
+    h.observer.finishInteraction({
+      ...interaction("unknown"),
+      endedAt: 1500,
+      status: "completed",
+      output: undefined,
+    });
+    h.observer.startInteraction(interaction("steer"));
+    h.observer.finishInteraction({ ...interaction("steer"), endedAt: 1500, status: "superseded" });
+    await h.observer.flush();
+
+    expect(h.spans).toHaveLength(3);
+    expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBe(
+      captureContent ? '[{"role":"assistant","parts":[{"type":"text","content":""}]}]' : undefined,
+    );
+    expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toBe(
+      captureContent ? '[{"role":"user","parts":[{"type":"text","content":""}]}]' : undefined,
+    );
+    expect(h.spans[1]?.attributes["gen_ai.input.messages"]).toBeUndefined();
+    expect(h.spans[1]?.attributes["gen_ai.output.messages"]).toBeUndefined();
+    expect(h.spans[2]?.attributes["gen_ai.output.messages"]).toBe(
+      captureContent ? "[]" : undefined,
+    );
+    expect(h.spans.map((span) => span.attributes["opencode.agent.type"])).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(h.spans[0]?.attributes["gen_ai.agent.name"]).toBe("build");
+    expect(h.spans[0]?.attributes["opencode.interaction.id"]).toBe("empty");
+  },
+);
+
+test("finishing a parent cleans only its unfinished interactions without changing the parent result", async () => {
+  const h = setup();
+
+  h.observer.startRun(start("u1", "s1"));
+  h.observer.startRun(start("u1", "s2"));
+  h.observer.startInteraction(interaction("u1", start("u1", "s1")));
+  h.observer.startInteraction(interaction("u1", start("u1", "s2")));
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
+  await h.observer.flush();
+
+  expect(h.spans.map((span) => [span.name, span.status.code])).toEqual([
+    ["opencode.interaction", SpanStatusCode.ERROR],
+    ["opencode.run", SpanStatusCode.UNSET],
+  ]);
+  expect(h.spans[0]?.status.message).toBe("run ended before interaction completed");
+  expect(h.spans.every((span) => span.attributes["session.id"] === "s1")).toBe(true);
+
+  h.observer.finishInteraction({
+    ...interaction("u1", start("u1", "s2")),
+    endedAt: 2100,
+    status: "completed",
+    output: "answer",
+  });
+  h.observer.finishRun({ ...start("u1", "s2"), endedAt: 2200, output: "answer" });
+  await h.observer.flush();
+
+  expect(h.spans[2]?.status.code).toBe(SpanStatusCode.UNSET);
+  expect(h.spans[2]?.parentSpanContext?.spanId).toBe(h.spans[3]?.spanContext().spanId);
+  expect(h.spans[0]?.spanContext().traceId).not.toBe(h.spans[2]?.spanContext().traceId);
+});
+
+test("shutdown ends interactions before runs exactly once and stops later child recording", async () => {
+  const h = setup();
+
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  const closing = h.observer.shutdown();
+
+  expect(h.observer.shutdown()).toBe(closing);
+
+  h.observer.startInteraction(interaction("ignored"));
+  h.observer.finishInteraction({
+    ...interaction(),
+    endedAt: 9000,
+    status: "completed",
+    output: "late",
+  });
+  await closing;
+
+  expect(h.spans.map((span) => span.name)).toEqual(["opencode.interaction", "opencode.run"]);
+  expect(h.spans.map((span) => span.status.code)).toEqual([
+    SpanStatusCode.ERROR,
+    SpanStatusCode.ERROR,
+  ]);
+  expect(h.spans.map((span) => span.endTime)).toEqual([
+    [3, 0],
+    [3, 0],
+  ]);
+  expect(h.spans[0]?.status.message).toBe("plugin disposed before interaction completed");
+  expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBeUndefined();
+  expect(h.shutdown).toHaveBeenCalledTimes(1);
+});
+
+test("LLM contract maps client spans, request parameters and successful usage under an interaction", async () => {
+  const h = setup({ tracePrefix: "custom." });
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm({
+    ...llm(),
+    parameters: { temperature: 0, topP: 0.9, topK: 10, maxTokens: 100 },
+  });
+  h.observer.startLlm({ ...llm(), model: "duplicate" });
+  h.observer.finishLlm({
+    ...llm(),
+    endedAt: 1300,
+    output: "answer",
+    finishReason: "stop",
+    cost: 0,
+    usage: {
+      inputTokens: 13,
+      outputTokens: 7,
+      reasoningTokens: 3,
+      cacheReadTokens: 2,
+      cacheWriteTokens: 1,
+    },
+  });
+  h.observer.finishLlm({ ...llm(), endedAt: 9999, output: "late", error: { type: "late" } });
+  h.observer.startLlm(llm());
+  h.observer.finishInteraction({
+    ...interaction(),
+    endedAt: 1800,
+    status: "completed",
+    output: "answer",
+  });
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: "answer" });
+  await h.observer.flush();
+
+  expect(h.spans.map((span) => span.name)).toEqual([
+    "custom.llm",
+    "custom.interaction",
+    "custom.run",
+  ]);
+  const span = h.spans[0];
+
+  expect(span).toMatchObject({
+    kind: SpanKind.CLIENT,
+    startTime: [1, 100_000_000],
+    endTime: [1, 300_000_000],
+    status: { code: SpanStatusCode.UNSET },
+  });
+  expect(span?.parentSpanContext?.spanId).toBe(h.spans[1]?.spanContext().spanId);
+  expect(span?.spanContext().traceId).toBe(h.spans[2]?.spanContext().traceId);
+  expect(span?.attributes).toMatchObject({
+    "session.id": "s1",
+    "gen_ai.conversation.id": "s1",
+    "opencode.message.id": "a1",
+    "gen_ai.provider.name": "gcp.gemini",
+    "opencode.provider.id": "custom-google",
+    "gen_ai.operation.name": "generate_content",
+    "gen_ai.request.model": "gemini",
+    "gen_ai.request.stream": true,
+    "gen_ai.agent.name": "build",
+    "gen_ai.request.temperature": 0,
+    "gen_ai.request.top_p": 0.9,
+    "gen_ai.request.top_k": 10,
+    "gen_ai.request.max_tokens": 100,
+    "gen_ai.usage.input_tokens": 13,
+    "gen_ai.usage.output_tokens": 7,
+    "gen_ai.usage.reasoning.output_tokens": 3,
+    "gen_ai.usage.cache_read.input_tokens": 2,
+    "gen_ai.usage.cache_write.input_tokens": 1,
+    "opencode.llm.cost.total": 0,
+    "gen_ai.response.finish_reasons": ["stop"],
+    "opencode.llm.retry_count": 0,
+    "opencode.llm.retry_history": "[]",
+    "gen_ai.input.messages": '[{"role":"user","parts":[{"type":"text","content":"question"}]}]',
+    "gen_ai.output.messages": '[{"role":"assistant","parts":[{"type":"text","content":"answer"}]}]',
+  });
+  expect(span?.attributes["gen_ai.response.id"]).toBeUndefined();
+  expect(span?.attributes["gen_ai.response.model"]).toBeUndefined();
+  expect(span?.attributes["gen_ai.response.time_to_first_chunk"]).toBeUndefined();
+  expect(span?.attributes["opencode.compaction.id"]).toBeUndefined();
+  expect(span?.attributes["opencode.agent.type"]).toBeUndefined();
+});
+
+test("LLM ancestry survives steer and unknown or mismatched identities cannot attach to another parent", async () => {
+  const h = setup();
+  h.observer.startLlm(llm("missing-run"));
+  h.observer.startRun(start());
+  h.observer.startLlm(llm("missing-interaction"));
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+  h.observer.finishInteraction({ ...interaction(), endedAt: 1500, status: "superseded" });
+  h.observer.startInteraction({ ...interaction("u2"), startedAt: 1500 });
+  h.observer.startLlm({ ...llm("late-start"), startedAt: 1600 });
+  h.observer.finishLlm({ ...llm("a1", interaction("u2")), endedAt: 1700, output: "wrong owner" });
+  h.observer.finishLlm({ ...llm(), endedAt: 1800, output: "old answer" });
+  h.observer.finishLlm({ ...llm("late-start"), endedAt: 1900, output: undefined });
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
+  h.observer.startLlm(llm("closed-run"));
+  await h.observer.flush();
+
+  const parent = h.spans.find((span) => span.attributes["opencode.interaction.id"] === "u1");
+  const calls = h.spans.filter((span) => span.name === "opencode.llm");
+
+  expect(calls).toHaveLength(2);
+  expect(calls.map((span) => span.parentSpanContext?.spanId)).toEqual([
+    parent?.spanContext().spanId,
+    parent?.spanContext().spanId,
+  ]);
+  expect(calls[0]?.endTime).toEqual([1, 800_000_000]);
+  expect(calls[0]?.attributes["gen_ai.output.messages"]).toContain("old answer");
+  expect(parent?.endTime).toEqual([1, 500_000_000]);
+});
+
+test.each([true, false])(
+  "LLM capture=%s preserves unknown versus empty output and protects unsupported attributes",
+  async (captureContent) => {
+    const h = setup({
+      captureContent,
+      attributes: {
+        "gen_ai.response.id": "invented",
+        "gen_ai.response.model": "invented",
+        "gen_ai.response.time_to_first_chunk": "0",
+        "gen_ai.system_instructions": "secret",
+        "gen_ai.tool.definitions": "secret",
+        "gen_ai.output.messages": "secret",
+        "http.request.header.authorization": "secret",
+        "opencode.llm.retry_count": "42",
+        "app.tag": "kept",
+      },
+    });
+    h.observer.startRun(start());
+    h.observer.startInteraction(interaction());
+    h.observer.startLlm(llm());
+    h.observer.startLlm(llm("a2"));
+    h.observer.finishLlm({ ...llm(), endedAt: 1200, output: undefined });
+    h.observer.finishLlm({ ...llm("a2"), endedAt: 1300, output: "" });
+    await h.observer.flush();
+
+    expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBeUndefined();
+    expect(h.spans[1]?.attributes["gen_ai.output.messages"]).toBe(
+      captureContent ? '[{"role":"assistant","parts":[{"type":"text","content":""}]}]' : undefined,
+    );
+    expect(h.spans[0]?.attributes["gen_ai.input.messages"] !== undefined).toBe(captureContent);
+    expect(h.spans[0]?.attributes["app.tag"]).toBe("kept");
+    expect(h.spans[0]?.attributes["opencode.llm.retry_count"]).toBe(0);
+    expect(JSON.stringify(h.spans.map((span) => span.attributes))).not.toMatch(/secret|invented/);
+    expect(h.spans[0]?.attributes["gen_ai.usage.input_tokens"]).toBeUndefined();
+  },
+);
+
+test("LLM failures omit successful usage, and run cleanup is scoped to its own calls", async () => {
+  const h = setup();
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+  h.observer.startLlm(llm("unfinished"));
+  h.observer.startRun(start("u1", "s2"));
+  h.observer.startInteraction(interaction("u1", start("u1", "s2")));
+  h.observer.startLlm(llm("a1", interaction("u1", start("u1", "s2"))));
+  h.observer.finishLlm({
+    ...llm(),
+    endedAt: 1200,
+    output: undefined,
+    error: { type: "APIError", message: "failed" },
+    cost: 99,
+    usage: { inputTokens: 99 },
+  });
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
+  await h.observer.flush();
+
+  const calls = h.spans.filter((span) => span.name === "opencode.llm");
+
+  expect(calls).toHaveLength(2);
+  expect(calls[0]?.status).toEqual({ code: SpanStatusCode.ERROR, message: "failed" });
+  expect(calls[0]?.attributes["error.type"]).toBe("APIError");
+  expect(calls[0]?.attributes["gen_ai.response.finish_reasons"]).toEqual(["error"]);
+  expect(calls[0]?.attributes["gen_ai.usage.input_tokens"]).toBeUndefined();
+  expect(calls[0]?.attributes["opencode.llm.cost.total"]).toBeUndefined();
+  expect(calls[1]?.status.message).toBe("session ended before message completed");
+  expect(h.spans.find((span) => span.name === "opencode.run")?.status.code).toBe(
+    SpanStatusCode.UNSET,
+  );
+
+  h.observer.finishLlm({
+    ...llm("a1", interaction("u1", start("u1", "s2"))),
+    endedAt: 2500,
+    output: "isolated",
+  });
+  await h.observer.flush();
+
+  expect(h.spans.at(-1)?.attributes["session.id"]).toBe("s2");
+  expect(h.spans.at(-1)?.status.code).toBe(SpanStatusCode.UNSET);
+});
+
+test("shutdown ends LLMs before interactions and runs and rejects all late model recording", async () => {
+  const h = setup();
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+
+  const closing = h.observer.shutdown();
+  expect(h.observer.shutdown()).toBe(closing);
+  h.observer.startLlm(llm("late"));
+  h.observer.finishLlm({ ...llm(), endedAt: 9999, output: "late" });
+  await closing;
+
+  expect(h.spans.map((span) => span.name)).toEqual([
+    "opencode.llm",
+    "opencode.interaction",
+    "opencode.run",
+  ]);
+  expect(h.spans.map((span) => span.status.code)).toEqual([
+    SpanStatusCode.ERROR,
+    SpanStatusCode.ERROR,
+    SpanStatusCode.ERROR,
+  ]);
+  expect(h.spans.map((span) => span.endTime)).toEqual([
+    [3, 0],
+    [3, 0],
+    [3, 0],
+  ]);
+  expect(h.spans[0]?.attributes["gen_ai.response.finish_reasons"]).toEqual(["error"]);
+  expect(h.shutdown).toHaveBeenCalledTimes(1);
+});

@@ -1,0 +1,105 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "curly": ["error", "all"],
+    "typescript/no-explicit-any": "error",
+    "typescript/consistent-type-imports": "error",
+    "no-var": "error",
+    "prefer-const": "error"
+  },
+  "ignorePatterns": ["node_modules/**", "dist/**", "coverage/**"],
+  "overrides": [
+    {
+      "files": ["src/adapter/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@opentelemetry/**",
+                  "**/telemetry",
+                  "**/telemetry/**",
+                  "**/telemetry.*",
+                  "**/config.*",
+                  "opencode-observer",
+                  "opencode-observer/**"
+                ],
+                "message": "The adapter may depend on its own modules and the contract, never telemetry or composition configuration."
+              }
+            ],
+            "paths": [
+              { "name": "../index.js", "message": "Only the composition root may assemble layers." }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/adapter/run.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["*", "!../contract/**"],
+                "message": "Run tracking only depends on the contract. Source event dispatch and sibling coordination belong in coordinator.ts."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/contract/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["*", "!./**"],
+                "message": "Contracts may only depend on other local contract types."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/telemetry/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@opencode-ai/**",
+                  "ai",
+                  "ai/**",
+                  "@ai-sdk/**",
+                  "**/adapter",
+                  "**/adapter/**",
+                  "**/config.*",
+                  "opencode-observer",
+                  "opencode-observer/**"
+                ],
+                "message": "Telemetry may depend on its own modules and the contract, never the OpenCode adapter or composition configuration."
+              }
+            ],
+            "paths": [
+              { "name": "../index.js", "message": "Only the composition root may assemble layers." }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

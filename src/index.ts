@@ -1,0 +1,54 @@
+import type { Plugin } from "@opencode-ai/plugin";
+import { loadConfig } from "./config.js";
+
+export const ObserverPlugin: Plugin = async (input, options) => {
+  const config = loadConfig(options);
+
+  if (!config.enabled) {
+    return {};
+  }
+
+  const { createTelemetry } = await import("./telemetry/factory.js");
+  const { createOpencodeAdapter } = await import("./adapter/opencode.js");
+
+  const observer = createTelemetry(config);
+
+  const log = async (error: unknown) => {
+    await input.client.app
+      .log({
+        signal: AbortSignal.timeout(1000),
+        body: {
+          service: "opencode-observer",
+          level: "error",
+          message: error instanceof Error ? error.message : "Trace processing failed",
+        },
+      })
+      .catch(() => undefined);
+  };
+
+  const adapter = createOpencodeAdapter({
+    observer,
+    directory: input.directory,
+    captureContent: config.captureContent,
+    onError(error) {
+      void log(error);
+    },
+    onDispose: shutdown,
+  });
+  await adapter.captureMessages().catch(log);
+
+  function shutdown() {
+    process.off("beforeExit", beforeExit);
+    adapter.close();
+
+    return observer.shutdown().catch(log);
+  }
+
+  function beforeExit() {
+    void shutdown();
+  }
+
+  process.once("beforeExit", beforeExit);
+
+  return adapter.hooks;
+};
