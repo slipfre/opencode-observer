@@ -18,7 +18,7 @@ export function createPermissionSpans(
   const finished = new Set<string>();
 
   function finish(input: PermissionFinish) {
-    const key = JSON.stringify([operationKey(input.tool), input.id]);
+    const key = JSON.stringify([operationKey(input.tool), input.requestID]);
     const permission = permissions.get(key);
 
     if (!permission) {
@@ -41,7 +41,7 @@ export function createPermissionSpans(
   return {
     finish,
     start(input: PermissionStart) {
-      const key = JSON.stringify([operationKey(input.tool), input.id]);
+      const key = JSON.stringify([operationKey(input.tool), input.requestID]);
       const parent = options.parentContext(input.tool);
 
       if (!parent || permissions.has(key) || finished.has(key)) {
@@ -50,9 +50,9 @@ export function createPermissionSpans(
 
       permissions.set(key, {
         reference: {
-          id: input.id,
+          requestID: input.requestID,
           tool: {
-            id: input.tool.id,
+            callID: input.tool.callID,
             messageID: input.tool.messageID,
             interaction: { run: { ...input.tool.interaction.run }, id: input.tool.interaction.id },
           },
@@ -63,9 +63,9 @@ export function createPermissionSpans(
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
             attributes: {
-              ...options.attributes,
+              ...options.spanAttributes,
               ...identityAttributes(input.tool.interaction.run, input),
-              "gen_ai.tool.call.id": input.tool.id,
+              "gen_ai.tool.call.id": input.tool.callID,
               "gen_ai.tool.name": input.toolName,
               "opencode.permission.name": input.name,
               "opencode.permission.patterns": [...input.patterns],

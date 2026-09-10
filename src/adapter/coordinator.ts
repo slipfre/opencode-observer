@@ -34,7 +34,7 @@ export type CoordinatorOptions = {
   now?: () => number;
 };
 
-type Session = {
+type SessionState = {
   reference: RunReference;
   interactions: ReturnType<typeof createInteractionTracker>;
   llms: ReturnType<typeof createLlmTracker>;
@@ -43,12 +43,12 @@ type Session = {
   compactions: ReturnType<typeof createCompactionTracker>;
   parent?: ToolReference;
   overflow?: ObservationError;
-  trigger?: { id: string; owner?: InteractionOwner };
+  trigger?: { messageID: string; owner?: InteractionOwner };
 };
 
 export function createCoordinator(options: CoordinatorOptions) {
   const runs = createRunTracker(options);
-  const sessions = new Map<string, Session>();
+  const sessions = new Map<string, SessionState>();
   const registry = createSessionRegistry();
   const state = { closed: false };
   const now = options.now ?? Date.now;
@@ -61,18 +61,18 @@ export function createCoordinator(options: CoordinatorOptions) {
     const texts = parts
       .filter((part) => part.type === "text")
       .filter((part) => !part.synthetic && !part.ignored);
-    const real =
+    const hasUserInput =
       texts.length > 0 || parts.some((part) => part.type === "file" || part.type === "subtask");
-    const active = sessions.get(info.sessionID);
+    const activeSession = sessions.get(info.sessionID);
 
-    if (!real) {
-      active?.interactions.continuation(info);
-      active?.compactions.message(info, now());
+    if (!hasUserInput) {
+      activeSession?.interactions.continuation(info);
+      activeSession?.compactions.message(info, now());
       parts
         .filter((part) => part.type === "compaction")
-        .forEach((part) => active?.compactions.part(part, now(), active.trigger));
-      active?.llms.message(info, now());
-      active?.tools.refresh();
+        .forEach((part) => activeSession?.compactions.part(part, now(), activeSession.trigger));
+      activeSession?.llms.message(info, now());
+      activeSession?.tools.refresh();
 
       return;
     }
@@ -93,14 +93,14 @@ export function createCoordinator(options: CoordinatorOptions) {
       return;
     }
 
-    const session = active ?? startSession(input.reference);
+    const session = activeSession ?? startSession(input.reference);
     session.interactions.start(info, input.text, input.userID);
     session.compactions.message(info, now());
     session.llms.message(info, now());
     session.tools.refresh();
   }
 
-  function startSession(reference: RunReference): Session {
+  function startSession(reference: RunReference): SessionState {
     const interactions = createInteractionTracker({
       observer: options.observer,
       run: reference,
@@ -127,7 +127,7 @@ export function createCoordinator(options: CoordinatorOptions) {
         permissions.closeTool(tool, time, error);
         sessions.forEach((child) => {
           if (
-            child.parent?.id === tool.id &&
+            child.parent?.callID === tool.callID &&
             child.parent.messageID === tool.messageID &&
             child.parent.interaction.id === tool.interaction.id &&
             child.parent.interaction.run.id === tool.interaction.run.id &&
@@ -144,7 +144,7 @@ export function createCoordinator(options: CoordinatorOptions) {
       },
     });
     const permissions = createPermissionTracker({ observer: options.observer, tool: tools.active });
-    const session: Session = {
+    const session: SessionState = {
       reference,
       interactions,
       llms,
@@ -245,10 +245,13 @@ export function createCoordinator(options: CoordinatorOptions) {
       }
 
       const error = errorDetails(event.properties.error);
-      const active = session.llms.activeRequest();
+      const activeRequest = session.llms.activeRequest();
 
-      if (error.type === "ContextOverflowError" && active) {
-        session.trigger = { id: active.id, owner: session.interactions.resolve(active.parentID) };
+      if (error.type === "ContextOverflowError" && activeRequest) {
+        session.trigger = {
+          messageID: activeRequest.messageID,
+          owner: session.interactions.resolve(activeRequest.ownerMessageID),
+        };
       }
 
       session.llms.fail(time, error);
@@ -305,7 +308,10 @@ export function createCoordinator(options: CoordinatorOptions) {
         info.error &&
         errorDetails(info.error).type === "ContextOverflowError"
       ) {
-        session.trigger = { id: info.id, owner: session.interactions.resolve(info.parentID) };
+        session.trigger = {
+          messageID: info.id,
+          owner: session.interactions.resolve(info.parentID),
+        };
       }
 
       session.llms.message(info, time);

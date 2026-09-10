@@ -16,7 +16,7 @@ export function createPermissionTracker(options: {
   const seen = new Set<string>();
 
   function finish(input: PermissionFinish) {
-    if (!pending.delete(input.id)) {
+    if (!pending.delete(input.requestID)) {
       return;
     }
 
@@ -37,8 +37,12 @@ export function createPermissionTracker(options: {
       }
 
       const reference = {
-        tool: { interaction: tool.interaction, messageID: tool.messageID, id: tool.id },
-        id: request.id,
+        tool: {
+          interaction: tool.interaction,
+          messageID: tool.messageID,
+          callID: tool.callID,
+        },
+        requestID: request.id,
       };
       pending.set(request.id, reference);
       options.observer.startPermission({
@@ -79,7 +83,7 @@ export function createPermissionTracker(options: {
     },
     closeTool(tool: ToolReference, observedAt: number, error?: ObservationError) {
       pending.forEach((reference) => {
-        if (reference.tool.id === tool.id && reference.tool.messageID === tool.messageID) {
+        if (reference.tool.callID === tool.callID && reference.tool.messageID === tool.messageID) {
           finish({
             ...reference,
             endedAt: observedAt,

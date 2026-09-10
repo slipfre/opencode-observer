@@ -11,7 +11,7 @@ import type {
   RunStart,
   RunUpdate,
 } from "../src/contract/observer.js";
-import { createOpencodeAdapter } from "../src/adapter/opencode.js";
+import { createOpenCodeAdapter } from "../src/adapter/opencode.js";
 import { createCoordinator } from "../src/adapter/coordinator.js";
 import type { LlmRequest } from "../src/adapter/llm.js";
 
@@ -178,7 +178,7 @@ function modelRequest(): LlmRequest {
 test("chat.params observes compatible API settings without mutating the hook output", async () => {
   const h = recording();
   const failures: unknown[] = [];
-  const adapter = createOpencodeAdapter({
+  const adapter = createOpenCodeAdapter({
     observer: h.observer,
     directory: "/test",
     captureContent: true,
@@ -362,7 +362,7 @@ test("hooks isolate recording and export failures and return before flush settle
   const error = new Error("recording failed");
   const flushing = Promise.withResolvers<void>();
   const failures: unknown[] = [];
-  const adapter = createOpencodeAdapter({
+  const adapter = createOpenCodeAdapter({
     observer: {
       ...h.observer,
       startRun() {

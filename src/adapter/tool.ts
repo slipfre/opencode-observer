@@ -9,10 +9,10 @@ import type {
 import type { InteractionOwner } from "./interaction.js";
 import { jsonObject } from "./json.js";
 
-type Call = {
+type ToolCallState = {
   partID: string;
   messageID: string;
-  id: string;
+  callID: string;
   name: string;
   startedAt: number;
   arguments?: ToolStart["arguments"];
@@ -29,26 +29,30 @@ export function createToolTracker(options: {
   onFinish(reference: ToolReference, observedAt: number, error?: ObservationError): void;
   onTask(sessionID: string, reference: ToolReference): void;
 }) {
-  const calls = new Map<string, Call>();
+  const calls = new Map<string, ToolCallState>();
   const finished = new Set<string>();
 
-  function finish(call: Call, result: Omit<ToolFinish, keyof ToolReference>, observedAt: number) {
+  function finish(
+    call: ToolCallState,
+    result: Omit<ToolFinish, keyof ToolReference>,
+    observedAt: number,
+  ) {
     if (!call.start) {
       return;
     }
 
-    calls.delete(JSON.stringify([call.messageID, call.id]));
-    finished.add(JSON.stringify([call.messageID, call.id]));
+    calls.delete(JSON.stringify([call.messageID, call.callID]));
+    finished.add(JSON.stringify([call.messageID, call.callID]));
     const reference = {
       interaction: call.start.interaction,
-      id: call.id,
+      callID: call.callID,
       messageID: call.messageID,
     };
     options.onFinish(reference, observedAt, result.error);
     options.observer.finishTool({ ...reference, ...result });
   }
 
-  function record(call: Call) {
+  function record(call: ToolCallState) {
     const owner = options.parent(call.messageID);
 
     if (!call.start && !owner) {
@@ -59,7 +63,7 @@ export function createToolTracker(options: {
       call.start = {
         interaction: owner.reference,
         messageID: call.messageID,
-        id: call.id,
+        callID: call.callID,
         name: call.name,
         startedAt: call.startedAt,
         arguments: call.arguments,
@@ -117,7 +121,7 @@ export function createToolTracker(options: {
       const call = calls.get(key) ?? {
         partID: part.id,
         messageID: part.messageID,
-        id: part.callID,
+        callID: part.callID,
         name: part.tool,
         startedAt,
       };
@@ -151,11 +155,11 @@ export function createToolTracker(options: {
     refresh() {
       calls.forEach(record);
     },
-    active(messageID: string, id: string) {
-      return calls.get(JSON.stringify([messageID, id]))?.start;
+    active(messageID: string, callID: string) {
+      return calls.get(JSON.stringify([messageID, callID]))?.start;
     },
     reject(reference: ToolReference) {
-      const call = calls.get(JSON.stringify([reference.messageID, reference.id]));
+      const call = calls.get(JSON.stringify([reference.messageID, reference.callID]));
 
       if (call?.start?.interaction.id === reference.interaction.id) {
         call.rejected = true;

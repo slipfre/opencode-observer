@@ -89,7 +89,7 @@ export function createCompactionTracker(options: {
     part(
       part: CompactionPart & { overflow?: boolean },
       observedAt: number,
-      trigger?: { id: string; owner?: InteractionOwner },
+      trigger?: { messageID: string; owner?: InteractionOwner },
     ) {
       if (records.has(part.messageID)) {
         return;
@@ -105,7 +105,7 @@ export function createCompactionTracker(options: {
         startedAt: users.get(part.messageID) ?? observedAt,
         auto: part.auto,
         overflow: part.overflow === true,
-        triggerMessageID: part.overflow === true ? trigger?.id : undefined,
+        triggerMessageID: part.overflow === true ? trigger?.messageID : undefined,
         owner: part.overflow === true ? trigger?.owner : undefined,
       };
       state.active = part.messageID;

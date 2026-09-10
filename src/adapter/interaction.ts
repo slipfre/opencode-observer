@@ -8,7 +8,7 @@ import type {
 } from "../contract/observer.js";
 import { errorDetails } from "./error.js";
 
-type Assistant = { info?: AssistantMessage; texts: Map<string, string> };
+type AssistantState = { info?: AssistantMessage; texts: Map<string, string> };
 
 export type InteractionOwner = AgentIdentity & {
   reference: InteractionReference;
@@ -29,7 +29,7 @@ export function createInteractionTracker(options: {
     agentName: string;
   }[] = [];
   const owners = new Map<string, string>();
-  const assistants = new Map<string, Assistant>();
+  const assistants = new Map<string, AssistantState>();
 
   function continuation(info: UserMessage) {
     // A late synthetic continuation belongs to the input active at its creation time.

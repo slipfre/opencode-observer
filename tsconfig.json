@@ -18,6 +18,6 @@
     "noUnusedParameters": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "e2e/**/*.ts"],
   "exclude": ["node_modules", "dist", "coverage"]
 }

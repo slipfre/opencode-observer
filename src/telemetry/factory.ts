@@ -14,10 +14,10 @@ export type TelemetryOptions = {
   tracePrefix: string;
   traceparent: string;
   tracestate: string;
-  headers: Record<string, string>;
+  otlpHeaders: Record<string, string>;
   resourceAttributes: Record<string, string>;
   spanAttributes: Record<string, string>;
-  attributeCountLimit: number;
+  spanAttributeCountLimit: number;
 };
 
 export function createTelemetry(config: TelemetryOptions): Observer {
@@ -41,12 +41,12 @@ export function createTelemetry(config: TelemetryOptions): Observer {
       ...(hostArch ? { "host.arch": hostArch } : {}),
       ...config.resourceAttributes,
     }),
-    spanLimits: { attributeCountLimit: config.attributeCountLimit },
+    spanLimits: { attributeCountLimit: config.spanAttributeCountLimit },
     spanProcessors: [
       new BatchSpanProcessor(
         new OTLPTraceExporter({
           url: config.endpoint,
-          headers: config.headers,
+          headers: config.otlpHeaders,
           timeoutMillis: 5000,
         }),
         { exportTimeoutMillis: 5000 },
@@ -69,6 +69,6 @@ export function createTelemetry(config: TelemetryOptions): Observer {
     scope: { name: "opencode-observer", version },
     tracePrefix: config.tracePrefix,
     captureContent: config.captureContent,
-    attributes: config.spanAttributes,
+    spanAttributes: config.spanAttributes,
   });
 }

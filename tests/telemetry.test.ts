@@ -281,7 +281,7 @@ test("missing input suppresses partial content while known empty output is prese
 test("implementation enforces content capture even when a caller supplies content", async () => {
   const h = setup({
     captureContent: false,
-    attributes: {
+    spanAttributes: {
       "gen_ai.input.messages": "leak",
       "gen_ai.output.messages": "leak",
       "opencode.session.parent_id": "fake",
@@ -469,7 +469,7 @@ test.each([true, false])(
   async (captureContent) => {
     const h = setup({
       captureContent,
-      attributes: {
+      spanAttributes: {
         "gen_ai.input.messages": "leak",
         "gen_ai.output.messages": "leak",
         "gen_ai.agent.name": "fake",
@@ -700,7 +700,7 @@ test.each([true, false])(
   async (captureContent) => {
     const h = setup({
       captureContent,
-      attributes: {
+      spanAttributes: {
         "gen_ai.response.id": "invented",
         "gen_ai.response.model": "invented",
         "gen_ai.response.time_to_first_chunk": "0",

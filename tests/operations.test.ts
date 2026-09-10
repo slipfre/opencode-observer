@@ -35,7 +35,7 @@ function setup(captureContent = true) {
     scope: { name: "test" },
     captureContent,
     now: () => 9000,
-    attributes: {
+    spanAttributes: {
       "opencode.permission.granted": "fake",
       "opencode.compaction.auto": "fake",
       "gen_ai.tool.call.result": "fake",
@@ -600,7 +600,7 @@ test("a direct task finish cleans only its child run before ending the task", ()
   h.observer.finishTool({
     interaction: { run: { sessionID: "s1", id: "u1" }, id: "u1" },
     messageID: "a1",
-    id: "call1",
+    callID: "call1",
     endedAt: 1500,
     output: "done",
   });
@@ -652,7 +652,7 @@ test("direct contract rejects unknown parents and cannot use an ordinary tool as
   const interaction = { run: { id: "u1", sessionID: "s1" }, id: "u1" };
   const start: ToolStart = {
     interaction,
-    id: "call1",
+    callID: "call1",
     messageID: "a1",
     name: "read",
     startedAt: 1200,
@@ -660,7 +660,7 @@ test("direct contract rejects unknown parents and cannot use an ordinary tool as
   h.observer.startTool(start);
   h.observer.startPermission({
     tool: start,
-    id: "p1",
+    requestID: "p1",
     startedAt: 1200,
     name: "read",
     toolName: "read",
@@ -678,7 +678,7 @@ test("direct contract rejects unknown parents and cannot use an ordinary tool as
   h.observer.finishTool({ ...start, endedAt: 1400 });
   h.observer.startPermission({
     tool: start,
-    id: "late",
+    requestID: "late",
     startedAt: 1500,
     name: "read",
     toolName: "read",

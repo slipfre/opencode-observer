@@ -12,7 +12,7 @@ test("enabled defaults use OTLP HTTP and leave content capture off", () => {
     endpoint: "http://localhost:4318/v1/traces",
     tracePrefix: "opencode.",
     captureContent: false,
-    attributeCountLimit: 4096,
+    spanAttributeCountLimit: 4096,
   });
 });
 
@@ -47,17 +47,17 @@ test("environment attributes preserve equals signs and parse trace configuration
         OPENCODE_ENABLE_TELEMETRY: "1",
         OPENCODE_OTLP_HEADERS: "authorization=token==, x-tenant=demo",
         OPENCODE_RESOURCE_ATTRIBUTES: "service.name=test",
-        OPENCODE_SPAN_ATTRIBUTES: "team=core",
+        OPENCODE_SPAN_ATTRIBUTES: "team=observability",
         OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT: "5000",
         OPENCODE_TRACEPARENT: "parent",
         OPENCODE_TRACESTATE: "vendor=value",
       },
     ),
   ).toMatchObject({
-    headers: { authorization: "token==", "x-tenant": "demo" },
+    otlpHeaders: { authorization: "token==", "x-tenant": "demo" },
     resourceAttributes: { "service.name": "test" },
-    spanAttributes: { team: "core" },
-    attributeCountLimit: 5000,
+    spanAttributes: { team: "observability" },
+    spanAttributeCountLimit: 5000,
     traceparent: "parent",
     tracestate: "vendor=value",
   });
@@ -65,7 +65,7 @@ test("environment attributes preserve equals signs and parse trace configuration
 
 test("invalid configuration is rejected instead of silently enabling telemetry or bad limits", () => {
   expect(() => loadConfig({ enabled: "yes" }, {})).toThrow();
-  expect(() => loadConfig({ enabled: true, endpoint: "file:///tmp/traces" }, {})).toThrow();
+  expect(() => loadConfig({ enabled: true, endpoint: "ftp://example.test/traces" }, {})).toThrow();
   expect(() => loadConfig({ enabled: true, spanAttributeCountLimit: 0 }, {})).toThrow();
   expect(() => loadConfig({ enabled: true, spanAttributeCountLimit: 1.5 }, {})).toThrow();
   expect(() => loadConfig({ enabled: true, spanAttributes: { count: 1 } }, {})).toThrow();

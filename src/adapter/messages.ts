@@ -2,16 +2,16 @@ import type { OnStepFinishEvent, OnStepStartEvent } from "ai";
 import type { JsonValue, ModelInput, ModelMessage, ModelPart } from "../contract/messages.js";
 import { jsonValue } from "./json.js";
 
-export function modelInput(
+export function parseModelInput(
   event: Pick<OnStepStartEvent, "messages" | "system" | "providerOptions">,
 ): ModelInput {
-  const messages = modelMessages(event.messages);
+  const messages = parseModelMessages(event.messages);
   const system =
     typeof event.system === "string"
       ? [{ type: "text" as const, text: event.system }]
       : event.system === undefined
         ? undefined
-        : modelMessages(Array.isArray(event.system) ? event.system : [event.system]).flatMap(
+        : parseModelMessages(Array.isArray(event.system) ? event.system : [event.system]).flatMap(
             (message) => message.parts,
           );
   const instructions = record(event.providerOptions)
@@ -30,7 +30,7 @@ export function modelInput(
   };
 }
 
-export function modelOutput(
+export function parseModelOutput(
   event: Pick<OnStepFinishEvent, "content" | "response">,
 ): ModelMessage[] | undefined {
   // response.messages can include previous steps and tool execution results.
@@ -38,7 +38,7 @@ export function modelOutput(
   if (Array.isArray(event.content)) {
     const parts = event.content
       .filter((part) => part.type !== "tool-result" && part.type !== "tool-error")
-      .map(modelPart)
+      .map(parseModelPart)
       .filter((part) => part !== undefined);
 
     return parts.length > 0
@@ -52,14 +52,14 @@ export function modelOutput(
     return;
   }
 
-  const assistant = modelMessages(event.response.messages).findLast(
+  const assistant = parseModelMessages(event.response.messages).findLast(
     (message) => message.role === "assistant",
   );
 
   return assistant ? [assistant] : [];
 }
 
-function modelMessages(values: unknown): ModelMessage[] {
+function parseModelMessages(values: unknown): ModelMessage[] {
   if (!Array.isArray(values)) {
     return [];
   }
@@ -77,13 +77,13 @@ function modelMessages(values: unknown): ModelMessage[] {
       return [];
     }
 
-    const parts = value.content.map(modelPart).filter((part) => part !== undefined);
+    const parts = value.content.map(parseModelPart).filter((part) => part !== undefined);
 
     return parts.length > 0 || value.content.length === 0 ? [{ role: value.role, parts }] : [];
   });
 }
 
-function modelPart(value: unknown): ModelPart | undefined {
+function parseModelPart(value: unknown): ModelPart | undefined {
   if (!record(value)) {
     return;
   }

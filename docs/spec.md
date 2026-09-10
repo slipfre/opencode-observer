@@ -166,7 +166,7 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 
 `flush`、`shutdown` 的失败通过 Promise 拒绝反馈，由调用边界接入诊断处理，不作为 OpenCode 任务失败向业务传播。日常事件处理不得直接操作 `provider.forceFlush()` 或 `provider.shutdown()`。
 
-插件入口负责将实例释放、进程退出等信号连接到关闭流程，同时释放适配层保留的状态和已注册的进程监听器。
+当前适配层在 session idle、session error 和 session 删除事件后请求 `flush`，事件回调完成本地处理后返回，不等待网络导出。插件入口将实例释放和进程 `beforeExit` 连接到关闭流程：先释放适配层状态和监听器，再由遥测实现按后代优先顺序结束活动 span，等待已有导出并关闭导出器。
 
 ## 7. 各类 span 的实现
 
@@ -212,6 +212,8 @@ steer 结束旧 interaction 的时间等于新用户输入的创建时间，正�
 消息归属与最终答复选择由 interaction tracker 维护，协调模块将归属解析函数提供给 LLM、tool 和 compaction tracker，并将最终答复作为 run 结束结果提交，生命周期规则不重复实现。interaction 的局部错误或缺少完成信息不自动将 run 标为失败。协调模块与实现层均保证先结束后代再结束父对象：permission 先于 tool，摘要 LLM 先于 compaction，子 run 先于父 task tool，当前 run 内的操作先于 interaction / run。适配层 `close()` 只释放源状态和绑定，插件关闭时由遥测实现统一结束仍活动的 span。
 
 run 的 `parent` 使用明确的 `ToolReference`；摘要 LLM 的 `compactionID` 与其 compaction 父节点一致。已观察到 `session.created/updated` 时，通过 `parentID` 判断 primary / subagent；活动 task 关联也可以确认 subagent。相应的新 span 使用 `parentSessionID` 与 `agentType`，缺失证据时仍为 `undefined`，不假定 primary 或事后修改既有 span 的父节点。interaction 的 `agentName` 从 owner 用户消息取得；LLM / tool 优先使用 assistant 的 `agent`，兼容 `mode`。`userID` 使用所属 interaction 的身份快照。外部 W3C parent 继续由遥测实现从配置解析。
+
+当前插件入口未接入用户 ID 解析器，默认省略 `user.id`。适配层预留的解析器可为后续新建 run 和 interaction 提供身份，LLM 使用所属 interaction 的身份快照；已创建的 span 不回填。
 
 适配层保留已接收用户输入的标识，实现层保留各类已结束对象的标识，直到插件关闭；去重记录不保留正文，关闭时释放。重复用户 hook 不创建新任务或交互，也不将旧输入追加到下一次 run。迟到输出不修改已结束对象的输出或结束时间。已结束 interaction 与 compaction 的轻量 OTel context 保留至 run 结束，供已确认归属的操作关联原 parent。
 

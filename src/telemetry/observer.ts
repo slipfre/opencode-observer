@@ -21,11 +21,11 @@ export type ObserverOptions = {
   rootContext?: Context;
   tracePrefix?: string;
   captureContent?: boolean;
-  attributes?: Record<string, string>;
+  spanAttributes?: Record<string, string>;
   now?: () => number;
 };
 
-const reserved = new Set([
+const reservedAttributes = new Set([
   "session.id",
   "opencode.session.parent_id",
   "user.id",
@@ -38,15 +38,15 @@ const reserved = new Set([
 ]);
 
 export function createObserver(options: ObserverOptions): Observer {
-  const spans = {
+  const spanOptions = {
     tracer: options.provider.getTracer(options.scope.name, options.scope.version),
     rootContext: options.rootContext ?? ROOT_CONTEXT,
     tracePrefix: options.tracePrefix ?? "opencode.",
     captureContent: options.captureContent ?? false,
-    attributes: Object.fromEntries(
-      Object.entries(options.attributes ?? {}).filter(
+    spanAttributes: Object.fromEntries(
+      Object.entries(options.spanAttributes ?? {}).filter(
         ([key]) =>
-          !reserved.has(key) &&
+          !reservedAttributes.has(key) &&
           ![
             "openinference.",
             "gen_ai.",
@@ -63,15 +63,18 @@ export function createObserver(options: ObserverOptions): Observer {
     ),
   };
   const runs = createRunSpans({
-    ...spans,
+    ...spanOptions,
     parentContext: (reference) => tools.context(reference, true),
   });
-  const interactions = createInteractionSpans({ ...spans, parentContext: runs.context });
-  const tools = createToolSpans({ ...spans, parentContext: interactions.context });
-  const permissions = createPermissionSpans({ ...spans, parentContext: tools.context });
-  const compactions = createCompactionSpans({ ...spans, parentContext: interactions.context });
+  const interactions = createInteractionSpans({ ...spanOptions, parentContext: runs.context });
+  const tools = createToolSpans({ ...spanOptions, parentContext: interactions.context });
+  const permissions = createPermissionSpans({ ...spanOptions, parentContext: tools.context });
+  const compactions = createCompactionSpans({
+    ...spanOptions,
+    parentContext: interactions.context,
+  });
   const llms = createLlmSpans({
-    ...spans,
+    ...spanOptions,
     parentContext: (input) =>
       input.compactionID
         ? compactions.context({ interaction: input.interaction, id: input.compactionID })
@@ -155,7 +158,7 @@ export function createObserver(options: ObserverOptions): Observer {
             reference: { sessionID: input.sessionID, id: input.id },
             parent: input.parent
               ? {
-                  id: input.parent.id,
+                  callID: input.parent.callID,
                   messageID: input.parent.messageID,
                   interaction: {
                     id: input.parent.interaction.id,

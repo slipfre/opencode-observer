@@ -69,7 +69,7 @@ export function createCompactionSpans(
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
             attributes: {
-              ...options.attributes,
+              ...options.spanAttributes,
               ...identityAttributes(input.interaction.run, input),
               "opencode.compaction.id": input.id,
               "opencode.compaction.auto": input.auto,

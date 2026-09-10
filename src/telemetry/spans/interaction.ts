@@ -6,7 +6,7 @@ import type {
   ObservationError,
   RunReference,
 } from "../../contract/observer.js";
-import { textMessages, type SpanOptions } from "./common.js";
+import { encodeTextMessage, type SpanOptions } from "./common.js";
 
 export function createInteractionSpans(
   options: SpanOptions & {
@@ -45,7 +45,7 @@ export function createInteractionSpans(
     if (options.captureContent && input.status === "completed" && input.output !== undefined) {
       interaction.span.setAttribute(
         "gen_ai.output.messages",
-        textMessages("assistant", input.output),
+        encodeTextMessage("assistant", input.output),
       );
     }
 
@@ -70,7 +70,7 @@ export function createInteractionSpans(
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
             attributes: {
-              ...options.attributes,
+              ...options.spanAttributes,
               "session.id": input.run.sessionID,
               "gen_ai.conversation.id": input.run.sessionID,
               "opencode.interaction.id": input.id,
@@ -80,7 +80,7 @@ export function createInteractionSpans(
               "opencode.session.parent_id": input.parentSessionID,
               ...(input.userID ? { "user.id": input.userID } : {}),
               ...(options.captureContent && input.input !== undefined
-                ? { "gen_ai.input.messages": textMessages("user", input.input) }
+                ? { "gen_ai.input.messages": encodeTextMessage("user", input.input) }
                 : {}),
             },
           },

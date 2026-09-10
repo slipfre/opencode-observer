@@ -33,7 +33,8 @@
   "scripts": {
     "build": "bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --packages=external --sourcemap=linked && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test ./tests",
+    "test:e2e": "bun run build && bun test ./e2e --timeout 60000",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint --deny-warnings .",

@@ -2,14 +2,14 @@ export function loadConfig(
   options: Record<string, unknown> = {},
   env: Record<string, string | undefined> = process.env,
 ) {
-  const enabled = boolean(options.enabled ?? env.OPENCODE_ENABLE_TELEMETRY, false);
+  const enabled = parseBoolean(options.enabled ?? env.OPENCODE_ENABLE_TELEMETRY, false);
 
   if (!enabled) {
     return { enabled: false as const };
   }
 
   const endpoint = new URL(
-    string(options.endpoint ?? env.OPENCODE_OTLP_ENDPOINT, "http://localhost:4318"),
+    parseString(options.endpoint ?? env.OPENCODE_OTLP_ENDPOINT, "http://localhost:4318"),
   );
 
   if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
@@ -20,29 +20,31 @@ export function loadConfig(
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/v1/traces`;
   }
 
-  const attributeCountLimit = Number(
+  const spanAttributeCountLimit = Number(
     options.spanAttributeCountLimit ?? env.OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT ?? 4096,
   );
 
-  if (!Number.isSafeInteger(attributeCountLimit) || attributeCountLimit <= 0) {
+  if (!Number.isSafeInteger(spanAttributeCountLimit) || spanAttributeCountLimit <= 0) {
     throw new Error("spanAttributeCountLimit must be a positive integer");
   }
 
   return {
     enabled: true as const,
     endpoint: endpoint.toString(),
-    captureContent: boolean(options.captureContent ?? env.OPENCODE_CAPTURE_CONTENT, false),
-    tracePrefix: string(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
-    traceparent: string(options.traceparent ?? env.OPENCODE_TRACEPARENT, ""),
-    tracestate: string(options.tracestate ?? env.OPENCODE_TRACESTATE, ""),
-    headers: attributes(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
-    resourceAttributes: attributes(options.resourceAttributes ?? env.OPENCODE_RESOURCE_ATTRIBUTES),
-    spanAttributes: attributes(options.spanAttributes ?? env.OPENCODE_SPAN_ATTRIBUTES),
-    attributeCountLimit,
+    captureContent: parseBoolean(options.captureContent ?? env.OPENCODE_CAPTURE_CONTENT, false),
+    tracePrefix: parseString(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
+    traceparent: parseString(options.traceparent ?? env.OPENCODE_TRACEPARENT, ""),
+    tracestate: parseString(options.tracestate ?? env.OPENCODE_TRACESTATE, ""),
+    otlpHeaders: parseAttributes(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
+    resourceAttributes: parseAttributes(
+      options.resourceAttributes ?? env.OPENCODE_RESOURCE_ATTRIBUTES,
+    ),
+    spanAttributes: parseAttributes(options.spanAttributes ?? env.OPENCODE_SPAN_ATTRIBUTES),
+    spanAttributeCountLimit,
   };
 }
 
-function string(value: unknown, fallback: string) {
+function parseString(value: unknown, fallback: string) {
   if (value === undefined) {
     return fallback;
   }
@@ -54,7 +56,7 @@ function string(value: unknown, fallback: string) {
   return value;
 }
 
-function boolean(value: unknown, fallback: boolean) {
+function parseBoolean(value: unknown, fallback: boolean) {
   if (value === undefined) {
     return fallback;
   }
@@ -70,7 +72,7 @@ function boolean(value: unknown, fallback: boolean) {
   throw new Error("Expected a boolean configuration value");
 }
 
-function attributes(value: unknown): Record<string, string> {
+function parseAttributes(value: unknown): Record<string, string> {
   if (value === undefined || value === "") {
     return {};
   }

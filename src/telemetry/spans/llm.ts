@@ -7,8 +7,8 @@ import type {
   ObservationError,
   RunReference,
 } from "../../contract/observer.js";
-import { textMessages, type SpanOptions } from "./common.js";
-import { modelMessages, systemInstructions } from "./messages.js";
+import { encodeTextMessage, type SpanOptions } from "./common.js";
+import { encodeModelMessages, encodeSystemInstructions } from "./messages.js";
 
 export function createLlmSpans(
   options: SpanOptions & {
@@ -65,7 +65,7 @@ export function createLlmSpans(
         "gen_ai.system_instructions": call.messages?.system,
         "gen_ai.output.messages":
           call.output ??
-          (input.output !== undefined ? textMessages("assistant", input.output) : undefined),
+          (input.output !== undefined ? encodeTextMessage("assistant", input.output) : undefined),
       });
     }
 
@@ -94,17 +94,17 @@ export function createLlmSpans(
 
       if (input.input) {
         call.messages = {
-          input: modelMessages(input.input.messages),
+          input: encodeModelMessages(input.input.messages),
           system:
             input.input.systemInstructions === undefined
               ? undefined
-              : systemInstructions(input.input.systemInstructions),
+              : encodeSystemInstructions(input.input.systemInstructions),
         };
         delete call.output;
       }
 
       if (input.output !== undefined) {
-        call.output = modelMessages(input.output);
+        call.output = encodeModelMessages(input.output);
       }
     },
     start(input: LlmStart) {
@@ -134,7 +134,7 @@ export function createLlmSpans(
             kind: SpanKind.CLIENT,
             startTime: new Date(input.startedAt),
             attributes: {
-              ...options.attributes,
+              ...options.spanAttributes,
               "session.id": input.interaction.run.sessionID,
               "gen_ai.conversation.id": input.interaction.run.sessionID,
               "gen_ai.operation.name": input.operation,
@@ -155,7 +155,7 @@ export function createLlmSpans(
               "opencode.llm.retry_history": "[]",
               ...(input.userID ? { "user.id": input.userID } : {}),
               ...(options.captureContent && input.input !== undefined
-                ? { "gen_ai.input.messages": textMessages("user", input.input) }
+                ? { "gen_ai.input.messages": encodeTextMessage("user", input.input) }
                 : {}),
             },
           },

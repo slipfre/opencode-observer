@@ -21,7 +21,7 @@ export function createSessionRegistry() {
     bind(sessionID: string, reference: ToolReference) {
       if (sessionID !== reference.interaction.run.sessionID) {
         tasks.set(sessionID, {
-          id: reference.id,
+          callID: reference.callID,
           messageID: reference.messageID,
           interaction: { id: reference.interaction.id, run: { ...reference.interaction.run } },
         });
@@ -34,7 +34,7 @@ export function createSessionRegistry() {
     releaseTool(reference: ToolReference) {
       tasks.forEach((tool, sessionID) => {
         if (
-          tool.id === reference.id &&
+          tool.callID === reference.callID &&
           tool.messageID === reference.messageID &&
           tool.interaction.id === reference.interaction.id &&
           tool.interaction.run.id === reference.interaction.run.id &&

@@ -12,10 +12,10 @@ export type SpanOptions = {
   rootContext: Context;
   tracePrefix: string;
   captureContent: boolean;
-  attributes: Record<string, string>;
+  spanAttributes: Record<string, string>;
 };
 
-export function textMessages(role: "user" | "assistant", text: string) {
+export function encodeTextMessage(role: "user" | "assistant", text: string) {
   return JSON.stringify([{ role, parts: [{ type: "text", content: text }] }]);
 }
 
@@ -25,7 +25,7 @@ export function operationKey(reference: ToolReference | CompactionReference) {
     reference.interaction.run.id,
     reference.interaction.id,
     "messageID" in reference ? reference.messageID : undefined,
-    reference.id,
+    "callID" in reference ? reference.callID : reference.id,
   ]);
 }
 

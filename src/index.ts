@@ -9,7 +9,7 @@ export const ObserverPlugin: Plugin = async (input, options) => {
   }
 
   const { createTelemetry } = await import("./telemetry/factory.js");
-  const { createOpencodeAdapter } = await import("./adapter/opencode.js");
+  const { createOpenCodeAdapter } = await import("./adapter/opencode.js");
 
   const observer = createTelemetry(config);
 
@@ -26,7 +26,7 @@ export const ObserverPlugin: Plugin = async (input, options) => {
       .catch(() => undefined);
   };
 
-  const adapter = createOpencodeAdapter({
+  const adapter = createOpenCodeAdapter({
     observer,
     directory: input.directory,
     captureContent: config.captureContent,
@@ -35,7 +35,7 @@ export const ObserverPlugin: Plugin = async (input, options) => {
     },
     onDispose: shutdown,
   });
-  await adapter.captureMessages().catch(log);
+  await adapter.startModelMessageCapture().catch(log);
 
   function shutdown() {
     process.off("beforeExit", beforeExit);

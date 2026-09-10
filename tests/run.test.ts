@@ -270,7 +270,7 @@ test("missing input is omitted instead of exporting partial input or fabricating
       sessionID: "s1",
       type: "file",
       mime: "image/png",
-      url: "file:///image.png",
+      url: "https://example.test/image.png",
     },
   ]);
   idle(h.coordinator);
@@ -281,7 +281,7 @@ test("missing input is omitted instead of exporting partial input or fabricating
 test("disabled content capture omits both bodies and cannot be bypassed with custom attributes", async () => {
   const h = setup({
     captureContent: false,
-    attributes: { "gen_ai.input.messages": "leak", "gen_ai.output.messages": "leak" },
+    spanAttributes: { "gen_ai.input.messages": "leak", "gen_ai.output.messages": "leak" },
   });
 
   h.coordinator.userMessage(user(), [text("u1", "secret")]);
@@ -501,7 +501,7 @@ test("errors without a session do not affect runs; unknown error types use _OTHE
 test("custom attributes cannot override derived fields or fabricate user/error attributes", async () => {
   const h = setup({
     tracePrefix: "custom.",
-    attributes: {
+    spanAttributes: {
       "tenant.id": "test",
       "session.id": "fake",
       "opencode.session.parent_id": "fake",

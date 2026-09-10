@@ -105,7 +105,11 @@ export type LlmUpdate = LlmReference & {
   output?: ModelMessage[];
 };
 
-export type ToolReference = { interaction: InteractionReference; messageID: string; id: string };
+export type ToolReference = {
+  interaction: InteractionReference;
+  messageID: string;
+  callID: string;
+};
 
 export type ToolStart = ToolReference &
   AgentIdentity & {
@@ -141,7 +145,7 @@ export type CompactionFinish = CompactionReference & {
   error?: ObservationError;
 };
 
-export type PermissionReference = { tool: ToolReference; id: string };
+export type PermissionReference = { tool: ToolReference; requestID: string };
 
 export type PermissionStart = PermissionReference &
   AgentIdentity & {

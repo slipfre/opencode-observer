@@ -1,9 +1,9 @@
 import type { Hooks } from "@opencode-ai/plugin";
 import type { Observer } from "../contract/observer.js";
 import { createCoordinator } from "./coordinator.js";
-import type { captureModelMessages } from "./ai-sdk.js";
+import type { createModelMessageCapture } from "./ai-sdk.js";
 
-export function createOpencodeAdapter(options: {
+export function createOpenCodeAdapter(options: {
   observer: Observer;
   directory: string;
   captureContent: boolean;
@@ -16,8 +16,8 @@ export function createOpencodeAdapter(options: {
   });
   const state = {
     closed: false,
-    messages: undefined as ReturnType<typeof captureModelMessages> | undefined,
-    installing: undefined as Promise<void> | undefined,
+    messageCapture: undefined as ReturnType<typeof createModelMessageCapture> | undefined,
+    messageCaptureSetup: undefined as Promise<void> | undefined,
   };
   const hooks: Hooks = {
     "chat.message": async (_input, output) => {
@@ -49,7 +49,7 @@ export function createOpencodeAdapter(options: {
       }
 
       try {
-        state.messages?.headers(input, output);
+        state.messageCapture?.attachCorrelationHeader(input, output);
       } catch (error) {
         options.onError(error);
       }
@@ -85,11 +85,11 @@ export function createOpencodeAdapter(options: {
     },
   };
 
-  async function installMessages() {
-    const { captureModelMessages } = await import("./ai-sdk.js");
+  async function installModelMessageCapture() {
+    const { createModelMessageCapture } = await import("./ai-sdk.js");
 
     if (!state.closed) {
-      state.messages = captureModelMessages({
+      state.messageCapture = createModelMessageCapture({
         bind: coordinator.bindModel,
         onError: options.onError,
       });
@@ -98,7 +98,7 @@ export function createOpencodeAdapter(options: {
 
   return {
     hooks,
-    captureMessages() {
+    startModelMessageCapture() {
       // Native runtime bypasses AI SDK callbacks, so it cannot consume a correlation header.
       const native = ["1", "true", "yes", "on"].includes(
         (process.env.OPENCODE_EXPERIMENTAL_NATIVE_LLM ?? "").toLowerCase(),
@@ -108,13 +108,13 @@ export function createOpencodeAdapter(options: {
         return Promise.resolve();
       }
 
-      state.installing ??= installMessages();
+      state.messageCaptureSetup ??= installModelMessageCapture();
 
-      return state.installing;
+      return state.messageCaptureSetup;
     },
     close() {
       state.closed = true;
-      state.messages?.close();
+      state.messageCapture?.close();
       coordinator.close();
     },
   };

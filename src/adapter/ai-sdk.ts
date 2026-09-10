@@ -7,9 +7,9 @@ import {
 } from "ai";
 import type { ModelInput, ModelMessage } from "../contract/messages.js";
 import type { LlmRequest } from "./llm.js";
-import { modelInput, modelOutput } from "./messages.js";
+import { parseModelInput, parseModelOutput } from "./messages.js";
 
-const requestHeader = "x-opencode-observer-request";
+const correlationHeader = "x-opencode-observer-request";
 
 export type ModelCapture = {
   active(): boolean;
@@ -17,23 +17,23 @@ export type ModelCapture = {
   output(value: ModelMessage[] | undefined): void;
 };
 
-type Listener = {
+type ModelCaptureListener = {
   start(event: OnStartEvent | OnStepStartEvent): void;
   input(event: OnStepStartEvent): void;
   output(event: OnStepFinishEvent): void;
   error(error: unknown): void;
 };
 
-type Broker = { listeners: Set<Listener> };
+type ModelCaptureBroker = { listeners: Set<ModelCaptureListener> };
 
-export function captureModelMessages(options: {
+export function createModelMessageCapture(options: {
   bind(input: LlmRequest[0]): ModelCapture | undefined;
   onError(error: unknown): void;
 }) {
   const pending = new Map<string, ModelCapture>();
   const bindings = new WeakMap<object, ModelCapture>();
 
-  function target(event: OnStartEvent | OnStepStartEvent | OnStepFinishEvent) {
+  function activeBinding(event: OnStartEvent | OnStepStartEvent | OnStepFinishEvent) {
     if (event.functionId !== "session.llm") {
       return;
     }
@@ -43,10 +43,10 @@ export function captureModelMessages(options: {
     return binding?.active() ? binding : undefined;
   }
 
-  const listener: Listener = {
+  const listener: ModelCaptureListener = {
     error: options.onError,
     start(event) {
-      const id = event.headers?.[requestHeader];
+      const id = event.headers?.[correlationHeader];
       const binding = id ? pending.get(id) : undefined;
 
       if (!id || !binding) {
@@ -60,26 +60,26 @@ export function captureModelMessages(options: {
       }
     },
     input(event) {
-      const binding = target(event);
+      const binding = activeBinding(event);
 
       if (binding) {
-        binding.input(modelInput(event));
+        binding.input(parseModelInput(event));
       }
     },
     output(event) {
-      const binding = target(event);
+      const binding = activeBinding(event);
 
       if (binding) {
-        binding.output(modelOutput(event));
+        binding.output(parseModelOutput(event));
       }
     },
   };
-  const broker = modelBroker();
+  const broker = modelCaptureBroker();
   broker.listeners.add(listener);
 
   return {
-    headers(input: LlmRequest[0], output: { headers: Record<string, string> }) {
-      if (Object.keys(output.headers).some((key) => key.toLowerCase() === requestHeader)) {
+    attachCorrelationHeader(input: LlmRequest[0], output: { headers: Record<string, string> }) {
+      if (Object.keys(output.headers).some((key) => key.toLowerCase() === correlationHeader)) {
         return;
       }
 
@@ -105,7 +105,7 @@ export function captureModelMessages(options: {
         }
       }
 
-      output.headers[requestHeader] = id;
+      output.headers[correlationHeader] = id;
     },
     close() {
       broker.listeners.delete(listener);
@@ -114,21 +114,23 @@ export function captureModelMessages(options: {
   };
 }
 
-function modelBroker() {
-  const root = globalThis as typeof globalThis & { __opencodeObserverMessages?: Broker };
+function modelCaptureBroker() {
+  const root = globalThis as typeof globalThis & {
+    __opencodeObserverModelCapture?: ModelCaptureBroker;
+  };
 
-  if (root.__opencodeObserverMessages) {
-    return root.__opencodeObserverMessages;
+  if (root.__opencodeObserverModelCapture) {
+    return root.__opencodeObserverModelCapture;
   }
 
-  const broker: Broker = { listeners: new Set() };
+  const broker: ModelCaptureBroker = { listeners: new Set() };
   const integration: TelemetryIntegration = {
     onStart(event) {
       broker.listeners.forEach((listener) => dispatch(listener, () => listener.start(event)));
       // OpenCode copies hook headers. Strip our correlation token from the prepared
       // object before the provider runs, including requests from disposed instances.
       if (event.headers) {
-        delete event.headers[requestHeader];
+        delete event.headers[correlationHeader];
       }
     },
     onStepStart(event) {
@@ -140,7 +142,7 @@ function modelBroker() {
       );
 
       if (event.headers) {
-        delete event.headers[requestHeader];
+        delete event.headers[correlationHeader];
       }
     },
     onStepFinish(event) {
@@ -148,12 +150,12 @@ function modelBroker() {
     },
   };
   registerTelemetryIntegration(integration);
-  root.__opencodeObserverMessages = broker;
+  root.__opencodeObserverModelCapture = broker;
 
   return broker;
 }
 
-function dispatch(listener: Listener, callback: () => void) {
+function dispatch(listener: ModelCaptureListener, callback: () => void) {
   try {
     callback();
   } catch (error) {

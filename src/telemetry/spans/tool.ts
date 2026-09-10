@@ -50,7 +50,7 @@ export function createToolSpans(
         reference: {
           interaction: { run: { ...input.interaction.run }, id: input.interaction.id },
           messageID: input.messageID,
-          id: input.id,
+          callID: input.callID,
         },
         name: input.name,
         span: options.tracer.startSpan(
@@ -59,10 +59,10 @@ export function createToolSpans(
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
             attributes: {
-              ...options.attributes,
+              ...options.spanAttributes,
               ...identityAttributes(input.interaction.run, input),
               "gen_ai.operation.name": "execute_tool",
-              "gen_ai.tool.call.id": input.id,
+              "gen_ai.tool.call.id": input.callID,
               "gen_ai.tool.name": input.name,
               ...(options.captureContent && input.arguments !== undefined
                 ? { "gen_ai.tool.call.arguments": JSON.stringify(input.arguments) }

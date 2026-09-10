@@ -21,6 +21,8 @@
 - 缺失数据省略，不用 `0`、空字符串、空数组或 `unknown` 冒充实际值。明确观察到的零用量、空输出，以及下文约定的重试初始状态不属于缺失值。
 - 成功结束保持 span status 为 `UNSET`，失败设置 `ERROR`。本文不主动写入 `OK`；`UNSET` 是 status code，不代表 span 尚未结束，结束由 `end()` / end time 表达。[OTel 错误记录规范][otel-errors]
 
+遥测和正文采集默认关闭，配置方式见 [README](../../README.md#配置)。下文所有输入、输出、系统指令及工具参数/结果字段均以开启正文采集且取得相应数据为前提；关闭正文采集时省略，不能用空值表示未采集。
+
 ## 2. Resource 与 instrumentation scope
 
 ### 2.1 Resource attributes
@@ -138,6 +140,8 @@ run 的 `gen_ai.input.messages` 示例：
 ```
 
 这里记录工作流层面的输入，LLM span 上的同名字段记录实际模型请求内容，两者观察范围不同。
+
+run 和 interaction 只聚合真实用户文本及最终 assistant 文本，过滤 synthetic / ignored 文本和压缩摘要。只有附件而没有可用文本的用户输入不伪造空文本：对应 interaction 省略输入属性，包含此类输入的 run 省略整个 `gen_ai.input.messages`，避免将不完整输入表示为完整任务。未知或未完成的输出省略，明确观察到的空文本输出保留。
 
 ### 5.2 生命周期
 

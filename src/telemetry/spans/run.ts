@@ -6,7 +6,7 @@ import type {
   RunUpdate,
   ToolReference,
 } from "../../contract/observer.js";
-import { textMessages, type SpanOptions } from "./common.js";
+import { encodeTextMessage, type SpanOptions } from "./common.js";
 
 type Run = {
   reference: RunReference;
@@ -53,7 +53,7 @@ export function createRunSpans(
     }
 
     if (!input.error && options.captureContent && input.output !== undefined) {
-      run.span.setAttribute("gen_ai.output.messages", textMessages("assistant", input.output));
+      run.span.setAttribute("gen_ai.output.messages", encodeTextMessage("assistant", input.output));
     }
 
     run.span.end(new Date(input.endedAt));
@@ -78,7 +78,7 @@ export function createRunSpans(
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
             attributes: {
-              ...options.attributes,
+              ...options.spanAttributes,
               "session.id": input.sessionID,
               "gen_ai.conversation.id": input.sessionID,
               "gen_ai.operation.name": "invoke_workflow",

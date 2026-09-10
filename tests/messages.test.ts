@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import type { OnStepFinishEvent } from "ai";
-import { modelInput, modelOutput } from "../src/adapter/messages.js";
+import { parseModelInput, parseModelOutput } from "../src/adapter/messages.js";
 
 test("model input preserves history, tool arguments/results and separately supplied system instructions", () => {
-  const result = modelInput({
+  const result = parseModelInput({
     system: "Separate instructions",
     messages: [
       { role: "system", content: "History instructions" },
@@ -58,15 +58,18 @@ test("provider instructions are separate only when not already in system history
     providerOptions: { openai: { instructions: "provider prompt" } },
   };
 
-  expect(modelInput(event).systemInstructions).toEqual([{ type: "text", text: "provider prompt" }]);
+  expect(parseModelInput(event).systemInstructions).toEqual([
+    { type: "text", text: "provider prompt" },
+  ]);
   expect(
-    modelInput({ ...event, messages: [{ role: "system", content: "history" }] }).systemInstructions,
+    parseModelInput({ ...event, messages: [{ role: "system", content: "history" }] })
+      .systemInstructions,
   ).toBeUndefined();
 });
 
 test("model media snapshots copy bytes and preserve URI and MIME information", () => {
   const data = new Uint8Array([1, 2, 3]);
-  const result = modelInput({
+  const result = parseModelInput({
     system: undefined,
     providerOptions: undefined,
     messages: [
@@ -130,7 +133,7 @@ test("model output uses the current generated candidate and excludes history and
     response: { messages: [{ role: "assistant", content: "previous candidate" }] },
   } as unknown as OnStepFinishEvent;
 
-  expect(modelOutput(event)).toEqual([
+  expect(parseModelOutput(event)).toEqual([
     {
       role: "assistant",
       parts: [
@@ -146,15 +149,15 @@ test("model output uses the current generated candidate and excludes history and
       ],
     },
   ]);
-  expect(modelOutput({ ...event, content: [] })).toEqual([]);
+  expect(parseModelOutput({ ...event, content: [] })).toEqual([]);
   expect(
-    modelOutput({ ...event, content: [{ type: "unknown" }] } as unknown as OnStepFinishEvent),
+    parseModelOutput({ ...event, content: [{ type: "unknown" }] } as unknown as OnStepFinishEvent),
   ).toBeUndefined();
 });
 
 test("tool payload conversion snapshots shared JSON, preserves null and tolerates malformed arguments", () => {
   const shared = { x: 1 };
-  const result = modelInput({
+  const result = parseModelInput({
     system: undefined,
     providerOptions: undefined,
     messages: [

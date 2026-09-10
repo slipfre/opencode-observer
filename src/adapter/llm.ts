@@ -15,7 +15,7 @@ import type { InteractionOwner } from "./interaction.js";
 
 export type LlmRequest = Parameters<NonNullable<Hooks["chat.params"]>>;
 
-type Call = {
+type LlmCallState = {
   info?: {
     parentID: string;
     modelID: string;
@@ -41,7 +41,7 @@ export function createLlmTracker(options: {
   parent: (userMessageID: string) => InteractionOwner | undefined;
   compaction?: (markerID: string) => InteractionOwner | undefined;
 }) {
-  const calls = new Map<string, Call>();
+  const calls = new Map<string, LlmCallState>();
   const finished = new Set<string>();
   const closedCompactions = new Set<string>();
   const requests = new Map<
@@ -121,7 +121,7 @@ export function createLlmTracker(options: {
     }
   }
 
-  function resolveParent(info: NonNullable<Call["info"]>) {
+  function resolveParent(info: NonNullable<LlmCallState["info"]>) {
     return info.summary ? options.compaction?.(info.parentID) : options.parent(info.parentID);
   }
 
@@ -150,13 +150,16 @@ export function createLlmTracker(options: {
       calls.forEach((_call, id) => record(id));
     },
     activeRequest() {
-      const active = Array.from(calls.entries()).filter(
+      const activeCalls = Array.from(calls.entries()).filter(
         ([_id, call]) =>
           call.info && !call.info.summary && call.startedAt !== undefined && !call.result,
       );
 
-      return active.length === 1 && active[0]?.[1].info
-        ? { id: active[0][0], parentID: active[0][1].info.parentID }
+      return activeCalls.length === 1 && activeCalls[0]?.[1].info
+        ? {
+            messageID: activeCalls[0][0],
+            ownerMessageID: activeCalls[0][1].info.parentID,
+          }
         : undefined;
     },
     closeCompaction(markerID: string, endedAt: number, error?: ObservationError) {
@@ -201,19 +204,19 @@ export function createLlmTracker(options: {
       const id = candidate[0];
       const generation = (call.generation ?? 0) + 1;
       call.generation = generation;
-      const active = () => calls.get(id) === call && call.generation === generation;
+      const isActive = () => calls.get(id) === call && call.generation === generation;
 
       return {
-        active,
+        active: isActive,
         input(value) {
-          if (active()) {
+          if (isActive()) {
             call.messages = { input: value };
             call.capturePending = true;
             record(id);
           }
         },
         output(value) {
-          if (active()) {
+          if (isActive()) {
             call.messages = { ...call.messages, output: value };
             call.capturePending = false;
             record(id);

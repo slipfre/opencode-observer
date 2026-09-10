@@ -3,10 +3,10 @@ import type { OnStartEvent, OnStepStartEvent, OnStepFinishEvent } from "ai";
 import { streamText } from "ai";
 import { MockLanguageModelV3, convertArrayToReadableStream } from "ai/test";
 import type { LlmFinish, LlmUpdate, Observer } from "../src/contract/observer.js";
-import { createOpencodeAdapter } from "../src/adapter/opencode.js";
+import { createOpenCodeAdapter } from "../src/adapter/opencode.js";
 import type { LlmRequest } from "../src/adapter/llm.js";
 
-const adapters: ReturnType<typeof createOpencodeAdapter>[] = [];
+const adapters: ReturnType<typeof createOpenCodeAdapter>[] = [];
 
 afterEach(() => adapters.splice(0).forEach((adapter) => adapter.close()));
 
@@ -37,7 +37,7 @@ async function setup(captureContent = true) {
     flush: async () => {},
     shutdown: async () => {},
   };
-  const adapter = createOpencodeAdapter({
+  const adapter = createOpenCodeAdapter({
     observer,
     captureContent,
     directory: "/test",
@@ -45,7 +45,7 @@ async function setup(captureContent = true) {
     onDispose: observer.shutdown,
   });
   adapters.push(adapter);
-  await adapter.captureMessages();
+  await adapter.startModelMessageCapture();
   const input: LlmRequest[0] = {
     sessionID: "s1",
     agent: "build",
