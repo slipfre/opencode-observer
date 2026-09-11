@@ -32,23 +32,44 @@ Resource 默认上报 `service.name=opencode`，`service.version` 来自运行�
 
 也可以通过环境变量配置。插件选项优先于对应环境变量；遥测和正文采集默认关闭。上面的示例同时开启两者。
 
-| 插件选项                  | 环境变量                              | 默认值 / 格式                                              |
-| ------------------------- | ------------------------------------- | ---------------------------------------------------------- |
-| `enabled`                 | `OPENCODE_ENABLE_TELEMETRY`           | `false`；布尔环境变量接受 `true` / `false` / `1` / `0`     |
-| `captureContent`          | `OPENCODE_CAPTURE_CONTENT`            | `false`；控制输入和输出正文                                |
-| `endpoint`                | `OPENCODE_OTLP_ENDPOINT`              | `http://localhost:4318`；自动补齐 `/v1/traces`             |
-| `tracePrefix`             | `OPENCODE_TRACE_PREFIX`               | `opencode.`                                                |
-| `otlpHeaders`             | `OPENCODE_OTLP_HEADERS`               | 选项使用字符串值对象；环境变量使用 `key=value,key2=value2` |
-| `resourceAttributes`      | `OPENCODE_RESOURCE_ATTRIBUTES`        | 同上，可覆盖默认 resource 属性                             |
-| `spanAttributes`          | `OPENCODE_SPAN_ATTRIBUTES`            | 同上；不能覆盖插件身份、标准操作、正文和错误字段           |
-| `spanAttributeCountLimit` | `OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT` | `4096`，正整数                                             |
+| 插件选项                  | 环境变量                              | 默认值 / 格式                                                        |
+| ------------------------- | ------------------------------------- | -------------------------------------------------------------------- |
+| `enabled`                 | `OPENCODE_ENABLE_TELEMETRY`           | `false`；布尔环境变量接受 `true` / `false` / `1` / `0`               |
+| `captureContent`          | `OPENCODE_CAPTURE_CONTENT`            | `false`；控制输入和输出正文                                          |
+| `endpoint`                | `OPENCODE_OTLP_ENDPOINT`              | `http://localhost:4318`；自动补齐 `/v1/traces`                       |
+| `tracePrefix`             | `OPENCODE_TRACE_PREFIX`               | `opencode.`                                                          |
+| `otlpHeaders`             | `OPENCODE_OTLP_HEADERS`               | 选项使用字符串值对象；环境变量使用 `key=value,key2=value2`           |
+| `resourceAttributes`      | `OPENCODE_RESOURCE_ATTRIBUTES`        | 同上，可覆盖默认 resource 属性                                       |
+| `spanAttributes`          | `OPENCODE_SPAN_ATTRIBUTES`            | 同上；支持 `user.id`，不能覆盖其他插件身份、标准操作、正文和错误字段 |
+| `spanAttributeCountLimit` | `OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT` | `4096`，正整数                                                       |
+
+### 用户身份解析
+
+启用遥测后，可通过以下独立环境变量配置身份查询。adapter 层读取配置并向独立的 user 模块传入所需参数，入口等待查询结束后，将有效的 `user.id` 合并到 `spanAttributes` 再创建 telemetry。身份接口不使用插件选项，也不读取 OpenCode provider 配置。
+
+| 环境变量                           | 默认值 / 格式                                                                               |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| `OPENCODE_USER_ID_ENABLED`         | `true`；`false` / `0` 关闭身份查询                                                          |
+| `OPENCODE_USER_ID_ENDPOINT`        | 未设置；需要完整 HTTP(S) 身份接口地址，例如 `https://identity.example.com/queryUserByToken` |
+| `OPENCODE_USER_ID_TOKEN`           | 未设置；身份接口接受的 token，可配置为对应 provider 的 API key                              |
+| `OPENCODE_USER_ID_X-Blackbox-Auth` | 未设置；可选的 `X-Blackbox-Auth` 请求头                                                     |
+| `OPENCODE_USER_ID_TIMEOUT`         | `3000` 毫秒，正整数                                                                         |
+| `OPENCODE_USER_ID_RETRY_COUNT`     | `2`；首次失败后的重试次数，允许 0～10                                                       |
+
+未启用遥测、身份查询关闭、接口地址缺失或无效、token 为空时，不发送查询请求。数值配置无效时使用默认值。
+
+插件向身份接口 POST JSON `{"token":"..."}`，仅接受 `code: 0` 且 `result.ssicNo` 为有效非空字符串的响应。token 和返回的 ID 会去除首尾空格，`unknown` 不视为有效 ID。token 和鉴权请求头仅用于身份查询，不写入 span。
+
+初始化会等待查询及重试完成，失败时按 250、500、1000 毫秒等指数退避重试；默认最多请求三次，每次超时 3 秒。查询失败后继续启动。此过程可能延长插件初始化；初始化后不再后台查询或冷却重试。
+
+查询成功的 ID 优先于选项或环境变量 `spanAttributes` 中的 `user.id`；未查询或查询失败时保留静态配置，二者都没有时省略。六类 span 从创建起使用这份配置快照，正文采集关闭时仍生效。契约显式提供的非空身份优先于配置值。修改 token 或环境变量需要重新初始化插件才会生效，身份不会注入模型请求。
 
 ## 采集范围与限制
 
 - 一个 run 表示一次任务执行，包含一次或多次用户交互。任务执行中的追加输入（steer）会创建新 interaction；run 和 interaction 的正文仅聚合真实用户文本和最终答复。
 - 开启正文采集后，模型消息可包含历史上下文、系统指令、reasoning、工具调用与结果、多模态内容，工具 span 可记录参数与成功结果。模型正文反映 SDK 可见的内容，后续 provider 转换仍可能改变实际请求。开启 `OPENCODE_EXPERIMENTAL_NATIVE_LLM` 或无法取得完整消息时，普通模型调用降级为所属用户文本和可见答复，摘要调用省略未知输入。
 - LLM 耗时使用事件观察边界，可能包含事件处理和工具等待开销；当前未精确测量模型请求耗时或首 chunk 耗时。重试字段的 `0` / `[]` 表示尚未确认重试开始，不能据此判断没有重试。
-- 前台子任务的父子关联和权限检查 span 依赖可识别的工具关联；未知关联不会补造。暂不采集工具定义、HTTP headers 或真实响应 ID/model，也未启用用户 ID 解析。
+- 前台子任务的父子关联和权限检查 span 依赖可识别的工具关联；未知关联不会补造。暂不采集工具定义、HTTP headers 或真实响应 ID/model。
 
 正常完成的 span 状态为 `UNSET`，失败为 `ERROR`。缺失数据省略，正文未采集与明确为空有不同含义。完整字段、父子关系及生命周期约定见 [Trace Schema](docs/schemas/trace.md)。
 

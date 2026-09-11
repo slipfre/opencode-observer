@@ -27,7 +27,6 @@ export type ObserverOptions = {
 const reservedAttributes = new Set([
   "session.id",
   "opencode.session.parent_id",
-  "user.id",
   "opencode.run.id",
   "opencode.interaction.id",
   "opencode.agent.type",

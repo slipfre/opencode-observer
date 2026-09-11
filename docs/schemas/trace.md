@@ -52,15 +52,17 @@ Scope 的名称和版本均读取插件 `package.json`，随构建嵌入产物�
 
 ### 2.2 公共 attributes
 
-| 字段                         | 类型   | 出现条件                    | 说明                                                                                      |
-| ---------------------------- | ------ | --------------------------- | ----------------------------------------------------------------------------------------- |
-| `session.id`                 | string | 所有 span 必有              | OpenCode session ID；也是 OTel 标准会话关联字段。                                         |
-| `gen_ai.conversation.id`     | string | 所有 span 必有              | 与 `session.id` 相同，用于 GenAI 会话关联。                                               |
-| `opencode.session.parent_id` | string | 父 session 可识别时         | subagent 的父 session ID。不能改为表示“前一个会话”的 `session.previous_id`。              |
-| `user.id`                    | string | 启用解析且已取得有效用户 ID | 解析成功后新建 span 使用真实 ID，已创建的 span 不回填；未解析成功时省略。                 |
-| `<custom-span-attribute>`    | string | 配置存在时                  | 来自 `OPENCODE_SPAN_ATTRIBUTES`；不能覆盖插件维护的身份、类型、标准操作值或其他派生字段。 |
+| 字段                         | 类型   | 出现条件                   | 说明                                                                                                       |
+| ---------------------------- | ------ | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `session.id`                 | string | 所有 span 必有             | OpenCode session ID；也是 OTel 标准会话关联字段。                                                          |
+| `gen_ai.conversation.id`     | string | 所有 span 必有             | 与 `session.id` 相同，用于 GenAI 会话关联。                                                                |
+| `opencode.session.parent_id` | string | 父 session 可识别时        | subagent 的父 session ID。不能改为表示“前一个会话”的 `session.previous_id`。                               |
+| `user.id`                    | string | 查询、配置或契约提供身份时 | 契约显式非空身份优先，其次是初始化查询结果、静态配置；未提供时省略。                                       |
+| `<custom-span-attribute>`    | string | 配置存在时                 | 来自 `OPENCODE_SPAN_ATTRIBUTES`；除 `user.id` 外，不能覆盖插件维护的身份、类型、标准操作值或其他派生字段。 |
 
 子 agent 的所有 span 使用自己的 `session.id` 和 `gen_ai.conversation.id`，父 session ID 只记录在 `opencode.session.parent_id`。[Session 字段][otel-session]、[User 字段][otel-user]
+
+`user.id` 由 adapter 在初始化阶段调用独立 user 模块解析，使用 `OPENCODE_USER_ID_TOKEN` 调用 `OPENCODE_USER_ID_ENDPOINT`，从成功响应的 `result.ssicNo` 取得 ID；接口返回空值或 `unknown` 时视为未取得有效身份。入口等待查询和重试完成后，将有效 ID 合并进 `spanAttributes`；未查询或查询失败时保留静态配置的 `user.id`。六类 span 从创建起使用此配置快照，契约显式提供的非空身份优先。正文采集开关不控制该属性，身份不会自动刷新、写入 resource 或注入模型请求头。配置与重试规则见 [README](../../README.md#用户身份解析)。
 
 默认每个 span 最多保留 4096 个 attributes，可通过 `OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT` 调整。超过限制时由 OTel SDK 丢弃多余字段；此数量上限不代表单个属性值或整个 OTLP 请求可以无限大。
 

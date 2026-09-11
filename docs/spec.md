@@ -26,6 +26,7 @@
 - 解析 session、message、tool call 等源标识，确定对象身份、归属和父子关联，通过契约中的标识或引用传递。
 - 提取结构化正文、用量、错误和时间等数据，区分真实发生时间与本地观察时间。源数据无法支持精确测量时，按 Trace Schema 降级或省略。
 - 在正文采集关闭时，避免为遥测保留或传递正文。
+- 在初始化阶段读取身份查询配置，将所需参数传入独立的 user 模块，返回查询结果供入口装配。
 
 不得直接创建或修改 OTel span、拼装 OTLP payload、操作 provider 或 exporter，也不得将原始 OpenCode `Event`、`Message`、`Part` 对象直接透传给实现层。
 
@@ -59,6 +60,7 @@
 - 保证重复结束不重复导出，已经结束的对象不被迟到更新改写。
 - 配置和管理 OTel SDK、span processor、OTLP exporter、导出队列及超时。
 - 实现 `flush`、`shutdown`，报告遥测处理和导出失败。
+- 将入口传入的 `spanAttributes` 写入新建 span，包括配置中的 `user.id`。
 
 实现层不得依赖 OpenCode SDK 或 AI SDK，不得判断原始事件类型、读取原始消息字段来重新推断业务行为，也不得调用 OpenCode client 补查源数据。
 
@@ -70,6 +72,7 @@ OTel SDK 负责遥测构建与处理，OTLP 是导出协议。实现应使用三
 
 ```text
 OpenCode 适配层 ──依赖──> 观测契约层 <──依赖并实现── 遥测实现层
+       └──初始化──> 独立 user 模块
 ```
 
 运行时数据流：
@@ -87,13 +90,14 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 
 配置应按职责传入对应模块。遥测关闭时，不创建遥测实现或注册采集逻辑；仅在启用遥测的路径中加载 OTel 实现及其较重的依赖。AI SDK 正文采集模块由适配层按需加载，仅在遥测与正文采集均开启、且使用支持的模型运行路径时注册。
 
-三层必须分别位于 `src/adapter/`、`src/contract/` 和 `src/telemetry/`。根目录的 `src/index.ts`、`src/config.ts` 仅负责装配与配置解析，不放置行为识别、契约或遥测实现代码。
+三层必须分别位于 `src/adapter/`、`src/contract/` 和 `src/telemetry/`。用户身份逻辑单独位于 `src/user/`，不属于适配层或遥测实现层。根目录的 `src/index.ts`、`src/config.ts` 仅负责装配与配置解析，不放置行为识别、契约或遥测实现代码。
 
-| 目录             | 允许的依赖                                         | 禁止的依赖                                         |
-| ---------------- | -------------------------------------------------- | -------------------------------------------------- |
-| `src/adapter/`   | 本层模块、观测契约、OpenCode SDK、AI SDK、平台库   | 遥测实现、OTel SDK、根目录装配与配置模块           |
-| `src/contract/`  | 本层契约类型                                       | 适配层、实现层、第三方 SDK、根目录装配与配置模块   |
-| `src/telemetry/` | 本层模块、观测契约、OTel SDK、平台库及包版本元数据 | 适配层、OpenCode SDK、AI SDK、根目录装配与配置模块 |
+| 目录             | 允许的依赖                                                  | 禁止的依赖                                                    |
+| ---------------- | ----------------------------------------------------------- | ------------------------------------------------------------- |
+| `src/adapter/`   | 本层模块、user 模块、观测契约、OpenCode SDK、AI SDK、平台库 | 遥测实现、OTel SDK、根目录装配与配置模块                      |
+| `src/contract/`  | 本层契约类型                                                | 适配层、实现层、第三方 SDK、根目录装配与配置模块              |
+| `src/telemetry/` | 本层模块、观测契约、OTel SDK、平台库及包版本元数据          | 适配层、user 模块、OpenCode SDK、AI SDK、根目录装配与配置模块 |
+| `src/user/`      | 本模块、平台库                                              | 适配层、观测契约、遥测实现、第三方 SDK、根目录装配与配置模块  |
 
 实现层定义自身需要的配置类型，由入口传入匹配的配置数据；不得导入配置解析函数或通过 `ReturnType<typeof loadConfig>` 反向耦合根目录。类型导入、重导出和动态 `import()` 同样遵守层间边界。
 
@@ -103,7 +107,11 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 
 遥测实现层内部按 `factory → observer → spans` 组织依赖。`factory.ts` 负责创建 SDK、exporter 和 Observer；`observer.ts` 实现契约并协调记录、导出与关闭；具体 span 的状态管理和数据映射放在 `spans/`，共用配置类型和文本编码放在 `spans/common.ts`，结构化消息编码放在 `spans/messages.ts`。`spans/` 不反向依赖工厂或 Observer 实现。
 
-`.oxlintrc.json` 对三层配置导入限制，覆盖类型导入和重导出。`tests/boundaries.test.ts` 检查模块的实际静态与动态依赖，并将相对路径解析后判断目标目录，避免通过相对路径绕过目录边界。
+用户身份逻辑独立放在 `user/index.ts`，提供异步 `getUser(token, options)`，负责请求、响应校验、超时和有限重试，返回本模块定义的 `User = { id: string }` 或 `undefined`。模块不读取环境变量，不依赖观测契约、OpenCode 或 OTel，也不维护 pending、缓存或冷却状态。`adapter/user.ts` 提供 `getOpenCodeUser`，读取并校验专用的 `OPENCODE_USER_ID_*` 环境变量，再向独立模块传入所需参数。此能力不读取 provider 配置。
+
+入口等待 `getOpenCodeUser` 完成，将有效的 `user.id` 合并进配置中的 `spanAttributes`，然后调用原有的 telemetry factory。初始化查询可能延长启动；请求失败或超时在有限重试后返回空结果，继续启动并保留静态配置中的身份。telemetry 不接收身份回调，不增加专用 processor 或契约类型，只沿用六类 span 的 attributes 展开逻辑。为兼容此通道，`user.id` 允许通过属性过滤，身份字段缺失时不覆盖配置值。优先级为契约显式非空身份、初始化查询结果、静态配置。初始化后使用固定快照，不随 token 或环境变量变化刷新。
+
+`.oxlintrc.json` 对三层和独立 user 模块配置导入限制，覆盖类型导入和重导出。`tests/boundaries.test.ts` 检查模块的实际静态与动态依赖，并将相对路径解析后判断目标目录，避免通过相对路径绕过目录边界。
 
 ## 4. 状态与规则归属
 
@@ -213,7 +221,7 @@ steer 结束旧 interaction 的时间等于新用户输入的创建时间，正�
 
 run 的 `parent` 使用明确的 `ToolReference`；摘要 LLM 的 `compactionID` 与其 compaction 父节点一致。已观察到 `session.created/updated` 时，通过 `parentID` 判断 primary / subagent；活动 task 关联也可以确认 subagent。相应的新 span 使用 `parentSessionID` 与 `agentType`，缺失证据时仍为 `undefined`，不假定 primary 或事后修改既有 span 的父节点。interaction 的 `agentName` 从 owner 用户消息取得；LLM / tool 优先使用 assistant 的 `agent`，兼容 `mode`。`userID` 使用所属 interaction 的身份快照。顶层 run 由遥测实现从空上下文创建独立 trace。
 
-当前插件入口未接入用户 ID 解析器，默认省略 `user.id`。适配层预留的解析器可为后续新建 run 和 interaction 提供身份，LLM 使用所属 interaction 的身份快照；已创建的 span 不回填。
+插件通过 adapter 调用独立 user 模块取得身份，入口将其合并为 `spanAttributes["user.id"]`，telemetry 在六类 span 创建时展开该配置；查询和静态配置均未提供身份时省略。适配层 tracker 预留的解析器仍可为契约调用提供显式身份，LLM 使用所属 interaction 的身份快照，显式非空身份优先；已创建的 span 不回填。
 
 适配层保留已接收用户输入的标识，实现层保留各类已结束对象的标识，直到插件关闭；去重记录不保留正文，关闭时释放。重复用户 hook 不创建新任务或交互，也不将旧输入追加到下一次 run。迟到输出不修改已结束对象的输出或结束时间。已结束 interaction 与 compaction 的轻量 OTel context 保留至 run 结束，供已确认归属的操作关联原 parent。
 

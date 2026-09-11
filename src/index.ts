@@ -11,9 +11,20 @@ export const ObserverPlugin: Plugin = async (input, options) => {
   const { createTelemetry } = await import("./telemetry/factory.js");
   const { createOpenCodeAdapter } = await import("./adapter/opencode.js");
   const { getOpenCodeVersion } = await import("./adapter/version.js");
+  const { getOpenCodeUser } = await import("./adapter/user.js");
 
-  const serviceVersion = await getOpenCodeVersion(input.client).catch(() => undefined);
-  const observer = createTelemetry({ ...config, serviceVersion });
+  const [serviceVersion, user] = await Promise.all([
+    getOpenCodeVersion(input.client).catch(() => undefined),
+    getOpenCodeUser(),
+  ]);
+  const observer = createTelemetry({
+    ...config,
+    serviceVersion,
+    spanAttributes: {
+      ...config.spanAttributes,
+      ...(user ? { "user.id": user.id } : {}),
+    },
+  });
 
   const log = async (error: unknown) => {
     await input.client.app
