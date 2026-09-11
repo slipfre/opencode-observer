@@ -1,0 +1,159 @@
+src/telemetry/spans/interaction.ts
+  s_37e6e110cb4030::t_a9e694cd0745cb 9,48,83
+  s_37e6e110cb4030::t_58892f53adce24 73
+e2e/tools.e2e.test.ts
+  s_f9638461a9dfc0::t_5191e6fe62b612 167-171,173-183,185,187-196,200-201,209-210
+  s_f9638461a9dfc0::t_f4792a451f7305 1-6,11-28,32-68,72-86,90-109,115-131,143-145,155-166,211
+  s_f9638461a9dfc0::t_5a1a41a33cb801 197-199
+  s_f9638461a9dfc0::t_42fb9d4034118d 7-10,29-31,69-71,87-89,110-114,132-142,146-154
+  s_f9638461a9dfc0::t_f6544c65f03535 172,184,186,202-208
+src/adapter/opencode.ts
+  s_37e6e110cb4030::t_506d1c399ce5e3 4,6,19-20,52,88-89,92,101,111,113,117
+src/telemetry/spans/permission.ts
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 21,44,53,55,68
+  s_37e6e110cb4030::t_58892f53adce24 66
+src/adapter/ai-sdk.ts
+  s_37e6e110cb4030::t_506d1c399ce5e3 10,12,20,27,29,36,46,49,63,66,70,73,77,81-82,108,117-120,122-123,126,133,145,153,158
+src/telemetry/spans/messages.ts
+  s_37e6e110cb4030::t_a9e694cd0745cb 3,5,9-10,13
+tests/run.test.ts
+  s_37e6e110cb4030::t_86ccd6d0c1f8d5 273
+  s_37e6e110cb4030::t_58892f53adce24 284,504
+e2e/run.e2e.test.ts
+  s_f9638461a9dfc0::t_5191e6fe62b612 188-208,213,217-223,228-235
+  s_f9638461a9dfc0::t_0165162226d8cf 1-56,62-122,129-182,186-187,236
+  s_f9638461a9dfc0::t_5a1a41a33cb801 209-212,214-216,224-227
+  s_f9638461a9dfc0::t_42fb9d4034118d 123-128,183-185
+  s_f9638461a9dfc0::t_8fd05b949fdbfb 57-61
+src/adapter/coordinator.ts
+  s_37e6e110cb4030::t_1bec616538df5b 46,252-253,311-314
+  s_37e6e110cb4030::t_5b2e510162c116 73
+  s_37e6e110cb4030::t_9a0596a1839943 248,250-251,254
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 37,51,64,66,68-70,74-75,96,103,130,147
+e2e/support/fixture.ts
+  s_37e6e110cb4030::t_86ccd6d0c1f8d5 29-31,33-36
+  s_f9638461a9dfc0::t_42fb9d4034118d 23-26,39-41,133-135
+  s_f9638461a9dfc0::t_b80fbd9e7e9507 161-162
+  s_f9638461a9dfc0::t_bd11b928cc867d 1-11,13-22,27-28,32,37-38,42-47,59,61-73,75-132,136-153,155-159,163-169,171-186,188-201
+  s_f9638461a9dfc0::t_5191e6fe62b612 12,48-58,60,74,170,187
+  s_f9638461a9dfc0::t_8fd05b949fdbfb 154,160
+docs/spec.md
+  s_37e6e110cb4030::t_06f847d5e3b47c 169,216
+  s_37e6e110cb4030::t_1630d4826851df 217
+src/contract/observer.ts
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 108-112,148
+README.md
+  s_37e6e110cb4030::t_86ccd6d0c1f8d5 7,9,16,27,57,60,68
+  s_37e6e110cb4030::t_06f847d5e3b47c 3,5,29,46-53,55,58-59,61-64,66,70,72,74-76
+  s_37e6e110cb4030::t_49744f926b1978 28
+tsconfig.json
+  s_f9638461a9dfc0::t_bd11b928cc867d 21
+src/adapter/tool.ts
+  s_37e6e110cb4030::t_9a0596a1839943 32
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 12,15,35-39,44-45,48,55,66,124,158-159,162
+package.json
+  s_f9638461a9dfc0::t_bd11b928cc867d 36-37
+src/adapter/llm.ts
+  s_37e6e110cb4030::t_1bec616538df5b 159-162
+  s_37e6e110cb4030::t_9a0596a1839943 18,44,124,153,158,207,210,212,219
+src/adapter/interaction.ts
+  s_37e6e110cb4030::t_9a0596a1839943 11,32
+docs/schemas/trace.md
+  s_37e6e110cb4030::t_06f847d5e3b47c 24-25,144
+  s_37e6e110cb4030::t_2031a832ff43e6 145
+src/adapter/compaction.ts
+  s_37e6e110cb4030::t_1bec616538df5b 92,108
+tests/messages.test.ts
+  s_37e6e110cb4030::t_a9e694cd0745cb 3,6,61-63,65-66,72,136,152,154,160
+src/telemetry/spans/common.ts
+  s_37e6e110cb4030::t_a9e694cd0745cb 18
+  s_37e6e110cb4030::t_ccd6edef77e8fd 15
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 28
+AGENTS.md
+  s_37e6e110cb4030::t_86ccd6d0c1f8d5 36,42-44,79
+  s_37e6e110cb4030::t_06f847d5e3b47c 11,57-60,86-89
+  s_f9638461a9dfc0::t_ebfc2da70aa5cf 61-62,64-78,80-85,90-99,101-104
+  s_37e6e110cb4030::t_e76a16eccc9b8e 1-10,12-31,45-56,63
+  s_37e6e110cb4030::t_10c3db107b9b36 114
+src/adapter/permission.ts
+  s_37e6e110cb4030::t_5b2e510162c116 86
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 19,40-45
+e2e/compaction.e2e.test.ts
+  s_f9638461a9dfc0::t_42fb9d4034118d 15-18,26-28,35-38,53-55,57-62,84-87,90-94,98-100,105-107
+  s_f9638461a9dfc0::t_c3f42a0ac3c31b 1-14,19-25,29-34,39-52,56,63-83,88-89,95-97,101-104,108-114
+src/telemetry/spans/compaction.ts
+  s_37e6e110cb4030::t_58892f53adce24 72
+src/index.ts
+  s_37e6e110cb4030::t_506d1c399ce5e3 12,29,38
+src/adapter/session.ts
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 24,37
+tests/ai-sdk.test.ts
+  s_37e6e110cb4030::t_c850c38f405443 6,9,40,48
+src/telemetry/spans/llm.ts
+  s_37e6e110cb4030::t_58892f53adce24 137
+  s_37e6e110cb4030::t_a9e694cd0745cb 10-11,68,97,101,107,158
+src/telemetry/factory.ts
+  s_37e6e110cb4030::t_ccd6edef77e8fd 17,20,44,49,72
+src/telemetry/observer.ts
+  s_37e6e110cb4030::t_ccd6edef77e8fd 24,28,41,46-47,49,66,69-75,77
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 161
+e2e/support/otlp-receiver.ts
+  s_f9638461a9dfc0::t_bd11b928cc867d 1-30,32-102,104-105
+  s_f9638461a9dfc0::t_26d83631f85ebc 31
+  s_f9638461a9dfc0::t_5191e6fe62b612 103
+e2e/support/assertions.ts
+  s_f9638461a9dfc0::t_bd11b928cc867d 1-63
+tests/config.test.ts
+  s_37e6e110cb4030::t_86ccd6d0c1f8d5 68
+  s_37e6e110cb4030::t_226ad777038c10 50,59
+  s_37e6e110cb4030::t_ccd6edef77e8fd 15,57,60
+e2e/propagation.e2e.test.ts
+  s_f9638461a9dfc0::t_f4792a451f7305 1-34,38-58
+  s_f9638461a9dfc0::t_42fb9d4034118d 35-37
+src/adapter/messages.ts
+  s_37e6e110cb4030::t_a9e694cd0745cb 5,8,14,33,41,55,62,80,86
+src/telemetry/spans/run.ts
+  s_37e6e110cb4030::t_a9e694cd0745cb 9,56
+  s_37e6e110cb4030::t_58892f53adce24 81
+tests/adapter.test.ts
+  s_37e6e110cb4030::t_c850c38f405443 14,181,365
+tests/telemetry.test.ts
+  s_37e6e110cb4030::t_58892f53adce24 284,472,703
+tests/operations.test.ts
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 603,655,663
+  s_37e6e110cb4030::t_58892f53adce24 38
+  s_37e6e110cb4030::t_c850c38f405443 681
+e2e/support/fake-llm.ts
+  s_f9638461a9dfc0::t_5191e6fe62b612 103
+  s_f9638461a9dfc0::t_bd11b928cc867d 1-42,46-83,85-102,104-105
+  s_f9638461a9dfc0::t_42fb9d4034118d 43-45,84
+src/telemetry/spans/tool.ts
+  s_37e6e110cb4030::t_f8fb2e3ce6ec58 53,65
+  s_37e6e110cb4030::t_58892f53adce24 62
+src/config.ts
+  s_37e6e110cb4030::t_ccd6edef77e8fd 5,12,23,27,34-43,47,59,75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6f5948645a40890f19a8a74f02d20e818977338f",
+  "prompts": {},
+  "sessions": {
+    "s_37e6e110cb4030": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b88-0724-7d93-b545-44e23a325910",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": null
+    },
+    "s_f9638461a9dfc0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b43-04fa-78a1-be79-08e04ad2e99d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
