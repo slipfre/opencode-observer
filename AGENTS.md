@@ -18,6 +18,7 @@ src/
 ├── config.ts            # Plugin options and environment configuration
 ├── adapter/             # OpenCode hooks/events, behavior tracking, AI SDK integration
 ├── contract/            # SDK-independent observation interfaces and message types
+├── user/                # User identity configuration, resolution, and HTTP lookup
 └── telemetry/           # OpenTelemetry setup, contract implementation, export lifecycle
     └── spans/           # Span state and attribute/message encoding
 tests/                   # Unit and in-process integration tests, including module boundaries

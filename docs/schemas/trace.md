@@ -18,7 +18,7 @@
 - `必有`：span 创建时或正常结束时一定写入；`条件`：仅在指定数据或关联存在时写入；`初始值`：创建时写入，结束前可能更新。
 - `int` 表示整数计数，`double` 表示浮点值；两者在 JavaScript 中均为 `number`。`string[]` 是原生 OTel 字符串数组，不序列化为 JSON 字符串。
 - `string(JSON)` 表示序列化一次的 JSON 值。GenAI 将消息、工具定义及调用参数/结果定义为结构化 `any`，支持结构化 span attributes 时优先使用结构化值；本插件 v1 的 JS SDK 导出约定使用规范允许的 JSON 字符串形式。不能笼统认为 OTLP 不支持嵌套对象，也不能把 JSON 字符串再次编码。本文 JSON 示例展示序列化前的值。
-- 缺失数据省略，不用 `0`、空字符串、空数组或 `unknown` 冒充实际值。明确观察到的零用量、空输出，以及下文约定的重试初始状态不属于缺失值。
+- 缺失数据省略，不用 `0`、空字符串、空数组或 `unknown` 冒充实际值。`user.id` 是显式例外：身份查询最终失败且没有其他身份来源时，使用 `unknown` 标记身份未知。明确观察到的零用量、空输出，以及下文约定的重试初始状态不属于缺失值。
 - 成功结束保持 span status 为 `UNSET`，失败设置 `ERROR`。本文不主动写入 `OK`；`UNSET` 是 status code，不代表 span 尚未结束，结束由 `end()` / end time 表达。[OTel 错误记录规范][otel-errors]
 
 遥测和正文采集默认关闭，配置方式见 [README](../../README.md#配置)。下文所有输入、输出、系统指令及工具参数/结果字段均以开启正文采集且取得相应数据为前提；关闭正文采集时省略，不能用空值表示未采集。
@@ -52,15 +52,17 @@ Scope 的名称和版本均读取插件 `package.json`，随构建嵌入产物�
 
 ### 2.2 公共 attributes
 
-| 字段                         | 类型   | 出现条件                    | 说明                                                                                      |
-| ---------------------------- | ------ | --------------------------- | ----------------------------------------------------------------------------------------- |
-| `session.id`                 | string | 所有 span 必有              | OpenCode session ID；也是 OTel 标准会话关联字段。                                         |
-| `gen_ai.conversation.id`     | string | 所有 span 必有              | 与 `session.id` 相同，用于 GenAI 会话关联。                                               |
-| `opencode.session.parent_id` | string | 父 session 可识别时         | subagent 的父 session ID。不能改为表示“前一个会话”的 `session.previous_id`。              |
-| `user.id`                    | string | 启用解析且已取得有效用户 ID | 解析成功后新建 span 使用真实 ID，已创建的 span 不回填；未解析成功时省略。                 |
-| `<custom-span-attribute>`    | string | 配置存在时                  | 来自 `OPENCODE_SPAN_ATTRIBUTES`；不能覆盖插件维护的身份、类型、标准操作值或其他派生字段。 |
+| 字段                         | 类型   | 出现条件                         | 说明                                                                                                                     |
+| ---------------------------- | ------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `session.id`                 | string | 所有 span 必有                   | OpenCode session ID；也是 OTel 标准会话关联字段。                                                                        |
+| `gen_ai.conversation.id`     | string | 所有 span 必有                   | 与 `session.id` 相同，用于 GenAI 会话关联。                                                                              |
+| `opencode.session.parent_id` | string | 父 session 可识别时              | subagent 的父 session ID。不能改为表示“前一个会话”的 `session.previous_id`。                                             |
+| `user.id`                    | string | 已发起查询、配置或契约提供身份时 | 契约显式非空身份优先，其次是初始化查询结果、静态配置；查询失败且没有其他身份时为 `unknown`，未查询且没有其他身份时省略。 |
+| `<custom-span-attribute>`    | string | 配置存在时                       | 来自 `OPENCODE_SPAN_ATTRIBUTES`；除 `user.id` 外，不能覆盖插件维护的身份、类型、标准操作值或其他派生字段。               |
 
 子 agent 的所有 span 使用自己的 `session.id` 和 `gen_ai.conversation.id`，父 session ID 只记录在 `opencode.session.parent_id`。[Session 字段][otel-session]、[User 字段][otel-user]
+
+`user.id` 由插件入口在初始化阶段直接调用独立 user 模块解析，使用 `OPENCODE_USER_ID_TOKEN` 调用 `OPENCODE_USER_ID_ENDPOINT`，从成功响应的 `result.ssicNo` 取得 ID；接口返回空值或 `unknown` 时视为未取得有效身份。入口等待查询和重试完成后，将有效 ID 合并进 `spanAttributes`；未查询或查询失败时保留静态配置的 `user.id`。没有静态配置时，查询最终失败使用 `unknown` 兜底，因开关关闭、地址无效或 token 为空而跳过查询则省略。六类 span 从创建起使用此配置快照，契约显式提供的非空身份优先。正文采集开关不控制该属性，身份不会自动刷新、写入 resource 或注入模型请求头。配置与重试规则见 [README](../../README.md#用户身份解析)。
 
 默认每个 span 最多保留 4096 个 attributes，可通过 `OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT` 调整。超过限制时由 OTel SDK 丢弃多余字段；此数量上限不代表单个属性值或整个 OTLP 请求可以无限大。
 

@@ -10,6 +10,7 @@ type FixtureOptions = {
   pluginOptions?: Record<string, unknown>;
   autoCompact?: boolean;
   permission?: Record<string, "ask" | "allow" | "deny">;
+  env?: Record<string, string>;
 };
 export type E2EFixture = Parameters<Parameters<typeof withE2EFixture>[1]>[0];
 export type RunResult = Awaited<ReturnType<E2EFixture["run"]>>;
@@ -135,6 +136,7 @@ export async function withE2EFixture(
                     ),
                 ),
               ),
+              ...options.env,
               HOME: directory,
               PWD: directory,
               XDG_CONFIG_HOME: path.join(directory, ".config"),

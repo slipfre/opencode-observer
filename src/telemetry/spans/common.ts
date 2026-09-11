@@ -40,7 +40,7 @@ export function identityAttributes(run: RunReference, identity: AgentIdentity) {
     "gen_ai.agent.name": identity.agentName,
     "opencode.agent.type": identity.agentType,
     "opencode.session.parent_id": identity.parentSessionID,
-    "user.id": identity.userID || undefined,
+    ...(identity.userID ? { "user.id": identity.userID } : {}),
   };
 }
 

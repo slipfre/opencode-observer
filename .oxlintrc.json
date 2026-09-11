@@ -26,11 +26,13 @@
                   "**/telemetry",
                   "**/telemetry/**",
                   "**/telemetry.*",
+                  "**/user",
+                  "**/user/**",
                   "**/config.*",
                   "opencode-observer",
                   "opencode-observer/**"
                 ],
-                "message": "The adapter may depend on its own modules and the contract, never telemetry or composition configuration."
+                "message": "The adapter may depend on its own modules and the contract, never the user module, telemetry or composition configuration."
               }
             ],
             "paths": [
@@ -73,6 +75,22 @@
       }
     },
     {
+      "files": ["src/user/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["*", "!./**", "!node:*", "!node:*/**"],
+                "message": "The user module may only depend on its own modules and platform libraries."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["src/telemetry/**/*.ts"],
       "rules": {
         "no-restricted-imports": [
@@ -87,6 +105,8 @@
                   "@ai-sdk/**",
                   "**/adapter",
                   "**/adapter/**",
+                  "**/user",
+                  "**/user/**",
                   "**/config.*",
                   "opencode-observer",
                   "opencode-observer/**"

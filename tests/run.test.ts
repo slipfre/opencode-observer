@@ -498,7 +498,7 @@ test("errors without a session do not affect runs; unknown error types use _OTHE
   expect((await h.spans())[0]?.status.message).toBe("unclassified");
 });
 
-test("custom attributes cannot override derived fields or fabricate user/error attributes", async () => {
+test("custom attributes allow user.id but cannot override other derived or error attributes", async () => {
   const h = setup({
     tracePrefix: "custom.",
     spanAttributes: {
@@ -508,7 +508,7 @@ test("custom attributes cannot override derived fields or fabricate user/error a
       "opencode.run.id": "fake",
       "error.type": "fake",
       "gen_ai.operation.name": "fake",
-      "user.id": "fake",
+      "user.id": "configured-user",
       "openinference.span.kind": "CHAIN",
     },
   });
@@ -525,7 +525,7 @@ test("custom attributes cannot override derived fields or fabricate user/error a
     "opencode.run.id": "u1",
     "gen_ai.operation.name": "invoke_workflow",
   });
-  expect(span?.attributes["user.id"]).toBeUndefined();
+  expect(span?.attributes["user.id"]).toBe("configured-user");
   expect(span?.attributes["opencode.session.parent_id"]).toBeUndefined();
   expect(span?.attributes["error.type"]).toBeUndefined();
   expect(span?.attributes["openinference.span.kind"]).toBeUndefined();

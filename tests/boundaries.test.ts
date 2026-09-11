@@ -15,8 +15,8 @@ test("runtime imports stay within each layer and its allowed dependencies", asyn
 
         const layer = file.split(/[\\/]/)[0];
 
-        if (!layer || !["adapter", "contract", "telemetry"].includes(layer)) {
-          return [`${file} is outside the three source layers`];
+        if (!layer || !["adapter", "contract", "telemetry", "user"].includes(layer)) {
+          return [`${file} is outside the source layers and user module`];
         }
 
         return scanner
@@ -26,7 +26,7 @@ test("runtime imports stay within each layer and its allowed dependencies", asyn
               const target = resolve(source, dirname(file), dependency.path);
               const destination = relative(source, target).split(/[\\/]/)[0];
 
-              if (destination === layer || destination === "contract") {
+              if (destination === layer || (destination === "contract" && layer !== "user")) {
                 return [];
               }
 
@@ -46,6 +46,10 @@ test("runtime imports stay within each layer and its allowed dependencies", asyn
               layer === "telemetry" &&
               (dependency.path.startsWith("@opentelemetry/") || dependency.path.startsWith("node:"))
             ) {
+              return [];
+            }
+
+            if (layer === "user" && dependency.path.startsWith("node:")) {
               return [];
             }
 
