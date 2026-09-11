@@ -4,6 +4,8 @@ OpenCode 可观测性插件，记录任务、用户交互、模型调用、工�
 
 目前支持 run、interaction、LLM、tool、compaction 和 permission.check 六类 span，可记录父子关系、token 用量、错误，以及按需开启的输入输出正文。
 
+Resource 默认上报 `service.name=opencode`，`service.version` 来自运行中 OpenCode 的健康接口；无法获取版本时省略。Instrumentation scope 的 `name` 和 `version` 来自插件的 `package.json`。
+
 ## 安装与启用
 
 在 OpenCode 的 `opencode.json` 中配置插件包和支持 OTLP HTTP/JSON 的遥测接收端：

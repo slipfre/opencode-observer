@@ -37,12 +37,16 @@
 
 常见归一化规则：`process.platform` 的 `win32 → windows`、`sunos → solaris`，`linux` / `darwin` 等保持原值；架构的 `x64 → amd64`、`ia32 → x86`、`arm → arm32`、`arm64 → arm64`。`process.arch` 表示当前进程架构，仅当确认可代表主机架构时用作 `host.arch` 来源；无法确认时省略，不把仿真进程架构当作主机架构。[OS 字段][otel-os]、[Host 字段][otel-host]
 
+启用遥测时，插件通过 OpenCode client 的请求通道查询一次 `/global/health`，将响应中的非空 `version` 写入 `service.version`。查询超时（1 秒）、失败或版本缺失时省略该字段，不影响后续采集。自定义 resource 属性仍可覆盖 `service.name` 和 `service.version`。
+
 Instrumentation scope：
 
 | 字段    | 值                  |
 | ------- | ------------------- |
 | name    | `opencode-observer` |
 | version | 当前插件包版本      |
+
+Scope 的名称和版本均读取插件 `package.json`，随构建嵌入产物。
 
 本插件混合使用 OTel、GenAI 和 OpenCode 扩展，不能仅以核心 OTel schema URL 声称所有扩展都有自动迁移规则；GenAI 提交号也不是一个已发布的 schema URL。
 

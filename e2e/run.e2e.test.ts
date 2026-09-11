@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { version } from "../package.json";
+import { name, version } from "../package.json";
 import { expectError, expectUnset, messages, oneSpan, requireSpans } from "./support/assertions.js";
 import { withE2EFixture } from "./support/fixture.js";
 
@@ -78,9 +78,10 @@ describe("OpenCode run E2E", () => {
         });
         spans.forEach((span) => {
           expectUnset(span);
-          expect(span.scope).toEqual({ name: "opencode-observer", version });
+          expect(span.scope).toEqual({ name, version });
           expect(span.resource).toMatchObject({
             "service.name": "opencode",
+            "service.version": "local",
             "e2e.resource": "opencode-observer",
           });
           expect(span.attributes["e2e.fixture"]).toBeString();

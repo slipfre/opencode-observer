@@ -8,6 +8,7 @@ import { loadConfig } from "../src/config.js";
 import { createTelemetry } from "../src/telemetry/factory.js";
 import { streamText, jsonSchema } from "ai";
 import { MockLanguageModelV3, convertArrayToReadableStream } from "ai/test";
+import { name, version } from "../package.json";
 
 type Attribute = {
   key: string;
@@ -75,6 +76,11 @@ test("tool, permission and compaction with summary LLM export through plugin eve
     port: 0,
     async fetch(request) {
       paths.push(new URL(request.url).pathname);
+
+      if (new URL(request.url).pathname === "/global/health") {
+        return Response.json({ healthy: true, version: "1.18.30" });
+      }
+
       payloads.push((await request.json()) as ExportPayload);
 
       return Response.json({});
@@ -292,7 +298,20 @@ test("tool, permission and compaction with summary LLM export through plugin eve
   );
   expect(attributes("opencode.llm")["opencode.compaction.id"]).toBe("c1");
   expect(Number(attributes("opencode.compaction")["opencode.compaction.prompt_tokens"])).toBe(15);
-  expect(paths.every((path) => path === "/v1/traces")).toBe(true);
+  expect(paths).toEqual(["/global/health", "/v1/traces"]);
+  const resources = payloads.flatMap((payload) => payload.resourceSpans);
+  expect(resources.length).toBeGreaterThan(0);
+  resources.forEach((resource) => {
+    expect(resource.resource.attributes).toContainEqual({
+      key: "service.name",
+      value: { stringValue: "opencode" },
+    });
+    expect(resource.resource.attributes).toContainEqual({
+      key: "service.version",
+      value: { stringValue: "1.18.30" },
+    });
+    resource.scopeSpans.forEach((scope) => expect(scope.scope).toEqual({ name, version }));
+  });
 });
 
 test("AI SDK history and generated tool calls reach OTLP through the plugin", async () => {
@@ -503,6 +522,10 @@ test("plugin exports run, interaction and LLM with remote ancestry without query
       const path = new URL(request.url).pathname;
       requests.push(path);
 
+      if (path === "/global/health") {
+        return Response.json({ healthy: true, version: "1.18.30" });
+      }
+
       if (path === "/v1/traces") {
         headers.push(request.headers.get("x-test") ?? "");
         payloads.push((await request.json()) as ExportPayload);
@@ -522,7 +545,7 @@ test("plugin exports run, interaction and LLM with remote ancestry without query
     otlpHeaders: { "x-test": "present" },
     traceparent: "00-12345678901234567890123456789012-1234567890123456-01",
     tracestate: "vendor=value",
-    resourceAttributes: { "service.name": "test-opencode" },
+    resourceAttributes: { "service.name": "test-opencode", "service.version": "custom-version" },
   });
   hooks.push(hook);
 
@@ -616,7 +639,7 @@ test("plugin exports run, interaction and LLM with remote ancestry without query
   });
 
   expect(payloads).toHaveLength(1);
-  expect(requests).toEqual(["/v1/traces"]);
+  expect(requests).toEqual(["/global/health", "/v1/traces"]);
   expect(headers).toEqual(["present"]);
 
   const resource = payloads[0]?.resourceSpans[0];
@@ -625,10 +648,14 @@ test("plugin exports run, interaction and LLM with remote ancestry without query
     key: "service.name",
     value: { stringValue: "test-opencode" },
   });
+  expect(resource?.resource.attributes).toContainEqual({
+    key: "service.version",
+    value: { stringValue: "custom-version" },
+  });
 
   const scope = resource?.scopeSpans[0];
 
-  expect(scope?.scope).toMatchObject({ name: "opencode-observer", version: "0.1.0" });
+  expect(scope?.scope).toEqual({ name, version });
   expect(scope?.spans).toHaveLength(3);
 
   const span = scope?.spans.find((item) => item.name === "opencode.run");
@@ -798,6 +825,78 @@ test("a slow collector does not block chat hooks and shutdown waits for export",
             .stringValue,
       ),
   ).toEqual(["u1", "u2"]);
+});
+
+test.each([
+  { label: "missing", body: {} },
+  { label: "null", body: null },
+  { label: "empty", body: { version: "  " } },
+  { label: "invalid", body: { version: 123 } },
+  { label: "HTTP error", body: { version: "untrusted" }, status: 503 },
+  { label: "invalid JSON", body: "not JSON" },
+  { label: "network error", body: undefined },
+])("plugin still exports spans when the OpenCode version is $label", async (scenario) => {
+  const payloads: ExportPayload[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      payloads.push((await request.json()) as ExportPayload);
+
+      return Response.json({});
+    },
+  });
+  servers.push(server);
+  const input = pluginInput(server);
+  input.client = createOpencodeClient({
+    baseUrl: "http://opencode.invalid",
+    fetch: async () => {
+      if (scenario.body === undefined) {
+        throw new Error("OpenCode health endpoint unavailable");
+      }
+
+      if (typeof scenario.body === "string") {
+        return new Response(scenario.body, { headers: { "content-type": "application/json" } });
+      }
+
+      return Response.json(scenario.body, { status: scenario.status ?? 200 });
+    },
+  });
+  const hook = await ObserverPlugin(input, { enabled: true, endpoint: server.url.toString() });
+  hooks.push(hook);
+
+  await hook["chat.message"]?.(
+    { sessionID: "s1" },
+    {
+      message: {
+        id: "u1",
+        sessionID: "s1",
+        role: "user",
+        time: { created: Date.now() },
+        agent: "build",
+        model: { providerID: "test", modelID: "test" },
+      },
+      parts: [{ id: "u1-text", messageID: "u1", sessionID: "s1", type: "text", text: "question" }],
+    },
+  );
+  await hook.event?.({
+    event: { type: "server.instance.disposed", properties: { directory: "/test" } },
+  });
+
+  expect(payloads).toHaveLength(1);
+  payloads[0]?.resourceSpans.forEach((resource) => {
+    expect(resource.resource.attributes).toContainEqual({
+      key: "service.name",
+      value: { stringValue: "opencode" },
+    });
+    expect(
+      resource.resource.attributes.some((attribute) => attribute.key === "service.version"),
+    ).toBe(false);
+    resource.scopeSpans.forEach((scope) => {
+      expect(scope.scope).toEqual({ name, version });
+      expect(scope.spans.length).toBeGreaterThan(0);
+    });
+  });
 });
 
 test("disabled plugin installs no hooks, listeners, or network requests", async () => {

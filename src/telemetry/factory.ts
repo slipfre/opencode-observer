@@ -4,11 +4,12 @@ import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { version } from "../../package.json";
+import { name, version } from "../../package.json";
 import type { Observer } from "../contract/observer.js";
 import { createObserver } from "./observer.js";
 
 export type TelemetryOptions = {
+  serviceVersion?: string;
   endpoint: string;
   captureContent: boolean;
   tracePrefix: string;
@@ -37,6 +38,7 @@ export function createTelemetry(config: TelemetryOptions): Observer {
   const provider = new BasicTracerProvider({
     resource: resourceFromAttributes({
       "service.name": "opencode",
+      ...(config.serviceVersion ? { "service.version": config.serviceVersion } : {}),
       "os.type": osType,
       ...(hostArch ? { "host.arch": hostArch } : {}),
       ...config.resourceAttributes,
@@ -66,7 +68,7 @@ export function createTelemetry(config: TelemetryOptions): Observer {
   return createObserver({
     provider,
     rootContext,
-    scope: { name: "opencode-observer", version },
+    scope: { name, version },
     tracePrefix: config.tracePrefix,
     captureContent: config.captureContent,
     spanAttributes: config.spanAttributes,

@@ -37,7 +37,7 @@ describe("OpenCode tools E2E", () => {
         expect(tool.attributes["gen_ai.tool.name"]).toBe("bash");
         expect(JSON.parse(String(tool.attributes["gen_ai.tool.call.arguments"]))).toEqual(input);
         expect(JSON.parse(String(tool.attributes["gen_ai.tool.call.result"]))).toEqual({
-          content: "observer-tool-output\n",
+          content: expect.stringMatching(/^observer-tool-output\r?\n$/),
         });
         expect(messages(call, "output")).toEqual([
           {
@@ -58,7 +58,7 @@ describe("OpenCode tools E2E", () => {
             {
               type: "tool_call_response",
               id: tool.attributes["gen_ai.tool.call.id"],
-              response: "observer-tool-output\n",
+              response: expect.stringMatching(/^observer-tool-output\r?\n$/),
             },
           ],
         });
