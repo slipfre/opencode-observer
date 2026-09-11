@@ -1,4 +1,4 @@
-import { ROOT_CONTEXT, type Context } from "@opentelemetry/api";
+import { ROOT_CONTEXT } from "@opentelemetry/api";
 import type { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
 import type {
   Observer,
@@ -18,7 +18,6 @@ import { operationKey, sameRun } from "./spans/common.js";
 export type ObserverOptions = {
   provider: BasicTracerProvider;
   scope: { name: string; version?: string };
-  rootContext?: Context;
   tracePrefix?: string;
   captureContent?: boolean;
   spanAttributes?: Record<string, string>;
@@ -40,7 +39,7 @@ const reservedAttributes = new Set([
 export function createObserver(options: ObserverOptions): Observer {
   const spanOptions = {
     tracer: options.provider.getTracer(options.scope.name, options.scope.version),
-    rootContext: options.rootContext ?? ROOT_CONTEXT,
+    rootContext: ROOT_CONTEXT,
     tracePrefix: options.tracePrefix ?? "opencode.",
     captureContent: options.captureContent ?? false,
     spanAttributes: Object.fromEntries(

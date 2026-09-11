@@ -1,6 +1,4 @@
 import { machine, platform } from "node:os";
-import { ROOT_CONTEXT, defaultTextMapGetter } from "@opentelemetry/api";
-import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
@@ -13,8 +11,6 @@ export type TelemetryOptions = {
   endpoint: string;
   captureContent: boolean;
   tracePrefix: string;
-  traceparent: string;
-  tracestate: string;
   otlpHeaders: Record<string, string>;
   resourceAttributes: Record<string, string>;
   spanAttributes: Record<string, string>;
@@ -56,18 +52,8 @@ export function createTelemetry(config: TelemetryOptions): Observer {
     ],
   });
 
-  const rootContext = new W3CTraceContextPropagator().extract(
-    ROOT_CONTEXT,
-    {
-      traceparent: config.traceparent,
-      tracestate: config.tracestate,
-    },
-    defaultTextMapGetter,
-  );
-
   return createObserver({
     provider,
-    rootContext,
     scope: { name, version },
     tracePrefix: config.tracePrefix,
     captureContent: config.captureContent,

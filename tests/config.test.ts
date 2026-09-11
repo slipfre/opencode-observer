@@ -49,8 +49,6 @@ test("environment attributes preserve equals signs and parse trace configuration
         OPENCODE_RESOURCE_ATTRIBUTES: "service.name=test",
         OPENCODE_SPAN_ATTRIBUTES: "team=observability",
         OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT: "5000",
-        OPENCODE_TRACEPARENT: "parent",
-        OPENCODE_TRACESTATE: "vendor=value",
       },
     ),
   ).toMatchObject({
@@ -58,8 +56,6 @@ test("environment attributes preserve equals signs and parse trace configuration
     resourceAttributes: { "service.name": "test" },
     spanAttributes: { team: "observability" },
     spanAttributeCountLimit: 5000,
-    traceparent: "parent",
-    tracestate: "vendor=value",
   });
 });
 

@@ -86,7 +86,7 @@ bun run test:e2e
 
 Each E2E case uses isolated HOME/XDG temporary directories and random loopback ports, then cleans up processes, servers, and files. Set `OPENCODE_E2E_TMPDIR` to an existing parent directory to control temporary file placement. Each CLI invocation has a 45-second timeout; each test has a 60-second timeout. Missing OpenCode source or build output causes a failure rather than a skipped test. Failure diagnostics include CLI output, model requests, and OTLP payloads. E2E files participate in type checking but are excluded from the published build.
 
-Coverage includes trace structure, content and usage, disabled telemetry/content capture, retries and terminal errors, repeated session runs, real tools and failures, permission denial, foreground subtasks, remote W3C parents, collector headers, and compaction success/failure. Assertions must reflect current measurement limits: normal status is `UNSET`, LLM spans require model-step evidence, and retry counts or first-chunk timing must not be presented as measured without precise attempt boundaries.
+Coverage includes trace structure, content and usage, disabled telemetry/content capture, retries and terminal errors, repeated session runs, real tools and failures, permission denial, foreground subtasks, independent root traces, ignored legacy trace context configuration, collector headers, and compaction success/failure. Assertions must reflect current measurement limits: normal status is `UNSET`, LLM spans require model-step evidence, and retry counts or first-chunk timing must not be presented as measured without precise attempt boundaries.
 
 ### Required Checks After Changes
 

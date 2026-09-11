@@ -511,7 +511,7 @@ test("AI SDK history and generated tool calls reach OTLP through the plugin", as
   expect(model.doStreamCalls[0]?.headers?.["x-opencode-observer-request"]).toBeUndefined();
 });
 
-test("plugin exports run, interaction and LLM with remote ancestry without querying sessions", async () => {
+test("plugin exports run, interaction and LLM in a new trace without querying sessions", async () => {
   const payloads: ExportPayload[] = [];
   const requests: string[] = [];
   const headers: string[] = [];
@@ -543,8 +543,6 @@ test("plugin exports run, interaction and LLM with remote ancestry without query
     captureContent: true,
     endpoint: server.url.toString(),
     otlpHeaders: { "x-test": "present" },
-    traceparent: "00-12345678901234567890123456789012-1234567890123456-01",
-    tracestate: "vendor=value",
     resourceAttributes: { "service.name": "test-opencode", "service.version": "custom-version" },
   });
   hooks.push(hook);
@@ -664,10 +662,10 @@ test("plugin exports run, interaction and LLM with remote ancestry without query
 
   expect(span).toMatchObject({
     name: "opencode.run",
-    traceId: "12345678901234567890123456789012",
-    parentSpanId: "1234567890123456",
     kind: 1,
   });
+  expect(span?.parentSpanId).toBeUndefined();
+  expect(span?.traceId).toMatch(/^[0-9a-f]{32}$/);
   expect(span?.startTimeUnixNano).toBe(String(BigInt(created) * 1_000_000n));
 
   const attrs = Object.fromEntries(
@@ -919,27 +917,32 @@ test("disabled plugin installs no hooks, listeners, or network requests", async 
   expect(requests).toEqual([]);
 });
 
-test("W3C extraction preserves valid tracestate and rejects invalid or all-zero parents", async () => {
-  const payloads: ExportPayload[] = [];
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(request) {
-      payloads.push((await request.json()) as ExportPayload);
+test.each(["options", "environment"])(
+  "removed %s trace context does not affect new runs",
+  async (source) => {
+    const payloads: ExportPayload[] = [];
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        payloads.push((await request.json()) as ExportPayload);
 
-      return Response.json({});
-    },
-  });
-  servers.push(server);
+        return Response.json({});
+      },
+    });
+    servers.push(server);
 
-  for (const traceparent of [
-    "broken",
-    "00-00000000000000000000000000000000-1234567890123456-01",
-    "00-12345678901234567890123456789012-1234567890123456-01",
-  ]) {
+    // An unsampled parent would suppress export if the removed configuration were still honored.
+    const traceparent = "00-12345678901234567890123456789012-1234567890123456-00";
     const config = loadConfig(
-      { enabled: true, endpoint: server.url.toString(), traceparent, tracestate: "vendor=value" },
-      {},
+      {
+        enabled: true,
+        endpoint: server.url.toString(),
+        ...(source === "options" ? { traceparent, tracestate: "vendor=value" } : {}),
+      },
+      source === "environment"
+        ? { OPENCODE_TRACEPARENT: traceparent, OPENCODE_TRACESTATE: "vendor=value" }
+        : {},
     );
 
     if (!config.enabled) {
@@ -947,21 +950,33 @@ test("W3C extraction preserves valid tracestate and rejects invalid or all-zero 
     }
 
     const telemetry = createTelemetry(config);
-    telemetry.startRun({
-      sessionID: "s1",
-      id: "u1",
-      startedAt: 1000,
-      parent: undefined,
-      parentSessionID: undefined,
-    });
-    telemetry.finishRun({ sessionID: "s1", id: "u1", endedAt: 2000, output: undefined });
+
+    for (const id of ["u1", "u2"]) {
+      telemetry.startRun({
+        sessionID: "s1",
+        id,
+        startedAt: 1000,
+        parent: undefined,
+        parentSessionID: undefined,
+      });
+      telemetry.finishRun({ sessionID: "s1", id, endedAt: 2000, output: undefined });
+    }
     await telemetry.shutdown();
 
-    const span = payloads.at(-1)?.resourceSpans[0]?.scopeSpans[0]?.spans[0];
-
-    expect(span?.parentSpanId).toBe(
-      traceparent.startsWith("00-123") ? "1234567890123456" : undefined,
+    const spans = payloads.flatMap((payload) =>
+      payload.resourceSpans.flatMap((resource) =>
+        resource.scopeSpans.flatMap((scope) => scope.spans),
+      ),
     );
-    expect(span?.traceState).toBe(traceparent.startsWith("00-123") ? "vendor=value" : undefined);
-  }
-});
+
+    expect(config).not.toHaveProperty("traceparent");
+    expect(config).not.toHaveProperty("tracestate");
+    expect(spans).toHaveLength(2);
+    expect(new Set(spans.map((span) => span.traceId)).size).toBe(2);
+    spans.forEach((span) => {
+      expect(span.traceId).not.toBe("12345678901234567890123456789012");
+      expect(span.parentSpanId).toBeUndefined();
+      expect(span.traceState).toBeUndefined();
+    });
+  },
+);

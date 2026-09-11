@@ -69,14 +69,13 @@ Scope 的名称和版本均读取插件 `package.json`，随构建嵌入产物�
 ### 3.1 主会话
 
 ```text
-外部 W3C parent（可选）
-└── opencode.run                         invoke_workflow / INTERNAL
-    └── opencode.interaction             invoke_agent / INTERNAL
-        ├── opencode.llm                 chat 等实际操作 / CLIENT
-        ├── opencode.tool.<tool-name>    execute_tool / INTERNAL
-        │   └── opencode.permission.check             INTERNAL
-        └── opencode.compaction                       INTERNAL
-            └── opencode.llm             chat 等实际操作 / CLIENT
+opencode.run                         invoke_workflow / INTERNAL
+└── opencode.interaction             invoke_agent / INTERNAL
+    ├── opencode.llm                 chat 等实际操作 / CLIENT
+    ├── opencode.tool.<tool-name>    execute_tool / INTERNAL
+    │   └── opencode.permission.check             INTERNAL
+    └── opencode.compaction                       INTERNAL
+        └── opencode.llm             chat 等实际操作 / CLIENT
 ```
 
 - 一个 `run` 对应 session 中一个任务的执行周期，一个 `interaction` 对应任务中的一次真实用户交互。
@@ -104,9 +103,9 @@ Scope 的名称和版本均读取插件 `package.json`，随构建嵌入产物�
 
 ### 3.3 根上下文与下游传播
 
-- 配置有效的 `OPENCODE_TRACEPARENT` / `OPENCODE_TRACESTATE` 时，根 run 继承该远端 W3C 上下文；否则创建新 trace。
-- 对 `OPENCODE_TRACE_PROPAGATION_PROVIDERS` 明确允许的模型 provider，插件把当前 LLM span 的 W3C `traceparent` 和有效 `tracestate` 注入下游请求。
-- 启用用户 ID tracestate 且 `user.id` 有效时，在遵守 W3C key/value 限制的前提下加入 `<configured-key>=<user.id>`；默认 key 为 `opencode_user_id`。这是 OpenCode 自定义传播约定，不是 GenAI 标准字段。
+- 每个顶层 run 从空上下文创建独立 trace；子 run 通过已关联的 task tool 继承父 trace。
+- 插件不读取 `traceparent` / `tracestate` 选项或 `OPENCODE_TRACEPARENT` / `OPENCODE_TRACESTATE` 环境变量。
+- 当前不向模型请求注入 W3C trace 上下文，也不向 tracestate 添加用户 ID。
 
 ## 4. Span 总览
 
@@ -114,7 +113,7 @@ Scope 的名称和版本均读取插件 `package.json`，随构建嵌入产物�
 
 | Span 名称                  | OTel kind  | `gen_ai.operation.name`                                  | 常规 parent                           | 创建数量                                                  |
 | -------------------------- | ---------- | -------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------- |
-| `<prefix>run`              | `INTERNAL` | `invoke_workflow`                                        | 外部 parent、父 `task` tool           | session 中每个任务执行周期 1 个                           |
+| `<prefix>run`              | `INTERNAL` | `invoke_workflow`                                        | 无（顶层）或父 `task` tool            | session 中每个任务执行周期 1 个                           |
 | `<prefix>interaction`      | `INTERNAL` | `invoke_agent`                                           | 当前 session 的 run                   | 每次真实用户交互 1 个                                     |
 | `<prefix>compaction`       | `INTERNAL` | 不设置                                                   | interaction                           | 每次压缩 1 个                                             |
 | `<prefix>llm`              | `CLIENT`   | `chat`、`generate_content`、`text_completion` 等实际操作 | interaction、compaction               | 每条实际发起模型调用的 assistant message 1 个，覆盖其重试 |

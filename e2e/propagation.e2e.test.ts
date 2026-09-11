@@ -3,32 +3,27 @@ import { expectUnset, oneSpan, requireSpans } from "./support/assertions.js";
 import { withE2EFixture } from "./support/fixture.js";
 
 describe("OpenCode trace context E2E", () => {
-  test("honors the remote W3C parent and collector headers", () => {
-    const traceId = "0af7651916cd43dd8448eb211c80319c";
-    const parentId = "b7ad6b7169203331";
-
+  test("exports a new trace with collector headers", () => {
     return withE2EFixture(
       {
         pluginOptions: {
-          traceparent: `00-${traceId}-${parentId}-01`,
-          tracestate: "observer=value",
           otlpHeaders: { "x-e2e-collector": "local-receiver" },
         },
-        replies: [{ type: "text", text: "context attached" }],
+        replies: [{ type: "text", text: "trace exported" }],
       },
       async (fixture) => {
-        const result = await fixture.run("attach the configured parent");
+        const result = await fixture.run("export a new trace");
         const spans = requireSpans(fixture, result, 3);
 
         const run = oneSpan(spans, "e2e.run");
         const interaction = oneSpan(spans, "e2e.interaction");
         const llm = oneSpan(spans, "e2e.llm");
-        expect(run.parentSpanId).toBe(parentId);
+        expect(run.parentSpanId ?? "").toBe("");
         expect(interaction.parentSpanId).toBe(run.spanId);
         expect(llm.parentSpanId).toBe(interaction.spanId);
         spans.forEach((span) => {
-          expect(span.traceId).toBe(traceId);
-          expect(span.traceState).toBe("observer=value");
+          expect(span.traceId).toBe(run.traceId);
+          expect(span.traceState).toBeUndefined();
           expectUnset(span);
         });
         expect(fixture.otlp.headers.length).toBeGreaterThan(0);
@@ -40,10 +35,13 @@ describe("OpenCode trace context E2E", () => {
     );
   });
 
-  test("starts a fresh root when the configured parent is invalid", () =>
+  test("ignores removed trace context options and exports a fresh trace", () =>
     withE2EFixture(
       {
-        pluginOptions: { traceparent: "invalid-parent" },
+        pluginOptions: {
+          traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00",
+          tracestate: "observer=value",
+        },
         replies: [{ type: "text", text: "fresh trace" }],
       },
       async (fixture) => {
@@ -52,7 +50,11 @@ describe("OpenCode trace context E2E", () => {
 
         expect(oneSpan(spans, "e2e.run").parentSpanId ?? "").toBe("");
         expect(new Set(spans.map((span) => span.traceId)).size).toBe(1);
-        spans.forEach(expectUnset);
+        spans.forEach((span) => {
+          expect(span.traceId).not.toBe("0af7651916cd43dd8448eb211c80319c");
+          expect(span.traceState).toBeUndefined();
+          expectUnset(span);
+        });
       },
     ));
 });

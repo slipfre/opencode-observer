@@ -33,8 +33,6 @@ export function loadConfig(
     endpoint: endpoint.toString(),
     captureContent: parseBoolean(options.captureContent ?? env.OPENCODE_CAPTURE_CONTENT, false),
     tracePrefix: parseString(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
-    traceparent: parseString(options.traceparent ?? env.OPENCODE_TRACEPARENT, ""),
-    tracestate: parseString(options.tracestate ?? env.OPENCODE_TRACESTATE, ""),
     otlpHeaders: parseAttributes(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
     resourceAttributes: parseAttributes(
       options.resourceAttributes ?? env.OPENCODE_RESOURCE_ATTRIBUTES,

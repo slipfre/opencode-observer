@@ -190,7 +190,7 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 | `src/adapter/error.ts`               | 源错误归一化，供各类观测对象使用                         |
 | `src/contract/observer.ts`           | `Observer` 契约、各类观测对象及关联类型，无第三方依赖    |
 | `src/contract/messages.ts`           | 与 SDK 无关的消息、片段、媒体来源和 JSON 数据类型        |
-| `src/telemetry/factory.ts`           | OTel SDK、OTLP exporter 和外部 W3C parent 配置           |
+| `src/telemetry/factory.ts`           | OTel SDK、OTLP exporter 和 resource 配置                 |
 | `src/telemetry/observer.ts`          | 契约实现、共用属性保护、导出队列与关闭顺序               |
 | `src/telemetry/spans/run.ts`         | run span 管理、数据映射、上下文查找及结束去重            |
 | `src/telemetry/spans/interaction.ts` | interaction span 管理、父子关联、数据映射及结束去重      |
@@ -211,7 +211,7 @@ steer 结束旧 interaction 的时间等于新用户输入的创建时间，正�
 
 消息归属与最终答复选择由 interaction tracker 维护，协调模块将归属解析函数提供给 LLM、tool 和 compaction tracker，并将最终答复作为 run 结束结果提交，生命周期规则不重复实现。interaction 的局部错误或缺少完成信息不自动将 run 标为失败。协调模块与实现层均保证先结束后代再结束父对象：permission 先于 tool，摘要 LLM 先于 compaction，子 run 先于父 task tool，当前 run 内的操作先于 interaction / run。适配层 `close()` 只释放源状态和绑定，插件关闭时由遥测实现统一结束仍活动的 span。
 
-run 的 `parent` 使用明确的 `ToolReference`；摘要 LLM 的 `compactionID` 与其 compaction 父节点一致。已观察到 `session.created/updated` 时，通过 `parentID` 判断 primary / subagent；活动 task 关联也可以确认 subagent。相应的新 span 使用 `parentSessionID` 与 `agentType`，缺失证据时仍为 `undefined`，不假定 primary 或事后修改既有 span 的父节点。interaction 的 `agentName` 从 owner 用户消息取得；LLM / tool 优先使用 assistant 的 `agent`，兼容 `mode`。`userID` 使用所属 interaction 的身份快照。外部 W3C parent 继续由遥测实现从配置解析。
+run 的 `parent` 使用明确的 `ToolReference`；摘要 LLM 的 `compactionID` 与其 compaction 父节点一致。已观察到 `session.created/updated` 时，通过 `parentID` 判断 primary / subagent；活动 task 关联也可以确认 subagent。相应的新 span 使用 `parentSessionID` 与 `agentType`，缺失证据时仍为 `undefined`，不假定 primary 或事后修改既有 span 的父节点。interaction 的 `agentName` 从 owner 用户消息取得；LLM / tool 优先使用 assistant 的 `agent`，兼容 `mode`。`userID` 使用所属 interaction 的身份快照。顶层 run 由遥测实现从空上下文创建独立 trace。
 
 当前插件入口未接入用户 ID 解析器，默认省略 `user.id`。适配层预留的解析器可为后续新建 run 和 interaction 提供身份，LLM 使用所属 interaction 的身份快照；已创建的 span 不回填。
 

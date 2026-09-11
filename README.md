@@ -38,8 +38,6 @@ Resource 默认上报 `service.name=opencode`，`service.version` 来自运行�
 | `captureContent`          | `OPENCODE_CAPTURE_CONTENT`            | `false`；控制输入和输出正文                                |
 | `endpoint`                | `OPENCODE_OTLP_ENDPOINT`              | `http://localhost:4318`；自动补齐 `/v1/traces`             |
 | `tracePrefix`             | `OPENCODE_TRACE_PREFIX`               | `opencode.`                                                |
-| `traceparent`             | `OPENCODE_TRACEPARENT`                | 可选 W3C 远端 parent；无效时创建新 trace                   |
-| `tracestate`              | `OPENCODE_TRACESTATE`                 | 可选 W3C tracestate，需有效 parent                         |
 | `otlpHeaders`             | `OPENCODE_OTLP_HEADERS`               | 选项使用字符串值对象；环境变量使用 `key=value,key2=value2` |
 | `resourceAttributes`      | `OPENCODE_RESOURCE_ATTRIBUTES`        | 同上，可覆盖默认 resource 属性                             |
 | `spanAttributes`          | `OPENCODE_SPAN_ATTRIBUTES`            | 同上；不能覆盖插件身份、标准操作、正文和错误字段           |
