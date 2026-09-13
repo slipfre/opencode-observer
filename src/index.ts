@@ -44,9 +44,7 @@ export const ObserverPlugin: Plugin = async (input, options) => {
     observer,
     directory: input.directory,
     captureContent: config.captureContent,
-    onError(error) {
-      void log(error);
-    },
+    log,
     onDispose: shutdown,
   });
   await adapter.startModelMessageCapture().catch(log);

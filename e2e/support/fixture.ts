@@ -7,6 +7,7 @@ import { startOtlpReceiver } from "./otlp-receiver.js";
 
 type FixtureOptions = {
   replies: LlmReply[];
+  pluginEntry?: string;
   pluginOptions?: Record<string, unknown>;
   autoCompact?: boolean;
   permission?: Record<string, "ask" | "allow" | "deny">;
@@ -75,7 +76,7 @@ export async function withE2EFixture(
       permission: options.permission,
       plugin: [
         [
-          pathToFileURL(plugin).href,
+          pathToFileURL(options.pluginEntry ?? plugin).href,
           {
             enabled: true,
             endpoint: otlp.endpoint,

@@ -183,7 +183,7 @@ test("chat.params observes compatible API settings without mutating the hook out
     directory: "/test",
     captureContent: true,
     onDispose: h.observer.shutdown,
-    onError: (error) => failures.push(error),
+    log: (error) => failures.push(error),
   });
   const request = modelRequest();
   request[0].model.api.npm = "@ai-sdk/openai-compatible";
@@ -375,7 +375,7 @@ test("hooks isolate recording and export failures and return before flush settle
     directory: "/test",
     captureContent: true,
     onDispose: h.observer.shutdown,
-    onError(error) {
+    log(error) {
       failures.push(error);
     },
   });
@@ -394,6 +394,117 @@ test("hooks isolate recording and export failures and return before flush settle
   expect(failures[1]).toEqual(new Error("export failed"));
   adapter.close();
 });
+
+test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async (mode) => {
+  const h = recording();
+  const exportError = new Error("export failed");
+  const disposeError = new Error("disposal failed");
+  const failures: unknown[] = [];
+  const adapter = createOpenCodeAdapter({
+    observer: {
+      ...h.observer,
+      flush() {
+        if (mode === "throw") {
+          throw exportError;
+        }
+
+        return Promise.reject(exportError);
+      },
+    },
+    directory: "/test",
+    captureContent: false,
+    log: (error) => failures.push(error),
+    onDispose() {
+      if (mode === "throw") {
+        throw disposeError;
+      }
+
+      return Promise.reject(disposeError);
+    },
+  });
+
+  await expect(
+    adapter.hooks.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } }),
+  ).resolves.toBeUndefined();
+  await expect(
+    adapter.hooks.event?.({
+      event: { type: "server.instance.disposed", properties: { directory: "/test" } },
+    }),
+  ).resolves.toBeUndefined();
+  await adapter.hooks["chat.message"]?.({ sessionID: "s1" }, { message: user(), parts: [text()] });
+
+  expect(failures).toEqual([exportError, disposeError]);
+  expect(h.starts).toHaveLength(1);
+  adapter.close();
+});
+
+test.each(["throw", "reject"])(
+  "all hook boundaries contain input errors when logging %s",
+  async (mode) => {
+    const h = recording();
+    const failures: unknown[] = [];
+    const errors = ["message", "params", "headers", "event"].map((name) => new Error(name));
+    const adapter = createOpenCodeAdapter({
+      observer: h.observer,
+      directory: "/test",
+      captureContent: true,
+      onDispose: h.observer.shutdown,
+      log(error) {
+        failures.push(error);
+
+        if (mode === "throw") {
+          throw new Error("logging failed");
+        }
+
+        return Promise.reject(new Error("logging failed"));
+      },
+    });
+    await adapter.startModelMessageCapture();
+    const output = { message: user(), parts: [text()] };
+    await adapter.hooks["chat.message"]?.({ sessionID: "s1" }, output);
+    const request = modelRequest();
+
+    await expect(
+      adapter.hooks["chat.message"]?.(
+        { sessionID: "s1" },
+        {
+          message: user("broken"),
+          get parts(): never {
+            throw errors[0];
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      adapter.hooks["chat.params"]?.(request[0], {
+        ...request[1],
+        get temperature(): never {
+          throw errors[1];
+        },
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      adapter.hooks["chat.headers"]?.(request[0], {
+        get headers(): never {
+          throw errors[2];
+        },
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      adapter.hooks.event?.({
+        get event(): never {
+          throw errors[3];
+        },
+      }),
+    ).resolves.toBeUndefined();
+    await Bun.sleep(0);
+
+    expect(failures).toEqual(errors);
+    expect(output).toEqual({ message: user(), parts: [text()] });
+    expect(h.starts).toHaveLength(1);
+    adapter.close();
+  },
+);
 
 test("interaction uses the owner agent and assistant completion time while run uses idle observation", () => {
   const h = recording();

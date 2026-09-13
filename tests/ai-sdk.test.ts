@@ -10,7 +10,7 @@ const adapters: ReturnType<typeof createOpenCodeAdapter>[] = [];
 
 afterEach(() => adapters.splice(0).forEach((adapter) => adapter.close()));
 
-async function setup(captureContent = true) {
+async function setup(captureContent = true, log?: (error: unknown) => unknown) {
   const updates: LlmUpdate[] = [];
   const finishes: LlmFinish[] = [];
   const errors: unknown[] = [];
@@ -41,7 +41,11 @@ async function setup(captureContent = true) {
     observer,
     captureContent,
     directory: "/test",
-    onError: (error) => errors.push(error),
+    log(error) {
+      errors.push(error);
+
+      return log?.(error);
+    },
     onDispose: observer.shutdown,
   });
   adapters.push(adapter);
@@ -90,6 +94,7 @@ async function setup(captureContent = true) {
 
   return {
     adapter,
+    observer,
     input,
     updates,
     finishes,
@@ -226,6 +231,84 @@ test("AI SDK bindings isolate identical sessions in different instances and igno
   expect(first.updates).toHaveLength(2);
   expect(second.updates).toHaveLength(0);
 });
+
+test.each(["throw", "reject"])(
+  "AI SDK continues other listeners when one listener and its logging %s",
+  async (mode) => {
+    const failure = new Error("model recording failed");
+    const first = await setup(true, () => {
+      if (mode === "throw") {
+        throw new Error("logging failed");
+      }
+
+      return Promise.reject(new Error("logging failed"));
+    });
+    const second = await setup();
+    const metadata = {};
+    await integration().onStepStart?.(inputEvent(metadata, await first.headers()));
+    await integration().onStepStart?.(inputEvent(metadata, await second.headers()));
+    await first.step("step-start");
+    await second.step("step-start");
+    first.observer.updateLlm = () => {
+      throw failure;
+    };
+
+    await integration().onStepFinish?.(outputEvent(metadata));
+    await Bun.sleep(0);
+
+    expect(first.errors).toEqual([failure]);
+    expect(second.errors).toEqual([]);
+    expect(second.updates.at(-1)?.output).toEqual([
+      { role: "assistant", parts: [{ type: "text", text: "full output" }] },
+    ]);
+  },
+);
+
+test("AI SDK removes headers synchronously despite input recording and diagnostic failures", async () => {
+  const failure = new Error("model input recording failed");
+  const h = await setup(true, () => Promise.reject(new Error("logging failed")));
+  await h.step("step-start");
+  const headers = await h.headers();
+  h.observer.updateLlm = () => {
+    throw failure;
+  };
+
+  const result = integration().onStepStart?.(inputEvent({}, headers));
+
+  expect(headers).toEqual({ "X-Test": "kept" });
+  await result;
+  await Bun.sleep(0);
+  expect(h.errors).toEqual([failure]);
+});
+
+test.each(["onStart", "onStepStart"] as const)(
+  "AI SDK %s contains header cleanup failures and only logs to active instances",
+  async (callback) => {
+    const disposed = await setup();
+    disposed.adapter.close();
+    const first = await setup(true, () => {
+      throw new Error("logging failed");
+    });
+    const second = await setup(true, () => Promise.reject(new Error("logging failed")));
+    const headers = Object.freeze({ "x-opencode-observer-request": "unbound", "X-Test": "kept" });
+    const event = inputEvent({}, headers) as OnStartEvent & OnStepStartEvent;
+
+    await expect(integration()[callback]?.(event)).resolves.toBeUndefined();
+    await Bun.sleep(0);
+
+    expect(disposed.errors).toEqual([]);
+    expect(first.errors).toHaveLength(1);
+    expect(first.errors[0]).toBeInstanceOf(TypeError);
+    expect(second.errors).toEqual(first.errors);
+    expect(headers["X-Test"]).toBe("kept");
+
+    first.adapter.close();
+    second.adapter.close();
+    await expect(integration()[callback]?.(event)).resolves.toBeUndefined();
+    expect(first.errors).toHaveLength(1);
+    expect(second.errors).toHaveLength(1);
+  },
+);
 
 test("retry bindings discard old callbacks and session end releases a missing SDK output", async () => {
   const h = await setup();

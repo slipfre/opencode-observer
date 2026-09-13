@@ -8,6 +8,7 @@ import {
 import type { ModelInput, ModelMessage } from "../../contract/messages.js";
 import type { LlmRequest } from "./request.js";
 import { parseModelInput, parseModelOutput } from "./messages.js";
+import { createGuard } from "../shared/guard.js";
 
 const correlationHeader = "x-opencode-observer-request";
 
@@ -21,14 +22,15 @@ type ModelCaptureListener = {
   start(event: OnStartEvent | OnStepStartEvent): void;
   input(event: OnStepStartEvent): void;
   output(event: OnStepFinishEvent): void;
-  error(error: unknown): void;
+  guard: ReturnType<typeof createGuard>;
+  log(error: unknown): unknown;
 };
 
 type ModelCaptureBroker = { listeners: Set<ModelCaptureListener> };
 
 export function createModelMessageCapture(options: {
   bind(input: LlmRequest[0]): ModelCapture | undefined;
-  onError(error: unknown): void;
+  log(error: unknown): unknown;
 }) {
   const pending = new Map<string, ModelCapture>();
   const bindings = new WeakMap<object, ModelCapture>();
@@ -44,7 +46,8 @@ export function createModelMessageCapture(options: {
   }
 
   const listener: ModelCaptureListener = {
-    error: options.onError,
+    guard: createGuard(options.log),
+    log: options.log,
     start(event) {
       const id = event.headers?.[correlationHeader];
       const binding = id ? pending.get(id) : undefined;
@@ -124,45 +127,44 @@ function modelCaptureBroker() {
   }
 
   const broker: ModelCaptureBroker = { listeners: new Set() };
+  // The broker outlives individual instances; only active instances receive its diagnostics.
+  const guard = createGuard((error) =>
+    Promise.allSettled(Array.from(broker.listeners, async (listener) => listener.log(error))),
+  );
   const integration: TelemetryIntegration = {
     onStart(event) {
-      broker.listeners.forEach((listener) => dispatch(listener, () => listener.start(event)));
-      // OpenCode copies hook headers. Strip our correlation token from the prepared
-      // object before the provider runs, including requests from disposed instances.
-      if (event.headers) {
-        delete event.headers[correlationHeader];
-      }
+      return guard(() => {
+        broker.listeners.forEach((listener) => void listener.guard(() => listener.start(event)));
+        // OpenCode copies hook headers. Strip our correlation token from the prepared
+        // object before the provider runs, including requests from disposed instances.
+        if (event.headers) {
+          delete event.headers[correlationHeader];
+        }
+      });
     },
     onStepStart(event) {
-      broker.listeners.forEach((listener) =>
-        dispatch(listener, () => {
-          listener.start(event);
-          listener.input(event);
-        }),
-      );
+      return guard(() => {
+        broker.listeners.forEach(
+          (listener) =>
+            void listener.guard(() => {
+              listener.start(event);
+              listener.input(event);
+            }),
+        );
 
-      if (event.headers) {
-        delete event.headers[correlationHeader];
-      }
+        if (event.headers) {
+          delete event.headers[correlationHeader];
+        }
+      });
     },
     onStepFinish(event) {
-      broker.listeners.forEach((listener) => dispatch(listener, () => listener.output(event)));
+      return guard(() => {
+        broker.listeners.forEach((listener) => void listener.guard(() => listener.output(event)));
+      });
     },
   };
   registerTelemetryIntegration(integration);
   root.__opencodeObserverModelCapture = broker;
 
   return broker;
-}
-
-function dispatch(listener: ModelCaptureListener, callback: () => void) {
-  try {
-    callback();
-  } catch (error) {
-    try {
-      listener.error(error);
-    } catch {
-      // Diagnostics must not interrupt another instance or prevent header cleanup.
-    }
-  }
 }

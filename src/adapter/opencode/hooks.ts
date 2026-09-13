@@ -2,14 +2,16 @@ import type { Hooks } from "@opencode-ai/plugin";
 import type { Observer } from "../../contract/observer.js";
 import { createCoordinator } from "./coordinator.js";
 import type { createModelMessageCapture } from "../model/ai-sdk.js";
+import { createGuard } from "../shared/guard.js";
 
 export function createOpenCodeAdapter(options: {
   observer: Observer;
   directory: string;
   captureContent: boolean;
-  onError: (error: unknown) => void;
+  log: (error: unknown) => unknown;
   onDispose: () => Promise<void>;
 }) {
+  const guard = createGuard(options.log);
   const coordinator = createCoordinator({
     observer: options.observer,
     captureContent: options.captureContent,
@@ -20,55 +22,46 @@ export function createOpenCodeAdapter(options: {
     messageCaptureSetup: undefined as Promise<void> | undefined,
   };
   const hooks: Hooks = {
-    "chat.message": async (_input, output) => {
-      if (state.closed) {
-        return;
-      }
+    "chat.message": (_input, output) =>
+      guard(() => {
+        if (state.closed) {
+          return;
+        }
 
-      // Isolate synchronous observer failures without deferring source event processing.
-      try {
         coordinator.userMessage(output.message, output.parts);
-      } catch (error) {
-        options.onError(error);
-      }
-    },
-    "chat.params": async (input, output) => {
-      if (state.closed) {
-        return;
-      }
+      }),
+    "chat.params": (input, output) =>
+      guard(() => {
+        if (state.closed) {
+          return;
+        }
 
-      try {
         coordinator.request(input, output);
-      } catch (error) {
-        options.onError(error);
-      }
-    },
-    "chat.headers": async (input, output) => {
-      if (state.closed) {
-        return;
-      }
+      }),
+    "chat.headers": (input, output) =>
+      guard(() => {
+        if (state.closed) {
+          return;
+        }
 
-      try {
         state.messageCapture?.attachCorrelationHeader(input, output);
-      } catch (error) {
-        options.onError(error);
-      }
-    },
-    event: async ({ event }) => {
-      const observedAt = Date.now();
+      }),
+    event: (input) =>
+      guard(() => {
+        const observedAt = Date.now();
+        const event = input.event;
 
-      if (
-        event.type === "server.instance.disposed" &&
-        event.properties.directory === options.directory
-      ) {
-        return options.onDispose();
-      }
+        if (
+          event.type === "server.instance.disposed" &&
+          event.properties.directory === options.directory
+        ) {
+          return options.onDispose();
+        }
 
-      if (state.closed) {
-        return;
-      }
+        if (state.closed) {
+          return;
+        }
 
-      try {
         coordinator.event(event, observedAt);
 
         if (
@@ -77,12 +70,9 @@ export function createOpenCodeAdapter(options: {
           event.type === "session.deleted" ||
           (event.type === "session.status" && event.properties.status.type === "idle")
         ) {
-          void options.observer.flush().catch(options.onError);
+          void guard(() => options.observer.flush());
         }
-      } catch (error) {
-        options.onError(error);
-      }
-    },
+      }),
   };
 
   async function installModelMessageCapture() {
@@ -91,7 +81,7 @@ export function createOpenCodeAdapter(options: {
     if (!state.closed) {
       state.messageCapture = createModelMessageCapture({
         bind: coordinator.bindModel,
-        onError: options.onError,
+        log: options.log,
       });
     }
   }
@@ -114,8 +104,8 @@ export function createOpenCodeAdapter(options: {
     },
     close() {
       state.closed = true;
-      state.messageCapture?.close();
-      coordinator.close();
+      void guard(() => state.messageCapture?.close());
+      void guard(() => coordinator.close());
     },
   };
 }

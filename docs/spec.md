@@ -169,6 +169,7 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 
 - 日常开始、更新和结束操作在本地处理，不等待 OTLP 网络请求；异步导出不阻塞后续 hook，也不改变记录的时间边界。
 - 遥测处理异常通过插件日志或注入的诊断通道报告，不改变 OpenCode 的业务结果，也不修改 hook 的业务输出。
+- 适配层通过 `shared/guard.ts` 创建绑定日志函数的 `guard`，覆盖 OpenCode hooks、后台刷新和 AI SDK lifecycle 回调；调用立即执行，同步异常及返回 Promise 的拒绝均在边界处理。日志不阻塞回调，日志自身的同步异常和异步拒绝直接忽略。AI SDK 按监听器分别隔离，并保护共享回调中的关联 header 清理；共享回调的诊断仅发送给仍活动的实例。
 - 实现层的诊断通道不得依赖 OpenCode client；插件入口负责将诊断接到 OpenCode 日志。
 - 导出队列、超时及失败处理由实现层统一管理，不在各个 hook 中维护导出队列或自行重试。
 
