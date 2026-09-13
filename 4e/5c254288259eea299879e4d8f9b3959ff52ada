@@ -1,0 +1,68 @@
+tests/telemetry.test.ts
+  s_5c774031a770d5::t_63bcb097367e96 134-136,152-154,164-166
+  s_5c774031a770d5::t_a9bb0ab6a2567c 2,7,9,27,46,97-133,137-151,155-163,167-172
+  s_5c774031a770d5::t_7323f7544d3fa0 173
+docs/schemas/trace.md
+  s_5c774031a770d5::t_3f193e3afc37c3 110,122,353,356
+  s_5c774031a770d5::t_63bcb097367e96 117-121,123-124
+  s_5c774031a770d5::t_6032d3a64915ff 111
+src/contract/observer.ts
+  s_5c774031a770d5::t_164ae214395129 59-63,72,178-179
+e2e/support/assertions.ts
+  s_5c774031a770d5::t_6032d3a64915ff 75
+  s_5c774031a770d5::t_a9bb0ab6a2567c 60-74
+e2e/run.e2e.test.ts
+  s_5c774031a770d5::t_a9bb0ab6a2567c 174,179,182-184
+src/telemetry/observer.ts
+  s_5c774031a770d5::t_164ae214395129 228-230
+src/adapter/opencode/coordinator.ts
+  s_5c774031a770d5::t_164ae214395129 373-375
+tests/adapter.test.ts
+  s_5c774031a770d5::t_164ae214395129 53
+  s_5c774031a770d5::t_09e2b2786bf739 383
+  s_5c774031a770d5::t_cf5484cd7752a5 255-256,261-282,286-294,313-315,324,326,350,370,372,377,393-396,400-401,407-408,412-420
+  s_5c774031a770d5::t_63bcb097367e96 257-260,284-285,295-312,316-323,325,327-349,351-369,371,373-376,378-382,384-392,397-399,402-406,409-411
+  s_5c774031a770d5::t_3f193e3afc37c3 283
+src/adapter/opencode/hooks.ts
+  s_5c774031a770d5::t_164ae214395129 48
+e2e/propagation.e2e.test.ts
+  s_5c774031a770d5::t_f9baecf8b0718d 21
+  s_5c774031a770d5::t_6032d3a64915ff 6,11,14,17-18
+  s_5c774031a770d5::t_a9bb0ab6a2567c 7-10,12-13,15-16,19-20,22
+README.md
+  s_5c774031a770d5::t_3f193e3afc37c3 72
+  s_5c774031a770d5::t_6032d3a64915ff 71
+tests/ai-sdk.test.ts
+  s_5c774031a770d5::t_164ae214395129 31-33
+  s_5c774031a770d5::t_6032d3a64915ff 488,494-500
+docs/spec.md
+  s_5c774031a770d5::t_6032d3a64915ff 259
+  s_5c774031a770d5::t_3f193e3afc37c3 45,59,227,245,249,257-258
+src/telemetry/spans/llm.ts
+  s_5c774031a770d5::t_164ae214395129 1-9,17,38,92-114
+e2e/compaction.e2e.test.ts
+  s_5c774031a770d5::t_a9bb0ab6a2567c 101,110,115-116
+  s_5c774031a770d5::t_63bcb097367e96 111-114,117-122
+src/adapter/trackers/llm.ts
+  s_5c774031a770d5::t_164ae214395129 118-133,187-200,206,316
+package.json
+  s_5c774031a770d5::t_164ae214395129 49
+bun.lock
+  s_5c774031a770d5::t_78e5a35245430c 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4e5c254288259eea299879e4d8f9b3959ff52ada",
+  "prompts": {},
+  "sessions": {
+    "s_5c774031a770d5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a099ec-b70a-7013-b1f0-b58a42baa557",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
