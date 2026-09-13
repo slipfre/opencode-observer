@@ -115,6 +115,22 @@ export function createLlmTracker(options: {
     return info.summary ? options.compaction?.(info.parentID) : options.parent(info.parentID);
   }
 
+  function resolveRequest(input: LlmRequest[0]) {
+    const candidates = Array.from(calls.entries()).filter(
+      ([_id, call]) =>
+        !call.result &&
+        call.info &&
+        call.info.parentID === input.message.id &&
+        call.info.agentName === input.agent &&
+        call.info.providerID === input.model.providerID &&
+        call.info.modelID === input.model.id &&
+        call.info.completed === undefined &&
+        resolveParent(call.info),
+    );
+
+    return candidates.length === 1 ? candidates[0] : undefined;
+  }
+
   function fail(endedAt: number, error: ObservationError) {
     calls.forEach((call, id) => {
       if (call.startedAt === undefined) {
@@ -168,23 +184,26 @@ export function createLlmTracker(options: {
       });
       closedCompactions.add(markerID);
     },
+    prepare(input: LlmRequest[0], observedAt: number) {
+      const candidate = resolveRequest(input);
+
+      if (!candidate) {
+        return;
+      }
+
+      // Headers must reference a span that already exists before provider execution.
+      const call = candidate[1];
+      call.startedAt ??= observedAt;
+      record(candidate[0]);
+
+      return call.reference ? options.observer.llmTraceHeaders(call.reference) : undefined;
+    },
     bind(input: LlmRequest[0]): ModelCapture | undefined {
       if (!options.captureContent) {
         return;
       }
 
-      const candidates = Array.from(calls.entries()).filter(
-        ([_id, call]) =>
-          !call.result &&
-          call.info &&
-          call.info.parentID === input.message.id &&
-          call.info.agentName === input.agent &&
-          call.info.providerID === input.model.providerID &&
-          call.info.modelID === input.model.id &&
-          call.info.completed === undefined &&
-          resolveParent(call.info),
-      );
-      const candidate = candidates.length === 1 ? candidates[0] : undefined;
+      const candidate = resolveRequest(input);
 
       if (!candidate) {
         return;
@@ -294,7 +313,7 @@ export function createLlmTracker(options: {
 
       if (part.type === "step-start") {
         // Repeated steps/retries belong to the same logical request. A step is not an exact attempt boundary.
-        if (call.startedAt !== undefined && !call.stepIDs?.has(part.id)) {
+        if (call.stepIDs?.size && !call.stepIDs.has(part.id)) {
           call.previousTextIDs ??= new Set();
           call.texts.forEach((_text, id) => call.previousTextIDs?.add(id));
           call.texts.clear();

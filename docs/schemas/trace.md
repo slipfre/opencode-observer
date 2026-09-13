@@ -107,20 +107,21 @@ opencode.run                         invoke_workflow / INTERNAL
 
 - 每个顶层 run 从空上下文创建独立 trace；子 run 通过已关联的 task tool 继承父 trace。
 - 插件不读取 `traceparent` / `tracestate` 选项或 `OPENCODE_TRACEPARENT` / `OPENCODE_TRACESTATE` 环境变量。
-- 当前不向模型请求注入 W3C trace 上下文，也不向 tracestate 添加用户 ID。
+- 遥测开启时，在可唯一关联的模型请求中注入当前 LLM span 的 W3C `traceparent`，使用该 span 的 trace ID、span ID 和采样标记。非空 `traceState` 序列化为 `tracestate`；当前默认根上下文没有该值，不补造空 header，也不添加用户 ID。
+- 下游传播不依赖正文采集开关。AI SDK 和 native LLM 路径均在 `chat.headers` 准备字段，但当前 OpenCode native HTTP 层会另行注入并覆盖 traceparent，尚不能保证下游关联到本插件 trace；native 自动回退到 AI SDK 时可正常传播。标题、未知或歧义归属、缺少父节点的调用省略注入。模型配置、其他插件及底层传输的同名 headers 冲突处理暂未覆盖。
 
 ## 4. Span 总览
 
 所有 span 均包含第 2.2 节的公共属性。下文属性表只列各 span 的额外字段；公共错误规则见第 11 节。
 
-| Span 名称                  | OTel kind  | `gen_ai.operation.name`                                  | 常规 parent                           | 创建数量                                                  |
-| -------------------------- | ---------- | -------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------- |
-| `<prefix>run`              | `INTERNAL` | `invoke_workflow`                                        | 无（顶层）或父 `task` tool            | session 中每个任务执行周期 1 个                           |
-| `<prefix>interaction`      | `INTERNAL` | `invoke_agent`                                           | 当前 session 的 run                   | 每次真实用户交互 1 个                                     |
-| `<prefix>compaction`       | `INTERNAL` | 不设置                                                   | interaction                           | 每次压缩 1 个                                             |
-| `<prefix>llm`              | `CLIENT`   | `chat`、`generate_content`、`text_completion` 等实际操作 | interaction、compaction               | 每条实际发起模型调用的 assistant message 1 个，覆盖其重试 |
-| `<prefix>tool.<tool-name>` | `INTERNAL` | `execute_tool`                                           | 所属 assistant message 的 interaction | 每次 tool call 1 个                                       |
-| `<prefix>permission.check` | `INTERNAL` | 不设置                                                   | 精确关联的活动 tool span              | 每次可关联的人工权限检查 1 个                             |
+| Span 名称                  | OTel kind  | `gen_ai.operation.name`                                  | 常规 parent                           | 创建数量                                                            |
+| -------------------------- | ---------- | -------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------- |
+| `<prefix>run`              | `INTERNAL` | `invoke_workflow`                                        | 无（顶层）或父 `task` tool            | session 中每个任务执行周期 1 个                                     |
+| `<prefix>interaction`      | `INTERNAL` | `invoke_agent`                                           | 当前 session 的 run                   | 每次真实用户交互 1 个                                               |
+| `<prefix>compaction`       | `INTERNAL` | 不设置                                                   | interaction                           | 每次压缩 1 个                                                       |
+| `<prefix>llm`              | `CLIENT`   | `chat`、`generate_content`、`text_completion` 等实际操作 | interaction、compaction               | 每条有请求准备或模型 step 证据的 assistant message 1 个，覆盖其重试 |
+| `<prefix>tool.<tool-name>` | `INTERNAL` | `execute_tool`                                           | 所属 assistant message 的 interaction | 每次 tool call 1 个                                                 |
+| `<prefix>permission.check` | `INTERNAL` | 不设置                                                   | 精确关联的活动 tool span              | 每次可关联的人工权限检查 1 个                                       |
 
 `gen_ai.operation.name` 不是 OTel `SpanKind` 的替代品。run 表示工作流执行，interaction 表示本地 agent 调用；compaction 和 permission 是普通 OTel 内部操作，本基线没有可直接对应它们的 GenAI 标准操作值，不伪造 `CHAIN`、`GUARDRAIL` 或新的标准操作值。[Agent / workflow span 规范][genai-agents]、[模型 / tool span 规范][genai-spans]
 
@@ -349,10 +350,10 @@ type RetryHistory = Array<{
 
 ### 8.5 生命周期与状态
 
-- 仅为实际发起模型调用的 assistant message 创建 span。OpenCode 的 subtask / 命令路径也可能直接构造 assistant message，不能仅凭 `role=assistant` 创建 LLM span。
+- 仅为有请求准备或模型 step 证据的 assistant message 创建 span。OpenCode 的 subtask / 命令路径也可能直接构造 assistant message，不能仅凭 `role=assistant` 创建 LLM span。
 - 精确开始时间取逻辑模型调用发起时刻，结束时间取响应流完成或该调用终止时刻；span 覆盖期间发生的重试和退避，不包含对应工具的执行或等待时间。
 - `assistant.time.created/completed` 是消息处理时间；`time.completed` 在工具等待和清理之后写入，不能作为纯 LLM 结束时间。普通消息/part 事件只能提供近似观察边界，精确边界需要额外 lifecycle 探测。
-- 仅使用插件 hooks/events 的降级实现，可以用 `step-start` / `step-finish` 的观察时间作为模型 step 的可见边界；这可能包含事件处理、快照及工具等待开销，不能声称是纯模型请求耗时。只有结束事件时不补造起点；没有实际模型 step 证据时不从 assistant 消息推断已发起调用。
+- 当前实现优先在 `chat.headers` 唯一匹配 assistant 和 parent 后创建 span，以便发送前传播上下文；起点是请求准备的本地观察时间，不保证请求最终到达网络。没有取得该关联时降级为首个 `step-start` 的观察时间。结束使用 `step-finish` 或终止事件的观察时间；这可能包含请求准备、事件处理、快照及工具等待开销，不能声称是纯模型请求耗时。只有结束事件且没有请求准备或 step 开始证据时不补造起点。
 - 无法测量首 chunk 时，不导出标准或 attempt 级首 chunk 耗时。不能用首个 assistant 文本事件的观察时间伪造精确值。
 - 正常完成保持 `UNSET`，provider / OpenCode 错误终止时设置 `ERROR`、`error.type` 和 status message。重试后成功的逻辑 LLM span 不残留终态 `error.type` 或 `ERROR`；重试原因保留在 history。
 - session 结束时仍未完成的 LLM span 以 `ERROR` 清理，status message 为 `session ended before message completed` 或具体会话错误。

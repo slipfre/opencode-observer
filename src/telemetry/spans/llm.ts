@@ -1,4 +1,12 @@
-import { SpanKind, SpanStatusCode, type Context, type Span } from "@opentelemetry/api";
+import {
+  defaultTextMapSetter,
+  SpanKind,
+  SpanStatusCode,
+  trace,
+  type Context,
+  type Span,
+} from "@opentelemetry/api";
+import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import type {
   LlmFinish,
   LlmReference,
@@ -6,6 +14,7 @@ import type {
   LlmUpdate,
   ObservationError,
   RunReference,
+  TraceHeaders,
 } from "../../contract/observer.js";
 import { encodeTextMessage, type SpanOptions } from "./common.js";
 import { encodeModelMessages, encodeSystemInstructions } from "./messages.js";
@@ -26,6 +35,7 @@ export function createLlmSpans(
     }
   >();
   const finished = new Set<string>();
+  const propagator = new W3CTraceContextPropagator();
 
   function finish(input: LlmFinish) {
     const key = JSON.stringify([
@@ -79,6 +89,29 @@ export function createLlmSpans(
 
   return {
     finish,
+    traceHeaders(input: LlmReference): TraceHeaders | undefined {
+      const call = calls.get(
+        JSON.stringify([input.interaction.run.sessionID, input.interaction.run.id, input.id]),
+      );
+
+      if (!call || call.reference.interaction.id !== input.interaction.id) {
+        return;
+      }
+
+      const headers: Record<string, string> = {};
+      propagator.inject(
+        trace.setSpan(options.rootContext, call.span),
+        headers,
+        defaultTextMapSetter,
+      );
+
+      return headers.traceparent
+        ? {
+            traceparent: headers.traceparent,
+            ...(headers.tracestate ? { tracestate: headers.tracestate } : {}),
+          }
+        : undefined;
+    },
     update(input: LlmUpdate) {
       const call = calls.get(
         JSON.stringify([input.interaction.run.sessionID, input.interaction.run.id, input.id]),

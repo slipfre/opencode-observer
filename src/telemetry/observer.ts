@@ -225,6 +225,9 @@ export function createObserver(options: ObserverOptions): Observer {
         llms.start(input);
       }
     },
+    llmTraceHeaders(input) {
+      return state.closed ? undefined : llms.traceHeaders(input);
+    },
     updateLlm(input) {
       if (!state.closed) {
         llms.update(input);

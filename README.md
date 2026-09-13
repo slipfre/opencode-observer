@@ -68,7 +68,8 @@ Resource 默认上报 `service.name=opencode`，`service.version` 来自运行�
 
 - 一个 run 表示一次任务执行，包含一次或多次用户交互。任务执行中的追加输入（steer）会创建新 interaction；run 和 interaction 的正文仅聚合真实用户文本和最终答复。
 - 开启正文采集后，模型消息可包含历史上下文、系统指令、reasoning、工具调用与结果、多模态内容，工具 span 可记录参数与成功结果。模型正文反映 SDK 可见的内容，后续 provider 转换仍可能改变实际请求。开启 `OPENCODE_EXPERIMENTAL_NATIVE_LLM` 或无法取得完整消息时，普通模型调用降级为所属用户文本和可见答复，摘要调用省略未知输入。
-- LLM 耗时使用事件观察边界，可能包含事件处理和工具等待开销；当前未精确测量模型请求耗时或首 chunk 耗时。重试字段的 `0` / `[]` 表示尚未确认重试开始，不能据此判断没有重试。
+- 可唯一关联的模型请求在 `chat.headers` 阶段创建 LLM span，并注入该 span 的 W3C `traceparent`；存在非空 `tracestate` 时一并传播，不依赖正文采集开关。AI SDK 路径支持端到端传播；当前 OpenCode native HTTP 层会覆盖准备好的 traceparent，因此 native 路径尚不能保证与本插件 trace 关联。标题、归属未知或歧义的调用省略注入；不读取外部 trace 上下文配置，也不向 tracestate 添加用户 ID。
+- LLM 耗时从请求准备阶段的观察时间开始，未取得请求关联时降级为首个 `step-start` 的观察时间，结束仍使用事件观察边界，可能包含请求准备、事件处理和工具等待开销；当前未精确测量网络请求耗时或首 chunk 耗时。重试字段的 `0` / `[]` 表示尚未确认重试开始，不能据此判断没有重试。
 - 前台子任务的父子关联和权限检查 span 依赖可识别的工具关联；未知关联不会补造。暂不采集工具定义、HTTP headers 或真实响应 ID/model。
 
 正常完成的 span 状态为 `UNSET`，失败为 `ERROR`。缺失数据省略，正文未采集与明确为空有不同含义。完整字段、父子关系及生命周期约定见 [Trace Schema](docs/schemas/trace.md)。

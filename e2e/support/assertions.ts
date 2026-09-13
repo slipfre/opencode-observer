@@ -57,6 +57,22 @@ export function requireSpans(fixture: E2EFixture, result: RunResult, count: numb
   });
   fixture.llm.hits.forEach((hit) => {
     expect(hit.headers.has("x-opencode-observer-request")).toBe(false);
+
+    if (hit.title || count === 0) {
+      expect(hit.headers.has("traceparent")).toBe(false);
+      expect(hit.headers.has("tracestate")).toBe(false);
+
+      return;
+    }
+
+    const traceparent = hit.headers.get("traceparent");
+    expect(traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+    const llm = oneSpan(
+      spans.filter((span) => traceparent === `00-${span.traceId}-${span.spanId}-01`),
+      "e2e.llm",
+    );
+    expect(hit.headers.get("tracestate")).toBe(llm.traceState ?? null);
+    expect(hit.headers.get("x-session-id")).toBe(String(llm.attributes["session.id"]));
   });
 
   return spans;

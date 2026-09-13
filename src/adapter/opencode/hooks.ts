@@ -45,6 +45,7 @@ export function createOpenCodeAdapter(options: {
           return;
         }
 
+        Object.assign(output.headers, coordinator.prepareModel(input));
         state.messageCapture?.attachCorrelationHeader(input, output);
       }),
     event: (input) =>

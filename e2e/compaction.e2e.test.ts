@@ -98,7 +98,7 @@ describe("OpenCode compaction E2E", () => {
         const result = await fixture.run("compact after a tool", [
           "--dangerously-skip-permissions",
         ]);
-        const spans = requireSpans(fixture, result, 5, 1);
+        const spans = requireSpans(fixture, result, 6, 1);
 
         expect(fixture.llm.mainHits()).toHaveLength(2);
         const compaction = oneSpan(spans, "e2e.compaction");
@@ -107,7 +107,19 @@ describe("OpenCode compaction E2E", () => {
         );
         expect(compaction.attributes["gen_ai.usage.input_tokens"]).toBeUndefined();
         expect(compaction.attributes["opencode.compaction.summary_tokens"]).toBeUndefined();
-        expectUnset(oneSpan(spans, "e2e.llm"));
+        expectError(
+          oneSpan(
+            spans.filter((span) => span.parentSpanId === compaction.spanId),
+            "e2e.llm",
+          ),
+          "ContextOverflowError",
+        );
+        expectUnset(
+          oneSpan(
+            spans.filter((span) => span.parentSpanId !== compaction.spanId),
+            "e2e.llm",
+          ),
+        );
         expectUnset(oneSpan(spans, "e2e.tool.bash"));
       },
     ));

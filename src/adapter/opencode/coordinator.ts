@@ -370,6 +370,9 @@ export function createCoordinator(options: CoordinatorOptions) {
     bindModel(input: LlmRequest[0]) {
       return state.closed ? undefined : sessions.get(input.sessionID)?.llms.bind(input);
     },
+    prepareModel(input: LlmRequest[0]) {
+      return state.closed ? undefined : sessions.get(input.sessionID)?.llms.prepare(input, now());
+    },
     request(input: LlmRequest[0], output: LlmRequest[1]) {
       if (!state.closed) {
         sessions.get(input.sessionID)?.llms.request(input, output);

@@ -1,10 +1,12 @@
 import { afterEach, expect, mock, test } from "bun:test";
-import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { createTraceState, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { ExportResultCode } from "@opentelemetry/core";
 import {
   BasicTracerProvider,
   BatchSpanProcessor,
+  SamplingDecision,
   type ReadableSpan,
+  type Sampler,
   type SpanExporter,
 } from "@opentelemetry/sdk-trace-base";
 import type { InteractionStart, LlmStart, Observer, RunStart } from "../src/contract/observer.js";
@@ -22,6 +24,7 @@ afterEach(async () => {
 function setup(
   options: Partial<Omit<ObserverOptions, "provider" | "scope">> = {},
   exporting?: SpanExporter["export"],
+  sampler?: Sampler,
 ) {
   const spans: ReadableSpan[] = [];
   const shutdown = mock(async () => {});
@@ -40,6 +43,7 @@ function setup(
     shutdown,
   };
   const provider = new BasicTracerProvider({
+    sampler,
     spanProcessors: [
       new BatchSpanProcessor(exporter, { scheduledDelayMillis: 60_000, exportTimeoutMillis: 1000 }),
     ],
@@ -89,6 +93,83 @@ function llm(id = "a1", parent = interaction()): LlmStart {
     compactionID: undefined,
   };
 }
+
+test.each([
+  { state: undefined, decision: SamplingDecision.RECORD_AND_SAMPLED, flags: "01" },
+  { state: "vendor=one,other=two", decision: SamplingDecision.RECORD_AND_SAMPLED, flags: "01" },
+  { state: "", decision: SamplingDecision.RECORD_AND_SAMPLED, flags: "01" },
+  { state: "vendor=unsampled", decision: SamplingDecision.NOT_RECORD, flags: "00" },
+])("LLM propagation serializes the span's state and sampling: %j", async (input) => {
+  const h = setup({}, undefined, {
+    shouldSample: () => ({
+      decision: input.decision,
+      traceState: input.state === undefined ? undefined : createTraceState(input.state),
+    }),
+    toString: () => "PropagationTestSampler",
+  });
+
+  expect(h.observer.llmTraceHeaders(llm())).toBeUndefined();
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+  const headers = h.observer.llmTraceHeaders(llm());
+
+  expect(headers?.traceparent).toMatch(new RegExp(`^00-[0-9a-f]{32}-[0-9a-f]{16}-${input.flags}$`));
+  expect(headers?.tracestate).toBe(input.state || undefined);
+  expect(h.observer.llmTraceHeaders(llm("unknown"))).toBeUndefined();
+  expect(h.observer.llmTraceHeaders(llm("a1", interaction("wrong")))).toBeUndefined();
+  expect(h.observer.llmTraceHeaders(llm("a1", interaction("u1", start("wrong"))))).toBeUndefined();
+  expect(
+    h.observer.llmTraceHeaders(llm("a1", interaction("u1", start("u1", "wrong")))),
+  ).toBeUndefined();
+  expect(h.observer.llmTraceHeaders(llm())).toEqual(headers);
+  expect(h.observer.llmTraceHeaders(llm())).not.toBe(headers);
+
+  h.observer.finishLlm({ ...llm(), endedAt: 1500, output: undefined });
+  expect(h.observer.llmTraceHeaders(llm())).toBeUndefined();
+  await h.observer.flush();
+
+  if (input.flags === "01") {
+    const span = h.spans.find((span) => span.name === "opencode.llm")!;
+    expect(headers?.traceparent).toBe(
+      `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`,
+    );
+    expect(span.spanContext().traceState?.serialize() || undefined).toBe(headers?.tracestate);
+  }
+
+  h.observer.startLlm(llm("unfinished"));
+  await h.observer.shutdown();
+  expect(h.observer.llmTraceHeaders(llm("unfinished"))).toBeUndefined();
+});
+
+test("LLM propagation isolates concurrent sessions with identical message IDs", async () => {
+  const h = setup();
+  const first = llm();
+  const second = llm("a1", interaction("u1", start("u1", "s2")));
+
+  [first, second].forEach((input) => {
+    h.observer.startRun(start(input.interaction.run.id, input.interaction.run.sessionID));
+    h.observer.startInteraction(
+      interaction(input.interaction.id, start("u1", input.interaction.run.sessionID)),
+    );
+    h.observer.startLlm(input);
+  });
+  const firstHeaders = h.observer.llmTraceHeaders(first);
+  const secondHeaders = h.observer.llmTraceHeaders(second);
+  expect(firstHeaders?.traceparent).not.toBe(secondHeaders?.traceparent);
+  await h.observer.shutdown();
+
+  [first, second].forEach((input, index) => {
+    const span = h.spans.find(
+      (span) =>
+        span.name === "opencode.llm" &&
+        span.attributes["session.id"] === input.interaction.run.sessionID,
+    )!;
+    expect([firstHeaders, secondHeaders][index]?.traceparent).toBe(
+      `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`,
+    );
+  });
+});
 
 test("structured LLM messages encode GenAI parts and take precedence over fallback text", async () => {
   const h = setup();

@@ -56,6 +56,11 @@ export type InteractionFinish = InteractionReference & {
 
 export type LlmReference = { interaction: InteractionReference; id: string };
 
+export type TraceHeaders = {
+  traceparent: string;
+  tracestate?: string;
+};
+
 export type LlmParameters = {
   temperature?: number;
   topP?: number;
@@ -64,7 +69,7 @@ export type LlmParameters = {
 };
 
 export type LlmStart = LlmReference & {
-  /** First model step observation time in Unix epoch milliseconds, not an exact request time. */
+  /** Request preparation time, or first model step observation as fallback, in Unix epoch milliseconds. */
   startedAt: number;
   providerID: string;
   providerName: string;
@@ -170,6 +175,8 @@ export type Observer = {
   startInteraction(input: InteractionStart): void;
   finishInteraction(input: InteractionFinish): void;
   startLlm(input: LlmStart): void;
+  /** Propagate an active LLM's context; unknown, finished, or closed calls return undefined. */
+  llmTraceHeaders(input: LlmReference): TraceHeaders | undefined;
   updateLlm(input: LlmUpdate): void;
   finishLlm(input: LlmFinish): void;
   startTool(input: ToolStart): void;

@@ -28,6 +28,9 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
     startInteraction() {},
     finishInteraction() {},
     startLlm() {},
+    llmTraceHeaders() {
+      return undefined;
+    },
     updateLlm(input) {
       updates.push(input);
     },
@@ -482,13 +485,19 @@ test("summary LLMs use the same SDK snapshot channel once their compaction paren
   expect(h.errors).toEqual([]);
 });
 
-test("native LLM runtime skips callback capture and sends no request marker", async () => {
+test("native LLM runtime prepares trace headers without callback capture or a request marker", async () => {
   const previous = process.env.OPENCODE_EXPERIMENTAL_NATIVE_LLM;
   process.env.OPENCODE_EXPERIMENTAL_NATIVE_LLM = "true";
 
   try {
     const h = await setup();
-    expect(await h.headers()).toEqual({ "X-Test": "kept" });
+    const headers = {
+      traceparent: "00-12345678901234567890123456789012-1234567890123456-01",
+      tracestate: "vendor=value",
+    };
+    h.observer.llmTraceHeaders = () => headers;
+
+    expect(await h.headers()).toEqual({ "X-Test": "kept", ...headers });
     await h.step("step-start");
     await h.step("step-finish");
 

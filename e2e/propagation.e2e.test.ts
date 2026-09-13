@@ -3,6 +3,23 @@ import { expectUnset, oneSpan, requireSpans } from "./support/assertions.js";
 import { withE2EFixture } from "./support/fixture.js";
 
 describe("OpenCode trace context E2E", () => {
+  test("native flag fallback to AI SDK propagates without SDK capture", () =>
+    withE2EFixture(
+      {
+        env: { OPENCODE_EXPERIMENTAL_NATIVE_LLM: "1" },
+        pluginOptions: { captureContent: true },
+        replies: [{ type: "text", text: "fallback trace propagated" }],
+      },
+      async (fixture) => {
+        const result = await fixture.run("propagate fallback request context");
+        const spans = requireSpans(fixture, result, 3);
+
+        expect(result.stdout).toContain("fallback trace propagated");
+        expect(result.stderr).toContain("native runtime unavailable; falling back to ai-sdk");
+        spans.forEach(expectUnset);
+      },
+    ));
+
   test("exports a new trace with collector headers", () => {
     return withE2EFixture(
       {

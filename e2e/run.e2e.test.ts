@@ -171,15 +171,17 @@ describe("OpenCode run E2E", () => {
       },
     ));
 
-  test("exports terminal provider errors without inventing an unobserved LLM step", () =>
+  test("exports a prepared LLM span when the provider fails before the first step", () =>
     withE2EFixture(
       { replies: [{ type: "error", code: "invalid_request", message: "invalid e2e request" }] },
       async (fixture) => {
         const result = await fixture.run("fail the model request");
-        const spans = requireSpans(fixture, result, 2, 1);
+        const spans = requireSpans(fixture, result, 3, 1);
 
         expect(fixture.llm.mainHits()).toHaveLength(1);
-        expect(spans.filter((span) => span.name === "e2e.llm")).toHaveLength(0);
+        expect(oneSpan(spans, "e2e.llm").parentSpanId).toBe(
+          oneSpan(spans, "e2e.interaction").spanId,
+        );
         spans.forEach((span) => expectError(span, "APIError"));
         expect(oneSpan(spans, "e2e.interaction").parentSpanId).toBe(
           oneSpan(spans, "e2e.run").spanId,

@@ -42,6 +42,7 @@
 - 对象开始、更新和结束等行为接口，以及 `flush`、`shutdown` 生命周期接口。
 - 可选数据、未知值、错误、重复调用和迟到更新的处理约定。
 - 同步与异步边界，以及失败如何反馈给调用方或诊断通道。
+- 根据精确 LLM 引用同步取得 W3C 传播字段；结果仅包含字符串，不暴露 OTel 对象。
 
 契约必须使用自身定义的数据类型，不得依赖 OpenCode SDK 或 OpenTelemetry SDK，不得暴露 `Event`、`Span`、`Tracer`、`Context`、provider 或 exporter 等第三方类型。
 
@@ -55,6 +56,7 @@
 
 - 维护观测对象标识到 span 的映射，以及 span 的创建、更新、结束和清理。
 - 将契约中明确提供的父子关联转换为 trace/span 关联，管理 OTel context。
+- 使用实例内 W3C propagator 将指定 LLM span 的上下文序列化，供适配层写入模型请求 headers，不依赖全局 active context。
 - 按契约聚合数据，并按 Trace Schema 设置 span 名称、属性、状态、正文编码、resource 和 instrumentation scope。
 - 保证重复结束不重复导出，已经结束的对象不被迟到更新改写。
 - 配置和管理 OTel SDK、span processor、OTLP exporter、导出队列及超时。
@@ -222,7 +224,7 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 | `src/telemetry/spans/messages.ts`     | 将契约消息映射为 GenAI parts，并序列化为属性字符串       |
 | `src/telemetry/spans/common.ts`       | 实现层共用的 span 配置类型和正文编码                     |
 
-契约提供 run、interaction、LLM、tool、compaction 和 permission 的 start / finish 操作，以及 `updateRun`、`updateLlm`、`updateTool`、`flush` 和 `shutdown`。run 使用 session ID 与首个真实用户消息 ID 共同定位；输入以消息 ID 去重，重复更新保留首次快照；最终输出在结束时提交，`undefined` 表示未知，空字符串表示已知空文本。
+契约提供 run、interaction、LLM、tool、compaction 和 permission 的 start / finish 操作，以及 `updateRun`、`updateLlm`、`updateTool`、`llmTraceHeaders`、`flush` 和 `shutdown`。`llmTraceHeaders` 同步返回指定活动 LLM 的 `traceparent` 和可选非空 `tracestate`；引用未知、已结束或实现已关闭时返回 `undefined`。run 使用 session ID 与首个真实用户消息 ID 共同定位；输入以消息 ID 去重，重复更新保留首次快照；最终输出在结束时提交，`undefined` 表示未知，空字符串表示已知空文本。
 
 协调模块把真实用户输入转换为 `{ sessionID, id, createdAt, text }` 交给 run tracker。run tracker 接受新输入后返回所属 run 引用、文本和用户身份快照；协调模块据此启动 interaction，并通知 LLM tracker 重新解析归属。重复输入返回未接受，不触发子对象更新。synthetic 续接由协调模块直接交给 interaction / LLM，不经过 run 的输入接口。跨 run 的输入去重记录仅由 run tracker 保留。
 
@@ -240,11 +242,11 @@ run 的 `parent` 使用明确的 `ToolReference`；摘要 LLM 的 `compactionID`
 
 ### 7.1 LLM 的事件生命周期
 
-LLM 使用所属 `InteractionReference` 和 assistant message ID 定位，适配层复用 interaction 的真实输入与 synthetic owner 解析，不另建一套“当前交互”判断。仅在观察到 `step-start` 且能够确定 assistant 和 parent 时创建，起点保留首次 step 的本地观察时间。摘要调用从 compaction tracker 解析所属 interaction 和 compaction ID。只有 assistant 消息、只有 `step-finish`、无法关联 owner 或缺少 compaction 父节点时省略；不补造开始时间或父节点。step 事件先于消息元数据时，可以等待元数据再按原观察时间记录。
+LLM 使用所属 `InteractionReference` 和 assistant message ID 定位，适配层复用 interaction 的真实输入与 synthetic owner 解析，不另建一套“当前交互”判断。优先在 `chat.headers` 根据 user message ID、provider、配置 model ID 和 agent 唯一匹配未完成 assistant，并确认 parent 后创建，以便发送请求前取得 span 上下文；起点为请求准备的本地观察时间。没有该关联时，仍可在观察到 `step-start` 且能够确定 assistant 和 parent 后创建，保留首次 step 的本地观察时间。摘要调用从 compaction tracker 解析所属 interaction 和 compaction ID。只有 assistant 消息、只有结束事件且没有开始证据、无法关联 owner 或缺少 compaction 父节点时省略；不补造开始时间或父节点。step 事件先于消息元数据时，可以等待元数据再按原观察时间记录。
 
 `step-finish` 提交正常结束，终点取该事件的观察时间；assistant 错误和会话错误提交失败。可恢复 overflow 结束失败的 LLM，但保留 run / interaction 等待恢复。idle、删除和关闭清理未结束 LLM；正常父操作不因子 LLM 失败而自动标错。实现层关闭顺序为 LLM、interaction、run；steer 只结束旧 interaction，既有和迟到的旧 LLM 继续使用原 parent。
 
-这些时间是事件可见边界，不能声称是网络请求或响应流的精确边界；step 事件的投递、快照处理和工具等待可能影响耗时。AI SDK lifecycle 回调目前只补充正文，不改变 span 时间和用量来源，不使用 `assistant.time.created/completed` 或首个文本事件补造精确请求时间、TTFC 或 attempt 起点。
+这些时间是请求准备或事件可见边界，不能声称是网络请求或响应流的精确边界；请求准备、step 事件的投递、快照处理和工具等待可能影响耗时。请求准备后、首个 step 前失败也结束对应 LLM span。AI SDK lifecycle 回调目前只补充正文，不改变 span 时间和用量来源，不使用 `assistant.time.created/completed` 或首个文本事件补造精确请求时间、TTFC 或 attempt 起点。
 
 同一 assistant 的重复 step / 重试保留一个逻辑 LLM span。新 step 清理前一 attempt 的文本快照，忽略前一 attempt 已知文本 part 的迟到更新；重复 step ID 不清空当前输出。`session.status.retry` 的 `next` 不作为开始证据；当前不能精确确认 attempt 起点，因此 `retry_count=0`、`retry_history=[]` 仅表示未确认重试开始，不代表没有重试。
 
@@ -252,7 +254,9 @@ LLM 使用所属 `InteractionReference` 和 assistant message ID 定位，适配
 
 `step-finish` 的归一化用量中，输入为 input + cache read + cache write，输出为 output + reasoning；同时保留 reasoning、cache read、cache write 分量和 cost。仅接受有限非负数，token 必须为安全整数；缺少某个求和分量时省略对应总量。不能用 assistant 创建时初始化的零用量冒充完成 usage。失败 LLM 不导出成功 usage / cost；成功零值正常保留。
 
-正文开启时，优先使用第 7.2 节的结构化消息；没有取得对应快照时，输入 fallback 为 owner 用户文本，输出 fallback 为当前调用可观察到的 assistant 文本。同一文本 part 更新替换、删除移除，已知空文本与未知输出区分。正文关闭时，适配层不保留或传递正文，实现层再次执行采集开关。当前仍不采集工具定义、HTTP headers、真实响应 ID/model 或下游 trace 注入。自定义属性不能伪造这些未采集数据，也不能覆盖内建 GenAI 字段。
+正文开启时，优先使用第 7.2 节的结构化消息；没有取得对应快照时，输入 fallback 为 owner 用户文本，输出 fallback 为当前调用可观察到的 assistant 文本。同一文本 part 更新替换、删除移除，已知空文本与未知输出区分。正文关闭时，适配层不保留或传递正文，实现层再次执行采集开关。当前仍不采集工具定义、HTTP headers 或真实响应 ID/model。自定义属性不能伪造这些未采集数据，也不能覆盖内建 GenAI 字段。
+
+`chat.headers` 在请求准备后调用契约的 `llmTraceHeaders`，把当前 LLM span 的 trace ID、span ID、采样标记和非空 traceState 作为 W3C headers 写入输出；此路径独立于正文采集和 AI SDK 回调。native LLM 同样准备这些字段，但当前 OpenCode native HTTP 层会另行注入并覆盖 traceparent，端到端关联尚未支持；native 自动回退到 AI SDK 时可正常传播。重复准备同一逻辑调用保留原 span 和起点；结束、关闭或无法唯一关联时不传播。顶层 trace 仍从空上下文创建，不恢复外部 trace 上下文配置。模型配置、其他插件及底层传输的同名 headers 冲突处理暂未覆盖。
 
 已有 run 的 Trace Schema 和测试所约定的行为继续保持。新增其他观测对象时遵循相同边界，再扩展父对象引用和对应字段；具体文件数量根据实现复杂度决定，不增加空转发模块。
 

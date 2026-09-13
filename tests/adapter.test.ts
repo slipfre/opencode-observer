@@ -50,6 +50,7 @@ function recording() {
     startLlm(input) {
       llms.push(input);
     },
+    llmTraceHeaders: mock(() => undefined),
     updateLlm(input) {
       llmUpdates.push(input);
     },
@@ -250,6 +251,172 @@ function modelPart(
     time,
   );
 }
+
+test("request preparation starts one logical LLM before steps and preserves its owner across steer", () => {
+  const h = recording();
+  const headers = {
+    traceparent: "00-12345678901234567890123456789012-1234567890123456-01",
+    tracestate: "vendor=value",
+  };
+  h.observer.llmTraceHeaders = mock(() => headers);
+  const coordinator = createCoordinator({ observer: h.observer, now: () => 1080 });
+  const request = modelRequest();
+  coordinator.userMessage(user(), [text()]);
+  coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1050);
+  coordinator.request(...request);
+  expect(h.llms).toEqual([]);
+
+  expect(coordinator.prepareModel(request[0])).toEqual(headers);
+  coordinator.userMessage(user("u2", 1090), [text("u2", "steer")]);
+  expect(coordinator.prepareModel(request[0])).toEqual(headers);
+  modelPart(coordinator, "step-start", 1200);
+
+  expect(h.llms).toHaveLength(1);
+  expect(h.llms[0]).toMatchObject({
+    id: "a1",
+    interaction: { id: "u1", run: { sessionID: "s1", id: "u1" } },
+    startedAt: 1080,
+    model: "gemini-request-model",
+    input: undefined,
+    parameters: { temperature: 0, topP: 0.9, topK: 8, maxTokens: 100 },
+  });
+  expect(h.observer.llmTraceHeaders).toHaveBeenLastCalledWith({
+    id: "a1",
+    interaction: h.llms[0]!.interaction,
+  });
+
+  modelPart(coordinator, "step-finish", 1300);
+  expect(h.llmFinishes).toHaveLength(1);
+  expect(coordinator.prepareModel(request[0])).toBeUndefined();
+  coordinator.close();
+  expect(coordinator.prepareModel(request[0])).toBeUndefined();
+});
+
+test.each([
+  "title",
+  "ambiguous",
+  "model",
+  "provider",
+  "user",
+  "completed",
+  "missing-parent",
+  "summary",
+])("request preparation omits propagation for %s without inventing a span", (scenario) => {
+  const h = recording();
+  const coordinator = createCoordinator({ observer: h.observer });
+  const request = modelRequest()[0];
+  coordinator.userMessage(user(), [text()]);
+  coordinator.event({
+    type: "message.updated",
+    properties: {
+      info: modelMessage({
+        ...(scenario === "completed" ? { time: { created: 1050, completed: 1100 } } : {}),
+        ...(scenario === "missing-parent" ? { parentID: "unknown" } : {}),
+        ...(scenario === "summary" ? { summary: true } : {}),
+      }),
+    },
+  });
+
+  if (scenario === "ambiguous") {
+    coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ id: "a2" }) },
+    });
+  }
+
+  const input = {
+    ...request,
+    agent: scenario === "title" ? "title" : request.agent,
+    message: scenario === "user" ? user("unknown") : request.message,
+    model: {
+      ...request.model,
+      id: scenario === "model" ? "unknown" : request.model.id,
+      providerID: scenario === "provider" ? "unknown" : request.model.providerID,
+    },
+  };
+  expect(coordinator.prepareModel(input)).toBeUndefined();
+  expect(h.llms).toEqual([]);
+  expect(h.observer.llmTraceHeaders).not.toHaveBeenCalled();
+  coordinator.close();
+});
+
+test.each([false, true])(
+  "chat.headers propagates without SDK capture initialization, captureContent=%s",
+  async (captureContent) => {
+    const h = recording();
+    const headers = {
+      traceparent: "00-12345678901234567890123456789012-1234567890123456-01",
+      tracestate: "vendor=value",
+    };
+    h.observer.llmTraceHeaders = mock(() => headers);
+    const failures: unknown[] = [];
+    const adapter = createOpenCodeAdapter({
+      observer: h.observer,
+      directory: "/test",
+      captureContent,
+      log: (error) => failures.push(error),
+      onDispose: h.observer.shutdown,
+    });
+    const request = modelRequest();
+    await adapter.hooks["chat.message"]?.(
+      { sessionID: "s1" },
+      { message: user(), parts: [text()] },
+    );
+    await adapter.hooks.event?.({
+      event: { type: "message.updated", properties: { info: modelMessage() } },
+    });
+    await adapter.hooks["chat.params"]?.(...request);
+    const output = { headers: { "X-Test": "kept" } };
+
+    await adapter.hooks["chat.headers"]?.(request[0], output);
+
+    expect(output.headers).toEqual({ "X-Test": "kept", ...headers });
+    expect(h.llms).toHaveLength(1);
+    expect(h.llms[0]?.input).toBe(captureContent ? "question" : undefined);
+    expect(failures).toEqual([]);
+
+    await adapter.hooks.event?.({
+      event: {
+        type: "session.error",
+        properties: {
+          sessionID: "s1",
+          error: { name: "APIError", data: { message: "before first step", isRetryable: false } },
+        },
+      },
+    });
+    expect(h.llmFinishes).toHaveLength(1);
+    expect(h.llmFinishes[0]?.error).toEqual({ type: "APIError", message: "before first step" });
+    expect(h.llmFinishes[0]?.usage).toBeUndefined();
+    adapter.close();
+  },
+);
+
+test("a propagation failure leaves the model headers usable and is contained by the hook", async () => {
+  const h = recording();
+  const failure = new Error("propagation failed");
+  h.observer.llmTraceHeaders = () => {
+    throw failure;
+  };
+  const failures: unknown[] = [];
+  const adapter = createOpenCodeAdapter({
+    observer: h.observer,
+    directory: "/test",
+    captureContent: false,
+    log: (error) => failures.push(error),
+    onDispose: h.observer.shutdown,
+  });
+  await adapter.hooks["chat.message"]?.({ sessionID: "s1" }, { message: user(), parts: [text()] });
+  await adapter.hooks.event?.({
+    event: { type: "message.updated", properties: { info: modelMessage() } },
+  });
+  const output = { headers: { "X-Test": "kept" } };
+
+  await expect(adapter.hooks["chat.headers"]?.(modelRequest()[0], output)).resolves.toBeUndefined();
+
+  expect(output.headers).toEqual({ "X-Test": "kept" });
+  expect(failures).toEqual([failure]);
+  adapter.close();
+});
 
 test("source messages become run operations with explicit unsupported associations", () => {
   const h = recording();
