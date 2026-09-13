@@ -22,6 +22,7 @@ export function createOpenCodeAdapter(options: {
     messageCaptureSetup: undefined as Promise<void> | undefined,
   };
   const hooks: Hooks = {
+    dispose: () => guard(options.onDispose),
     "chat.message": (_input, output) =>
       guard(() => {
         if (state.closed) {

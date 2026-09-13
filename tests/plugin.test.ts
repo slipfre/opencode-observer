@@ -733,7 +733,7 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
   ).toBe(7);
 });
 
-test("a slow collector does not block chat hooks and shutdown waits for export", async () => {
+test("a slow collector does not block chat hooks and dispose waits for export", async () => {
   const payloads: ExportPayload[] = [];
   const exporting = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
@@ -788,8 +788,10 @@ test("a slow collector does not block chat hooks and shutdown waits for export",
   await message("u2");
   const elapsed = performance.now() - before;
 
-  const disposal = hook.event?.({
-    event: { type: "server.instance.disposed", properties: { directory: "/test" } },
+  expect(hook.dispose).toBeFunction();
+  const disposed = { complete: false };
+  const disposal = hook.dispose?.().then(() => {
+    disposed.complete = true;
   });
   const repeated = hook.event?.({
     event: { type: "server.instance.disposed", properties: { directory: "/test" } },
@@ -797,6 +799,7 @@ test("a slow collector does not block chat hooks and shutdown waits for export",
   await message("ignored");
   await hook.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
 
+  expect(disposed.complete).toBe(false);
   clearTimeout(timeout);
   release.resolve();
   await Promise.all([idle, disposal, repeated]);
@@ -807,6 +810,7 @@ test("a slow collector does not block chat hooks and shutdown waits for export",
     ),
   );
 
+  expect(disposed.complete).toBe(true);
   expect(elapsed).toBeLessThan(400);
   expect(spans.map((span) => [span.name, span.status.code ?? 0])).toEqual([
     ["opencode.interaction", 2],

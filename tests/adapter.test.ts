@@ -431,9 +431,10 @@ test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async
       event: { type: "server.instance.disposed", properties: { directory: "/test" } },
     }),
   ).resolves.toBeUndefined();
+  await expect(adapter.hooks.dispose?.()).resolves.toBeUndefined();
   await adapter.hooks["chat.message"]?.({ sessionID: "s1" }, { message: user(), parts: [text()] });
 
-  expect(failures).toEqual([exportError, disposeError]);
+  expect(failures).toEqual([exportError, disposeError, disposeError]);
   expect(h.starts).toHaveLength(1);
   adapter.close();
 });

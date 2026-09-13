@@ -183,7 +183,7 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 
 `flush`、`shutdown` 的失败通过 Promise 拒绝反馈，由调用边界接入诊断处理，不作为 OpenCode 任务失败向业务传播。日常事件处理不得直接操作 `provider.forceFlush()` 或 `provider.shutdown()`。
 
-当前适配层在 session idle、session error 和 session 删除事件后请求 `flush`，事件回调完成本地处理后返回，不等待网络导出。插件入口将实例释放和进程 `beforeExit` 连接到关闭流程：先释放适配层状态和监听器，再由遥测实现按后代优先顺序结束活动 span，等待已有导出并关闭导出器。
+当前适配层在 session idle、session error 和 session 删除事件后请求 `flush`，事件回调完成本地处理后返回，不等待网络导出。插件通过宿主 `dispose` hook 接入实例释放，并保留匹配目录的 `server.instance.disposed` 事件及进程 `beforeExit` 作为关闭入口：先释放适配层状态和监听器，再由遥测实现按后代优先顺序结束活动 span，等待已有导出并关闭导出器。`dispose` 等待关闭完成，重复关闭不重复导出，关闭异常通过诊断处理隔离。
 
 ## 7. 各类 span 的实现
 
