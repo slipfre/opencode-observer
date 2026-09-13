@@ -1,0 +1,30 @@
+e2e/disposal.e2e.test.ts
+  s_b5e182cb3d1891::t_c215affda62748 1-33
+e2e/support/disposal-plugin.ts
+  s_b5e182cb3d1891::t_c215affda62748 1-39
+tests/plugin.test.ts
+  s_b5e182cb3d1891::t_000ca51137ad83 792-794,802,813
+  s_b5e182cb3d1891::t_c215affda62748 736,791
+tests/adapter.test.ts
+  s_b5e182cb3d1891::t_c215affda62748 434,437
+docs/spec.md
+  s_b5e182cb3d1891::t_000ca51137ad83 186
+src/adapter/opencode/hooks.ts
+  s_b5e182cb3d1891::t_000ca51137ad83 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5b8105e78b7640853f36b57a928b782c312d8047",
+  "prompts": {},
+  "sessions": {
+    "s_b5e182cb3d1891": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a099e2-34d0-7900-8f41-4cb232a294fa",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
