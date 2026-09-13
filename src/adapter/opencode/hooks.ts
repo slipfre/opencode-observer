@@ -3,15 +3,18 @@ import type { Observer } from "../../contract/observer.js";
 import { createCoordinator } from "./coordinator.js";
 import type { createModelMessageCapture } from "../model/ai-sdk.js";
 import { createGuard } from "../shared/guard.js";
+import { userTraceState } from "../model/trace-state.js";
 
 export function createOpenCodeAdapter(options: {
   observer: Observer;
   directory: string;
   captureContent: boolean;
+  userIdentity?: { enabled: boolean; id?: string };
   log: (error: unknown) => unknown;
   onDispose: () => Promise<void>;
 }) {
   const guard = createGuard(options.log);
+  const userIdentity = options.userIdentity ? { ...options.userIdentity } : undefined;
   const coordinator = createCoordinator({
     observer: options.observer,
     captureContent: options.captureContent,
@@ -45,7 +48,13 @@ export function createOpenCodeAdapter(options: {
           return;
         }
 
-        Object.assign(output.headers, coordinator.prepareModel(input));
+        const headers = coordinator.prepareModel(input);
+        Object.assign(
+          output.headers,
+          headers && userIdentity?.enabled
+            ? { ...headers, tracestate: userTraceState(headers.tracestate, userIdentity.id) }
+            : headers,
+        );
         state.messageCapture?.attachCorrelationHeader(input, output);
       }),
     event: (input) =>

@@ -28,7 +28,13 @@ export function messages(span: ExportedSpan, direction: "input" | "output") {
   return JSON.parse(String(value)) as unknown;
 }
 
-export function requireSpans(fixture: E2EFixture, result: RunResult, count: number, exitCode = 0) {
+export function requireSpans(
+  fixture: E2EFixture,
+  result: RunResult,
+  count: number,
+  exitCode = 0,
+  traceUserID: string | false = "unknown",
+) {
   if (result.exitCode !== exitCode) {
     throw new Error(
       `Expected exit ${exitCode}, received ${result.exitCode}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
@@ -71,7 +77,11 @@ export function requireSpans(fixture: E2EFixture, result: RunResult, count: numb
       spans.filter((span) => traceparent === `00-${span.traceId}-${span.spanId}-01`),
       "e2e.llm",
     );
-    expect(hit.headers.get("tracestate")).toBe(llm.traceState ?? null);
+    expect(hit.headers.get("tracestate")).toBe(
+      [traceUserID === false ? undefined : `user_id=${traceUserID}`, llm.traceState]
+        .filter(Boolean)
+        .join(",") || null,
+    );
     expect(hit.headers.get("x-session-id")).toBe(String(llm.attributes["session.id"]));
   });
 

@@ -4,7 +4,7 @@ import { lookupUser, type User } from "./lookup.js";
 export async function resolveUser(
   env: Record<string, string | undefined> = process.env,
 ): Promise<User | null | undefined> {
-  if (["false", "0"].includes(env.OPENCODE_USER_ID_ENABLED?.trim().toLowerCase() ?? "")) {
+  if (!isUserIDEnabled(env)) {
     return;
   }
 
@@ -27,6 +27,10 @@ export async function resolveUser(
       retryCount: readInteger(env.OPENCODE_USER_ID_RETRY_COUNT, 2, 0, 10),
     })) ?? null
   );
+}
+
+export function isUserIDEnabled(env: Record<string, string | undefined> = process.env) {
+  return !["false", "0"].includes(env.OPENCODE_USER_ID_ENABLED?.trim().toLowerCase() ?? "");
 }
 
 function readInteger(

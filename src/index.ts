@@ -11,8 +11,9 @@ export const ObserverPlugin: Plugin = async (input, options) => {
   const { createTelemetry } = await import("./telemetry/factory.js");
   const { createOpenCodeAdapter } = await import("./adapter/opencode/hooks.js");
   const { getOpenCodeVersion } = await import("./adapter/opencode/version.js");
-  const { resolveUser } = await import("./user/resolve.js");
+  const { resolveUser, isUserIDEnabled } = await import("./user/resolve.js");
 
+  const userIDEnabled = isUserIDEnabled();
   const [serviceVersion, user] = await Promise.all([
     getOpenCodeVersion(input.client).catch(() => undefined),
     resolveUser(),
@@ -44,6 +45,7 @@ export const ObserverPlugin: Plugin = async (input, options) => {
     observer,
     directory: input.directory,
     captureContent: config.captureContent,
+    userIdentity: { enabled: userIDEnabled, id: user?.id },
     log,
     onDispose: shutdown,
   });

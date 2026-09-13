@@ -45,11 +45,11 @@ Resource 默认上报 `service.name=opencode`，`service.version` 来自运行�
 
 ### 用户身份解析
 
-启用遥测后，可通过以下独立环境变量配置身份查询。入口调用独立 user 模块读取配置并查询身份，等待查询结束后，将有效的 `user.id` 合并到 `spanAttributes` 再创建 telemetry。身份接口不使用插件选项，也不读取 OpenCode provider 配置。
+启用遥测后，可通过以下独立环境变量配置身份查询及模型请求中的身份传播。入口调用独立 user 模块读取配置并查询身份，等待查询结束后，将有效的 `user.id` 合并到 `spanAttributes` 再创建 telemetry，并把查询结果和开关快照传给 adapter。身份接口不使用插件选项，也不读取 OpenCode provider 配置。
 
 | 环境变量                           | 默认值 / 格式                                                                               |
 | ---------------------------------- | ------------------------------------------------------------------------------------------- |
-| `OPENCODE_USER_ID_ENABLED`         | `true`；`false` / `0` 关闭身份查询                                                          |
+| `OPENCODE_USER_ID_ENABLED`         | `true`；`false` / `0` 同时关闭身份查询和 tracestate 中的身份写入                            |
 | `OPENCODE_USER_ID_ENDPOINT`        | 未设置；需要完整 HTTP(S) 身份接口地址，例如 `https://identity.example.com/queryUserByToken` |
 | `OPENCODE_USER_ID_TOKEN`           | 未设置；身份接口接受的 token，可配置为对应 provider 的 API key                              |
 | `OPENCODE_USER_ID_X-Blackbox-Auth` | 未设置；可选的 `X-Blackbox-Auth` 请求头                                                     |
@@ -62,13 +62,15 @@ Resource 默认上报 `service.name=opencode`，`service.version` 来自运行�
 
 初始化会等待查询及重试完成，失败时按 250、500、1000 毫秒等指数退避重试；默认最多请求三次，每次超时 3 秒。查询失败后继续启动。此过程可能延长插件初始化；初始化后不再后台查询或冷却重试。
 
-查询成功的 ID 优先于选项或环境变量 `spanAttributes` 中的 `user.id`；查询及重试最终失败时保留静态配置，没有静态配置则写入 `user.id=unknown`，表示未取得有效身份。因开关关闭、地址无效或 token 为空而未发起查询时，保留静态配置，没有静态配置则省略。六类 span 从创建起使用这份配置快照，正文采集关闭时仍生效。契约显式提供的非空身份优先于配置值和 `unknown` 兜底值。修改 token 或环境变量需要重新初始化插件才会生效，身份不会注入模型请求。
+查询成功的 ID 优先于选项或环境变量 `spanAttributes` 中的 `user.id`；查询及重试最终失败时保留静态配置，没有静态配置则写入 `user.id=unknown`，表示未取得有效身份。因开关关闭、地址无效或 token 为空而未发起查询时，保留静态配置，没有静态配置则省略。六类 span 从创建起使用这份配置快照，正文采集关闭时仍生效。契约显式提供的非空身份优先于配置值和 `unknown` 兜底值。修改 token 或环境变量需要重新初始化插件才会生效。
+
+同一个开关开启时，adapter 在可关联的模型请求中将动态查询结果写为 `tracestate: user_id=<ID>`。未配置有效地址或 token、未取得有效 ID、查询失败时均发送 `user_id=unknown`，不使用静态 span 属性替代动态查询结果。已有厂商项保留顺序，已有 `user_id` 被替换并移至首位，超过 32 项时移除末尾项。W3C key 不允许点号，因此使用 `user_id`；ID 去除首尾空白后须为不含逗号或等号的 1～256 个可打印 ASCII 字符，无法合法表示时也使用 `unknown`。该逻辑全部位于 adapter，只修改出站 headers，不修改 OTel SpanContext 或 OTLP 的 traceState。关闭此开关不影响 traceparent 传播。
 
 ## 采集范围与限制
 
 - 一个 run 表示一次任务执行，包含一次或多次用户交互。任务执行中的追加输入（steer）会创建新 interaction；run 和 interaction 的正文仅聚合真实用户文本和最终答复。
 - 开启正文采集后，模型消息可包含历史上下文、系统指令、reasoning、工具调用与结果、多模态内容，工具 span 可记录参数与成功结果。模型正文反映 SDK 可见的内容，后续 provider 转换仍可能改变实际请求。开启 `OPENCODE_EXPERIMENTAL_NATIVE_LLM` 或无法取得完整消息时，普通模型调用降级为所属用户文本和可见答复，摘要调用省略未知输入。
-- 可唯一关联的模型请求在 `chat.headers` 阶段创建 LLM span，并注入该 span 的 W3C `traceparent`；存在非空 `tracestate` 时一并传播，不依赖正文采集开关。AI SDK 路径支持端到端传播；当前 OpenCode native HTTP 层会覆盖准备好的 traceparent，因此 native 路径尚不能保证与本插件 trace 关联。标题、归属未知或歧义的调用省略注入；不读取外部 trace 上下文配置，也不向 tracestate 添加用户 ID。
+- 可唯一关联的模型请求在 `chat.headers` 阶段创建 LLM span，并注入该 span 的 W3C `traceparent`；非空 `tracestate` 及启用的身份字段一并传播，不依赖正文采集开关。AI SDK 路径支持端到端传播；当前 OpenCode native HTTP 层会覆盖准备好的 traceparent，因此 native 路径尚不能保证与本插件 trace 关联。标题、归属未知或歧义的调用省略注入；不读取外部 trace 上下文配置。
 - LLM 耗时从请求准备阶段的观察时间开始，未取得请求关联时降级为首个 `step-start` 的观察时间，结束仍使用事件观察边界，可能包含请求准备、事件处理和工具等待开销；当前未精确测量网络请求耗时或首 chunk 耗时。重试字段的 `0` / `[]` 表示尚未确认重试开始，不能据此判断没有重试。
 - 前台子任务的父子关联和权限检查 span 依赖可识别的工具关联；未知关联不会补造。暂不采集工具定义、HTTP headers 或真实响应 ID/model。
 

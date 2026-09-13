@@ -26,6 +26,7 @@
 - 解析 session、message、tool call 等源标识，确定对象身份、归属和父子关联，通过契约中的标识或引用传递。
 - 提取结构化正文、用量、错误和时间等数据，区分真实发生时间与本地观察时间。源数据无法支持精确测量时，按 Trace Schema 降级或省略。
 - 在正文采集关闭时，避免为遥测保留或传递正文。
+- 根据入口传入的动态身份结果和共用开关快照，在出站 tracestate 中写入 `user_id` 或 `unknown`；不修改遥测实现的 SpanContext。
 
 不得直接创建或修改 OTel span、拼装 OTLP payload、操作 provider 或 exporter，也不得将原始 OpenCode `Event`、`Message`、`Part` 对象直接透传给实现层。
 
@@ -119,6 +120,8 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 
 用户身份逻辑集中在 `src/user/`，由插件入口直接调用，不经过适配层。`user/resolve.ts` 提供异步 `resolveUser(env)`，读取并校验专用的 `OPENCODE_USER_ID_*` 环境变量，再调用 `user/lookup.ts` 的 `lookupUser(token, options)`。`resolveUser` 在成功时返回 `User`，查询及重试最终失败时返回 `null`，因开关关闭、地址无效或 token 为空而跳过查询时返回 `undefined`。`lookup.ts` 定义 `User = { id: string }` 和 `UserLookupOptions`，负责 HTTP 请求、响应校验、超时和有限重试，返回 `User` 或 `undefined`，不读取环境变量。user 模块只依赖自身和平台库，不依赖观测契约、OpenCode 或 OTel，不读取 provider 配置，也不维护 pending、缓存或冷却状态。
 
+`isUserIDEnabled(env)` 统一解析 `OPENCODE_USER_ID_ENABLED`，默认开启，去除首尾空白并忽略大小写后的 `false` / `0` 关闭。入口在查询前取得开关快照，并把 `{ enabled, id }` 作为普通数据交给 adapter；`id` 只来自动态查询结果。查询开关与 tracestate 身份写入共用这一开关，不新增配置。adapter 自行处理未知身份和字符串拼装，user 模块与 telemetry 不参与出站身份编码。
+
 入口等待 `resolveUser` 完成，将有效的 `user.id` 合并进配置中的 `spanAttributes`，然后调用原有的 telemetry factory。初始化查询可能延长启动；请求失败或超时在有限重试后继续启动并保留静态配置中的身份，没有静态配置则写入 `user.id=unknown`。跳过查询时仅保留静态配置，没有静态配置则省略。telemetry 不接收身份回调，不增加专用 processor 或契约类型，只沿用六类 span 的 attributes 展开逻辑。为兼容此通道，`user.id` 允许通过属性过滤，身份字段缺失时不覆盖配置值。优先级为契约显式非空身份、初始化查询结果、静态配置、查询失败时的 `unknown` 兜底值。初始化后使用固定快照，不随 token 或环境变量变化刷新。
 
 `.oxlintrc.json` 对三层和独立 user 模块配置导入限制，覆盖类型导入和重导出。`tests/boundaries.test.ts` 检查模块的实际静态与动态依赖，并将相对路径解析后判断目标目录，避免通过相对路径绕过目录边界。
@@ -208,6 +211,7 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 | `src/adapter/model/messages.ts`       | 将 AI SDK 输入和输出解析为契约消息快照                   |
 | `src/adapter/model/request.ts`        | 模型请求类型、参数快照、provider 与 operation 识别       |
 | `src/adapter/model/usage.ts`          | LLM 和 compaction 共用的 token 用量归一化                |
+| `src/adapter/model/trace-state.ts`    | 出站 tracestate 的动态身份写入、未知值兜底和成员限制     |
 | `src/adapter/shared/json.ts`          | 消息和工具载荷共用的 JSON 值快照转换                     |
 | `src/adapter/shared/error.ts`         | 源错误归一化，供各类观测对象使用                         |
 | `src/adapter/shared/number.ts`        | 非负有限数值及安全整数校验                               |
@@ -257,6 +261,8 @@ LLM 使用所属 `InteractionReference` 和 assistant message ID 定位，适配
 正文开启时，优先使用第 7.2 节的结构化消息；没有取得对应快照时，输入 fallback 为 owner 用户文本，输出 fallback 为当前调用可观察到的 assistant 文本。同一文本 part 更新替换、删除移除，已知空文本与未知输出区分。正文关闭时，适配层不保留或传递正文，实现层再次执行采集开关。当前仍不采集工具定义、HTTP headers 或真实响应 ID/model。自定义属性不能伪造这些未采集数据，也不能覆盖内建 GenAI 字段。
 
 `chat.headers` 在请求准备后调用契约的 `llmTraceHeaders`，把当前 LLM span 的 trace ID、span ID、采样标记和非空 traceState 作为 W3C headers 写入输出；此路径独立于正文采集和 AI SDK 回调。native LLM 同样准备这些字段，但当前 OpenCode native HTTP 层会另行注入并覆盖 traceparent，端到端关联尚未支持；native 自动回退到 AI SDK 时可正常传播。重复准备同一逻辑调用保留原 span 和起点；结束、关闭或无法唯一关联时不传播。顶层 trace 仍从空上下文创建，不恢复外部 trace 上下文配置。模型配置、其他插件及底层传输的同名 headers 冲突处理暂未覆盖。
+
+取得可传播的 LLM 上下文后，若共用的身份开关开启，adapter 将动态用户 ID 写入出站 `tracestate` 的 `user_id` 项。未配置有效身份接口或 token、返回空值、查询失败都使用 `unknown`；静态 `spanAttributes["user.id"]` 不参与该字段的选择。去除首尾空白后，ID 须满足 W3C 的 1～256 个可打印 ASCII 字符限制，不能包含逗号或等号，否则也使用 `unknown`。已有 `user_id` 替换后放到首位，保留其他项顺序，超过 32 项时移除末尾项。操作仅生成新的 header 字符串，不修改契约返回的对象、OTel span 或导出 traceState。开关关闭、调用无法关联或 adapter 已关闭时不增加身份字段，正文采集关闭不影响此功能。
 
 已有 run 的 Trace Schema 和测试所约定的行为继续保持。新增其他观测对象时遵循相同边界，再扩展父对象引用和对应字段；具体文件数量根据实现复杂度决定，不增加空转发模块。
 

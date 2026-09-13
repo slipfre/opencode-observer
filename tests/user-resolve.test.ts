@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { resolveUser } from "../src/user/resolve.js";
+import { isUserIDEnabled, resolveUser } from "../src/user/resolve.js";
 
 const env = {
   OPENCODE_USER_ID_ENDPOINT: "https://identity.example.test/queryUserByToken",
@@ -8,6 +8,25 @@ const env = {
 };
 
 afterEach(() => mock.restore());
+
+test.each([
+  { value: undefined, enabled: true },
+  { value: "true", enabled: true },
+  { value: "1", enabled: true },
+  { value: "false", enabled: false },
+  { value: "0", enabled: false },
+  { value: " FALSE ", enabled: false },
+  { value: " 0 ", enabled: false },
+])("identity lookup and propagation share the same switch: %j", async (input) => {
+  const fetcher = spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ code: 0, result: { ssicNo: "user-1" } }),
+  );
+  const config = { ...env, OPENCODE_USER_ID_ENABLED: input.value };
+
+  expect(isUserIDEnabled(config)).toBe(input.enabled);
+  expect(await resolveUser(config)).toEqual(input.enabled ? { id: "user-1" } : undefined);
+  expect(fetcher).toHaveBeenCalledTimes(input.enabled ? 1 : 0);
+});
 
 test("resolver passes identity parameters and waits for the lookup result", async () => {
   const response = Promise.withResolvers<Response>();

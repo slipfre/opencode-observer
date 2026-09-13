@@ -391,6 +391,68 @@ test.each([false, true])(
   },
 );
 
+test.each([
+  { enabled: true, id: "resolved-user", expected: "user_id=resolved-user,vendor=value" },
+  { enabled: true, id: undefined, expected: "user_id=unknown,vendor=value" },
+  { enabled: false, id: "resolved-user", expected: "vendor=value" },
+  { enabled: false, id: undefined, expected: "vendor=value" },
+])(
+  "adapter adds the user snapshot only to correlated outgoing trace headers: %j",
+  async (input) => {
+    const h = recording();
+    const headers = Object.freeze({
+      traceparent: "00-12345678901234567890123456789012-1234567890123456-01",
+      tracestate: "vendor=value",
+    });
+    h.observer.llmTraceHeaders = () => headers;
+    const identity: { enabled: boolean; id: string | undefined } = {
+      enabled: input.enabled,
+      id: input.id,
+    };
+    const failures: unknown[] = [];
+    const adapter = createOpenCodeAdapter({
+      observer: h.observer,
+      directory: "/test",
+      captureContent: false,
+      userIdentity: identity,
+      log: (error) => failures.push(error),
+      onDispose: h.observer.shutdown,
+    });
+    const request = modelRequest()[0];
+    identity.enabled = !identity.enabled;
+    identity.id = "changed-after-initialization";
+    await adapter.hooks["chat.message"]?.(
+      { sessionID: "s1" },
+      { message: user(), parts: [text()] },
+    );
+    const unmatched = { headers: { "X-Test": "kept" } };
+    await adapter.hooks["chat.headers"]?.(request, unmatched);
+    expect(unmatched.headers).toEqual({ "X-Test": "kept" });
+    await adapter.hooks.event?.({
+      event: { type: "message.updated", properties: { info: modelMessage() } },
+    });
+
+    const output = { headers: { "X-Test": "kept" } };
+    await adapter.hooks["chat.headers"]?.(request, output);
+    await adapter.hooks["chat.headers"]?.(request, output);
+
+    const expected = { ...headers, "X-Test": "kept", tracestate: input.expected };
+    expect(output.headers).toEqual(expected);
+    expect(headers.tracestate).toBe("vendor=value");
+    expect(h.llms[0]?.userID).toBeUndefined();
+    expect(h.llms[0]?.input).toBeUndefined();
+    expect(failures).toEqual([]);
+
+    const title = { headers: {} };
+    await adapter.hooks["chat.headers"]?.({ ...request, agent: "title" }, title);
+    expect(title.headers).toEqual({});
+    adapter.close();
+    const disposed = { headers: {} };
+    await adapter.hooks["chat.headers"]?.(request, disposed);
+    expect(disposed.headers).toEqual({});
+  },
+);
+
 test("a propagation failure leaves the model headers usable and is contained by the hook", async () => {
   const h = recording();
   const failure = new Error("propagation failed");
