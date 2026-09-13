@@ -1,0 +1,85 @@
+README.md
+  s_b9e5519dea51ef::t_a74fc29ddccfbb 50-57
+  s_6de5b6e0101939::t_26343b12fdbc51 35-42,44
+  s_b9e5519dea51ef::t_b5f67a6c80ea0a 46-47,49,58-62,72
+  s_6de5b6e0101939::t_63d881fc7c1cf3 43,48,63-65
+  s_6de5b6e0101939::t_288da86adb4a36 45
+docs/schemas/trace.md
+  s_6de5b6e0101939::t_63d881fc7c1cf3 65
+  s_b9e5519dea51ef::t_b5f67a6c80ea0a 66
+  s_6de5b6e0101939::t_26343b12fdbc51 55-61
+src/adapter/user.ts
+  s_6de5b6e0101939::t_20b26025078027 2,4-17,19-39
+  s_6de5b6e0101939::t_6f47bac319e598 1,3,18
+tests/user-attributes.test.ts
+  s_6de5b6e0101939::t_361a5cdaf9c69d 1-136
+src/telemetry/spans/common.ts
+  s_6de5b6e0101939::t_6f47bac319e598 43
+tests/run.test.ts
+  s_6de5b6e0101939::t_73e6caf01fc02e 501,511,528
+src/user/index.ts
+  s_6de5b6e0101939::t_50a06d8a4a7873 3-8,14,16-32,34-66
+  s_6de5b6e0101939::t_4fcd25a7158eee 1
+  s_6de5b6e0101939::t_20b26025078027 2,9,15,33
+  s_6de5b6e0101939::t_26343b12fdbc51 10-13,67
+src/index.ts
+  s_6de5b6e0101939::t_6f47bac319e598 14,16-19,23-26
+  s_6de5b6e0101939::t_20b26025078027 20-22,27
+tests/user-adapter.test.ts
+  s_6de5b6e0101939::t_8ada9585fc9db7 1,17-21,24,27-28,35,37-45,47-50,54-63,68,73-81,85-86
+  s_6de5b6e0101939::t_23827765239aa5 2-16,22-23,25-26,29-34,36,46,51-53,82-84
+  s_6de5b6e0101939::t_26343b12fdbc51 64-67,69-72,87
+tests/user-id.test.ts
+  s_b9e5519dea51ef::t_90ac3299fadfe3 63-64,68
+  s_b9e5519dea51ef::t_dade331ca82e3f 95
+  s_b9e5519dea51ef::t_e67908349f23e6 8,10,69-70,73,75,98-99,105,107,109
+  s_b9e5519dea51ef::t_3594e2f2bb468c 46
+  s_6de5b6e0101939::t_23827765239aa5 1-2,4-7,9,11,15-18,20,35-36,39,55,58,61,67,71-72,74,78,91-94,96,100-104,106,108,110-113
+  s_b9e5519dea51ef::t_691ddb548c2bd2 3,12-14,19,21-34,37-38,40-45,47-54,56-57,59-60,62,65-66,76-77,79-90,97
+e2e/support/fixture.ts
+  s_b9e5519dea51ef::t_b5f67a6c80ea0a 13,139
+tests/boundaries.test.ts
+  s_6de5b6e0101939::t_8012d26a72cec7 29
+  s_6de5b6e0101939::t_20b26025078027 18-19,33,56
+  s_6de5b6e0101939::t_237db73952e1bf 30-32
+  s_6de5b6e0101939::t_c5187648ec0e28 57-59
+docs/spec.md
+  s_6de5b6e0101939::t_63d881fc7c1cf3 29,63,75,110,112,224
+  s_6de5b6e0101939::t_14f98d42d8ed78 95-99
+  s_6de5b6e0101939::t_26343b12fdbc51 100
+  s_b9e5519dea51ef::t_b5f67a6c80ea0a 111
+  s_6de5b6e0101939::t_fb914ec8d8b24a 93,114
+  s_6de5b6e0101939::t_a93402a6785b5c 113
+e2e/user-id.e2e.test.ts
+  s_b9e5519dea51ef::t_b5f67a6c80ea0a 1,3-4,6-17,22-37,40-43,45-65,70-71,74-88,97,99-101,107-122
+  s_6de5b6e0101939::t_dfd41c56a3131a 5,18-21,38-39,44,72-73,89-96,98,102-106,123-134,140-157
+  s_6de5b6e0101939::t_72257961df3264 135-139
+  s_b9e5519dea51ef::t_f77490ddaea6be 2,66-69
+.oxlintrc.json
+  s_6de5b6e0101939::t_8012d26a72cec7 83-84
+  s_6de5b6e0101939::t_20b26025078027 33,75-82,85-90,106-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "248449c1184ac0ffccd83504bfb23eb6b9545750",
+  "prompts": {},
+  "sessions": {
+    "s_6de5b6e0101939": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08fae-a809-7311-b3eb-15cdfadd707c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    },
+    "s_b9e5519dea51ef": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08f74-83ea-7141-b708-5ec0b409fe8e",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
