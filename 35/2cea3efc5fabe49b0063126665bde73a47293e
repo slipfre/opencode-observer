@@ -1,0 +1,51 @@
+tests/trace-state.test.ts
+  s_5c774031a770d5::t_600dad730aea0d 6-17,20-35,42-45
+  s_5c774031a770d5::t_2a47a4111a85e7 1-5,18-19,36-41,46
+docs/spec.md
+  s_5c774031a770d5::t_64b62e6c805da7 214
+  s_5c774031a770d5::t_71e336078ac9ce 29,123-124,265
+  s_5c774031a770d5::t_28bcd37fe54579 266
+e2e/support/assertions.ts
+  s_5c774031a770d5::t_36107932e17c1c 31-37,80-84
+docs/schemas/trace.md
+  s_5c774031a770d5::t_71e336078ac9ce 65,110-111
+e2e/user-id.e2e.test.ts
+  s_5c774031a770d5::t_a2693c22c211ea 5,22,38,153,159-160,175,183,191
+  s_5c774031a770d5::t_36107932e17c1c 56,80-81,88,170-174,176
+  s_5c774031a770d5::t_600dad730aea0d 82-87,95-101,103-134
+src/user/resolve.ts
+  s_5c774031a770d5::t_36107932e17c1c 7,32-33
+  s_5c774031a770d5::t_d711dec7fb8de9 34-35
+src/index.ts
+  s_5c774031a770d5::t_36107932e17c1c 14,16,48
+README.md
+  s_5c774031a770d5::t_64b62e6c805da7 52
+  s_5c774031a770d5::t_71e336078ac9ce 48,65-67,73
+src/adapter/opencode/hooks.ts
+  s_5c774031a770d5::t_36107932e17c1c 6,12,17,51-57
+tests/adapter.test.ts
+  s_5c774031a770d5::t_2a47a4111a85e7 394-398,434,438,445,455
+  s_5c774031a770d5::t_600dad730aea0d 399-407,412-433,435-437,441-444,446-454
+  s_5c774031a770d5::t_38c966177763c4 408-411,439-440
+tests/user-resolve.test.ts
+  s_5c774031a770d5::t_2a47a4111a85e7 2,12-29
+  s_5c774031a770d5::t_e3d04ff6a0c9e5 30
+src/adapter/model/trace-state.ts
+  s_5c774031a770d5::t_36107932e17c1c 1-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "352cea3efc5fabe49b0063126665bde73a47293e",
+  "prompts": {},
+  "sessions": {
+    "s_5c774031a770d5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a099ec-b70a-7013-b1f0-b58a42baa557",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
