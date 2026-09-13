@@ -1,0 +1,87 @@
+src/adapter/shared/number.ts
+  s_a6ba4d69da3fe5::t_529ceb7c491ec0 1-9
+docs/spec.md
+  s_a6ba4d69da3fe5::t_571fd0c80cb279 103,105-113
+  s_a6ba4d69da3fe5::t_599477adeffea2 114,298
+  s_a6ba4d69da3fe5::t_fb7caad7edc6c5 191-222
+src/adapter/opencode/coordinator.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-10,13-391
+  s_a6ba4d69da3fe5::t_ac50b8a8e44d7b 11-12
+src/adapter/opencode/hooks.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-121
+src/adapter/trackers/interaction.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-195
+src/index.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 12-13
+tests/adapter.test.ts
+  s_a6ba4d69da3fe5::t_ac50b8a8e44d7b 16
+  s_a6ba4d69da3fe5::t_599477adeffea2 14-15
+src/adapter/trackers/tool.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-200
+tests/operations.test.ts
+  s_a6ba4d69da3fe5::t_e8c38be14a7dac 432-443
+  s_a6ba4d69da3fe5::t_599477adeffea2 10
+  s_a6ba4d69da3fe5::t_fb7caad7edc6c5 444-447
+  s_a6ba4d69da3fe5::t_571fd0c80cb279 379-431,448-461
+tests/plugin.test.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 5
+src/adapter/trackers/run.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-66
+src/adapter/model/request.ts
+  s_a6ba4d69da3fe5::t_529ceb7c491ec0 1-44
+src/adapter/trackers/permission.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-110
+src/adapter/trackers/llm.ts
+  s_a6ba4d69da3fe5::t_ac50b8a8e44d7b 10,12-13,45,224,319-320
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-9,11,14-44,46-223,225-318,321-354
+src/adapter/opencode/version.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-35
+tests/run-tracker.test.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 2
+.oxlintrc.json
+  s_a6ba4d69da3fe5::t_fb7caad7edc6c5 39-42
+  s_a6ba4d69da3fe5::t_599477adeffea2 49,56
+src/adapter/model/ai-sdk.ts
+  s_a6ba4d69da3fe5::t_ac50b8a8e44d7b 9
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-8,10-168
+tests/messages.test.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 3
+src/adapter/shared/json.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-49
+tests/run.test.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 9
+tests/ai-sdk.test.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 6
+  s_a6ba4d69da3fe5::t_ac50b8a8e44d7b 7
+src/adapter/model/messages.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-198
+src/adapter/shared/error.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-20
+src/adapter/trackers/compaction.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-9,12-138,142-170
+  s_a6ba4d69da3fe5::t_ac50b8a8e44d7b 10-11,139-141
+tests/version.test.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 3
+src/adapter/model/usage.ts
+  s_a6ba4d69da3fe5::t_529ceb7c491ec0 1-27
+src/adapter/opencode/session.ts
+  s_a6ba4d69da3fe5::t_599477adeffea2 1-56
+tests/boundaries.test.ts
+  s_a6ba4d69da3fe5::t_571fd0c80cb279 29-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "678e94079b2b4f8654328da069ed02fd4739063a",
+  "prompts": {},
+  "sessions": {
+    "s_a6ba4d69da3fe5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a099aa-730a-7842-a3b8-cfdf4bedb2a5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
