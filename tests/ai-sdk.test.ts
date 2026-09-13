@@ -3,8 +3,8 @@ import type { OnStartEvent, OnStepStartEvent, OnStepFinishEvent } from "ai";
 import { streamText } from "ai";
 import { MockLanguageModelV3, convertArrayToReadableStream } from "ai/test";
 import type { LlmFinish, LlmUpdate, Observer } from "../src/contract/observer.js";
-import { createOpenCodeAdapter } from "../src/adapter/opencode.js";
-import type { LlmRequest } from "../src/adapter/llm.js";
+import { createOpenCodeAdapter } from "../src/adapter/opencode/hooks.js";
+import type { LlmRequest } from "../src/adapter/model/request.js";
 
 const adapters: ReturnType<typeof createOpenCodeAdapter>[] = [];
 

@@ -5,14 +5,15 @@ import type {
   ObservationError,
   RunReference,
   ToolReference,
-} from "../contract/observer.js";
-import { errorDetails } from "./error.js";
-import { createInteractionTracker, type InteractionOwner } from "./interaction.js";
-import { createLlmTracker, type LlmRequest } from "./llm.js";
-import { createRunTracker } from "./run.js";
-import { createToolTracker } from "./tool.js";
-import { createCompactionTracker } from "./compaction.js";
-import { createPermissionTracker } from "./permission.js";
+} from "../../contract/observer.js";
+import { errorDetails } from "../shared/error.js";
+import { createInteractionTracker, type InteractionOwner } from "../trackers/interaction.js";
+import { createLlmTracker } from "../trackers/llm.js";
+import type { LlmRequest } from "../model/request.js";
+import { createRunTracker } from "../trackers/run.js";
+import { createToolTracker } from "../trackers/tool.js";
+import { createCompactionTracker } from "../trackers/compaction.js";
+import { createPermissionTracker } from "../trackers/permission.js";
 import { createSessionRegistry } from "./session.js";
 
 export type OpenCodeEvent =

@@ -6,7 +6,7 @@ import type {
   PermissionReference,
   ToolReference,
   ToolStart,
-} from "../contract/observer.js";
+} from "../../contract/observer.js";
 
 export function createPermissionTracker(options: {
   observer: Observer;

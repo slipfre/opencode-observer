@@ -4,9 +4,11 @@ import type {
   CompactionReference,
   Observer,
   ObservationError,
-} from "../contract/observer.js";
+} from "../../contract/observer.js";
 import type { InteractionOwner } from "./interaction.js";
-import { errorDetails } from "./error.js";
+import { errorDetails } from "../shared/error.js";
+import { nonNegativeInteger } from "../shared/number.js";
+import { parseModelUsage } from "../model/usage.js";
 
 type Compaction = {
   id: string;
@@ -134,27 +136,9 @@ export function createCompactionTracker(options: {
       }
 
       if (info.time.completed !== undefined) {
-        const counts = [info.tokens?.input, info.tokens?.cache?.read, info.tokens?.cache?.write];
-        const prompt = counts.every(validCount)
-          ? counts.reduce((total, value) => total + value, 0)
-          : undefined;
-        compaction.promptTokens = validCount(prompt) ? prompt : undefined;
-        compaction.summaryTokens = validCount(info.tokens?.output) ? info.tokens.output : undefined;
-        const output = [info.tokens?.output, info.tokens?.reasoning];
-        const outputTokens = output.every(validCount)
-          ? output.reduce((total, value) => total + value, 0)
-          : undefined;
-        compaction.usage = {
-          inputTokens: compaction.promptTokens,
-          outputTokens: validCount(outputTokens) ? outputTokens : undefined,
-          reasoningTokens: validCount(info.tokens?.reasoning) ? info.tokens.reasoning : undefined,
-          cacheReadTokens: validCount(info.tokens?.cache?.read)
-            ? info.tokens.cache.read
-            : undefined,
-          cacheWriteTokens: validCount(info.tokens?.cache?.write)
-            ? info.tokens.cache.write
-            : undefined,
-        };
+        compaction.usage = parseModelUsage(info.tokens);
+        compaction.promptTokens = compaction.usage.inputTokens;
+        compaction.summaryTokens = nonNegativeInteger(info.tokens?.output);
       }
     },
     resolve(id: string): InteractionOwner | undefined {
@@ -183,8 +167,4 @@ export function createCompactionTracker(options: {
       users.clear();
     },
   };
-}
-
-function validCount(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }

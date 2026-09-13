@@ -2,7 +2,7 @@ import { $, type Server } from "bun";
 import { afterEach, expect, test } from "bun:test";
 import type { Hooks, PluginInput } from "@opencode-ai/plugin";
 import { createOpencodeClient, type AssistantMessage, type UserMessage } from "@opencode-ai/sdk";
-import type { OpenCodeEvent } from "../src/adapter/coordinator.js";
+import type { OpenCodeEvent } from "../src/adapter/opencode/coordinator.js";
 import { ObserverPlugin } from "../src/index.js";
 import { loadConfig } from "../src/config.js";
 import { createTelemetry } from "../src/telemetry/factory.js";

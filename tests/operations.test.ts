@@ -7,7 +7,7 @@ import {
   SimpleSpanProcessor,
   type ReadableSpan,
 } from "@opentelemetry/sdk-trace-base";
-import { createCoordinator } from "../src/adapter/coordinator.js";
+import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
 import { createObserver } from "../src/telemetry/observer.js";
 import type { ToolStart } from "../src/contract/observer.js";
 
@@ -374,6 +374,89 @@ test("compaction owns its summary LLM and only completed summary usage is mirror
   expect(compaction?.status.code).toBe(SpanStatusCode.UNSET);
   expect(String(run?.attributes["gen_ai.output.messages"])).toContain("answer");
   expect(String(run?.attributes["gen_ai.output.messages"])).not.toContain("summary");
+});
+
+test.each([
+  {
+    name: "zero counts",
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    input: 0,
+    output: 0,
+    summary: 0,
+  },
+  {
+    name: "invalid counts",
+    tokens: {
+      input: Number.NaN,
+      output: -1,
+      reasoning: 0,
+      cache: { read: 0, write: Number.POSITIVE_INFINITY },
+    },
+    input: undefined,
+    output: undefined,
+    summary: undefined,
+  },
+  {
+    name: "fractional counts",
+    tokens: { input: 1.5, output: 1, reasoning: 0.5, cache: { read: 0, write: 0 } },
+    input: undefined,
+    output: undefined,
+    summary: 1,
+  },
+  {
+    name: "unsafe totals",
+    tokens: {
+      input: Number.MAX_SAFE_INTEGER,
+      output: Number.MAX_SAFE_INTEGER,
+      reasoning: 1,
+      cache: { read: 1, write: 0 },
+    },
+    input: undefined,
+    output: undefined,
+    summary: Number.MAX_SAFE_INTEGER,
+  },
+])("LLM and compaction preserve the same usage limits for $name", (scenario) => {
+  const h = setup();
+  h.user();
+  marker(h);
+  const summary = assistant({
+    id: "summary",
+    parentID: "c1",
+    mode: "compaction",
+    summary: true,
+    time: { created: 1500 },
+  });
+  h.message(summary, 1500);
+  h.part(step("summary", "step-start"), 1500);
+
+  h.part(
+    {
+      type: "step-finish",
+      id: "summary-finish",
+      messageID: "summary",
+      sessionID: "s1",
+      reason: "stop",
+      cost: 0,
+      tokens: scenario.tokens,
+    },
+    1700,
+  );
+  h.message(
+    { ...summary, time: { created: 1500, completed: 1700 }, tokens: scenario.tokens },
+    1700,
+  );
+  h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1800);
+  const llm = h.spans.find((value) => value.name === "opencode.llm");
+  const compaction = h.spans.find((value) => value.name === "opencode.compaction");
+
+  expect(llm).toBeDefined();
+  expect(compaction).toBeDefined();
+  expect(llm?.attributes["gen_ai.usage.input_tokens"]).toBe(scenario.input);
+  expect(compaction?.attributes["gen_ai.usage.input_tokens"]).toBe(scenario.input);
+  expect(llm?.attributes["gen_ai.usage.output_tokens"]).toBe(scenario.output);
+  expect(compaction?.attributes["gen_ai.usage.output_tokens"]).toBe(scenario.output);
+  expect(compaction?.attributes["opencode.compaction.prompt_tokens"]).toBe(scenario.input);
+  expect(compaction?.attributes["opencode.compaction.summary_tokens"]).toBe(scenario.summary);
 });
 
 test("overflow compaction retains the triggering interaction across steer", () => {

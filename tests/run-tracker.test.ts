@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createRunTracker } from "../src/adapter/run.js";
+import { createRunTracker } from "../src/adapter/trackers/run.js";
 import type { RunFinish, RunStart, RunUpdate } from "../src/contract/observer.js";
 
 function setup(captureContent = true) {

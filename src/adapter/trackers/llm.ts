@@ -1,19 +1,17 @@
-import type { Hooks } from "@opencode-ai/plugin";
 import type { AssistantMessage, Part, UserMessage } from "@opencode-ai/sdk";
 import type {
   LlmFinish,
-  LlmParameters,
   LlmReference,
-  LlmStart,
   LlmUpdate,
   Observer,
   ObservationError,
-} from "../contract/observer.js";
-import { errorDetails } from "./error.js";
-import type { ModelCapture } from "./ai-sdk.js";
+} from "../../contract/observer.js";
+import { errorDetails } from "../shared/error.js";
+import { nonNegativeNumber } from "../shared/number.js";
+import type { ModelCapture } from "../model/ai-sdk.js";
+import { parseModelRequest, providerName, type LlmRequest } from "../model/request.js";
+import { parseModelUsage } from "../model/usage.js";
 import type { InteractionOwner } from "./interaction.js";
-
-export type LlmRequest = Parameters<NonNullable<Hooks["chat.params"]>>;
 
 type LlmCallState = {
   info?: {
@@ -44,15 +42,7 @@ export function createLlmTracker(options: {
   const calls = new Map<string, LlmCallState>();
   const finished = new Set<string>();
   const closedCompactions = new Set<string>();
-  const requests = new Map<
-    string,
-    {
-      model: string;
-      providerName: string;
-      operation: LlmStart["operation"];
-      parameters: LlmParameters;
-    }
-  >();
+  const requests = new Map<string, ReturnType<typeof parseModelRequest>>();
 
   function record(id: string) {
     const call = calls.get(id);
@@ -231,19 +221,7 @@ export function createLlmTracker(options: {
         input.model.id,
         input.agent,
       ]);
-      requests.set(key, {
-        model: input.model.api.id,
-        providerName: providerName(input.model.providerID, input.model.api.npm),
-        operation: ["@ai-sdk/google", "@ai-sdk/google-vertex"].includes(input.model.api.npm)
-          ? "generate_content"
-          : "chat",
-        parameters: {
-          temperature: finite(output.temperature),
-          topP: finite(output.topP),
-          topK: count(output.topK),
-          maxTokens: count(output.maxOutputTokens),
-        },
-      });
+      requests.set(key, parseModelRequest(input, output));
     },
     message(info: UserMessage | AssistantMessage, observedAt: number) {
       if (info.role === "user") {
@@ -335,28 +313,11 @@ export function createLlmTracker(options: {
           return;
         }
 
-        const input = count(part.tokens?.input);
-        const output = count(part.tokens?.output);
-        const reasoning = count(part.tokens?.reasoning);
-        const read = count(part.tokens?.cache?.read);
-        const write = count(part.tokens?.cache?.write);
         call.result ??= {
           endedAt: observedAt,
           finishReason: part.reason || undefined,
-          usage: {
-            inputTokens:
-              input !== undefined && read !== undefined && write !== undefined
-                ? count(input + read + write)
-                : undefined,
-            outputTokens:
-              output !== undefined && reasoning !== undefined
-                ? count(output + reasoning)
-                : undefined,
-            reasoningTokens: reasoning,
-            cacheReadTokens: read,
-            cacheWriteTokens: write,
-          },
-          cost: finite(part.cost),
+          usage: parseModelUsage(part.tokens),
+          cost: nonNegativeNumber(part.cost),
           ...(part.reason === "error"
             ? { error: { type: "_OTHER", message: "model generation ended with error" } }
             : {}),
@@ -390,34 +351,4 @@ export function createLlmTracker(options: {
       clear();
     },
   };
-}
-
-function providerName(id: string, npm?: string) {
-  const names: Record<string, string> = {
-    openai: "openai",
-    anthropic: "anthropic",
-    "@ai-sdk/openai": "openai",
-    "@ai-sdk/anthropic": "anthropic",
-    "@ai-sdk/amazon-bedrock": "aws.bedrock",
-    "@ai-sdk/azure": "azure.ai.openai",
-    "@ai-sdk/google": "gcp.gemini",
-    "@ai-sdk/google-vertex": "gcp.vertex_ai",
-    "amazon-bedrock": "aws.bedrock",
-    azure: "azure.ai.openai",
-    google: "gcp.gemini",
-    "google-vertex": "gcp.vertex_ai",
-  };
-
-  // An OpenAI-compatible transport does not establish that OpenAI is the provider.
-  return names[id] ?? (npm ? names[npm] : undefined) ?? id;
-}
-
-function finite(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-}
-
-function count(value: unknown) {
-  const number = finite(value);
-
-  return number !== undefined && Number.isSafeInteger(number) ? number : undefined;
 }

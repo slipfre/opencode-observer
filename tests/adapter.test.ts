@@ -11,9 +11,9 @@ import type {
   RunStart,
   RunUpdate,
 } from "../src/contract/observer.js";
-import { createOpenCodeAdapter } from "../src/adapter/opencode.js";
-import { createCoordinator } from "../src/adapter/coordinator.js";
-import type { LlmRequest } from "../src/adapter/llm.js";
+import { createOpenCodeAdapter } from "../src/adapter/opencode/hooks.js";
+import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
+import type { LlmRequest } from "../src/adapter/model/request.js";
 
 function recording() {
   const starts: RunStart[] = [];

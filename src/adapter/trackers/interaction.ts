@@ -5,8 +5,8 @@ import type {
   Observer,
   ObservationError,
   RunReference,
-} from "../contract/observer.js";
-import { errorDetails } from "./error.js";
+} from "../../contract/observer.js";
+import { errorDetails } from "../shared/error.js";
 
 type AssistantState = { info?: AssistantMessage; texts: Map<string, string> };
 

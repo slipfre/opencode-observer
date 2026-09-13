@@ -1,4 +1,4 @@
-import type { ObservationError } from "../contract/observer.js";
+import type { ObservationError } from "../../contract/observer.js";
 
 export function errorDetails(error: unknown): ObservationError {
   if (!error || typeof error !== "object") {

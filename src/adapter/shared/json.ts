@@ -1,4 +1,4 @@
-import type { JsonValue } from "../contract/messages.js";
+import type { JsonValue } from "../../contract/messages.js";
 
 export function jsonValue(value: unknown, parents = new WeakSet<object>()): JsonValue | undefined {
   if (value === null || typeof value === "string" || typeof value === "boolean") {

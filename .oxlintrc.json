@@ -36,21 +36,24 @@
               }
             ],
             "paths": [
-              { "name": "../index.js", "message": "Only the composition root may assemble layers." }
+              {
+                "name": "../../index.js",
+                "message": "Only the composition root may assemble layers."
+              }
             ]
           }
         ]
       }
     },
     {
-      "files": ["src/adapter/run.ts"],
+      "files": ["src/adapter/trackers/run.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",
           {
             "patterns": [
               {
-                "group": ["*", "!../contract/**"],
+                "group": ["*", "!../../contract/**"],
                 "message": "Run tracking only depends on the contract. Source event dispatch and sibling coordination belong in coordinator.ts."
               }
             ]

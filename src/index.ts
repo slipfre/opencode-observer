@@ -9,8 +9,8 @@ export const ObserverPlugin: Plugin = async (input, options) => {
   }
 
   const { createTelemetry } = await import("./telemetry/factory.js");
-  const { createOpenCodeAdapter } = await import("./adapter/opencode.js");
-  const { getOpenCodeVersion } = await import("./adapter/version.js");
+  const { createOpenCodeAdapter } = await import("./adapter/opencode/hooks.js");
+  const { getOpenCodeVersion } = await import("./adapter/opencode/version.js");
   const { resolveUser } = await import("./user/resolve.js");
 
   const [serviceVersion, user] = await Promise.all([

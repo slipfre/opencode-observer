@@ -26,6 +26,21 @@ test("runtime imports stay within each layer and its allowed dependencies", asyn
               const target = resolve(source, dirname(file), dependency.path);
               const destination = relative(source, target).split(/[\\/]/)[0];
 
+              if (layer === "adapter" && destination === "adapter") {
+                const module = file.split(/[\\/]/)[1];
+                const targetModule = relative(source, target).split(/[\\/]/)[1];
+                const allowed: Record<string, string[]> = {
+                  opencode: ["opencode", "trackers", "model", "shared"],
+                  trackers: ["trackers", "model", "shared"],
+                  model: ["model", "shared"],
+                  shared: ["shared"],
+                };
+
+                return module && targetModule && allowed[module]?.includes(targetModule)
+                  ? []
+                  : [`${file} -> ${dependency.path}`];
+              }
+
               if (destination === layer || (destination === "contract" && layer !== "user")) {
                 return [];
               }

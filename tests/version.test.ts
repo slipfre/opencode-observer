@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createOpencodeClient } from "@opencode-ai/sdk";
-import { getOpenCodeVersion } from "../src/adapter/version.js";
+import { getOpenCodeVersion } from "../src/adapter/opencode/version.js";
 
 test("reads the running OpenCode version using the client transport and authentication", async () => {
   const requests: Request[] = [];

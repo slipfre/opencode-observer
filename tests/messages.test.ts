@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { OnStepFinishEvent } from "ai";
-import { parseModelInput, parseModelOutput } from "../src/adapter/messages.js";
+import { parseModelInput, parseModelOutput } from "../src/adapter/model/messages.js";
 
 test("model input preserves history, tool arguments/results and separately supplied system instructions", () => {
   const result = parseModelInput({

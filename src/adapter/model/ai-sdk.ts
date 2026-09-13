@@ -5,8 +5,8 @@ import {
   type OnStepFinishEvent,
   type TelemetryIntegration,
 } from "ai";
-import type { ModelInput, ModelMessage } from "../contract/messages.js";
-import type { LlmRequest } from "./llm.js";
+import type { ModelInput, ModelMessage } from "../../contract/messages.js";
+import type { LlmRequest } from "./request.js";
 import { parseModelInput, parseModelOutput } from "./messages.js";
 
 const correlationHeader = "x-opencode-observer-request";

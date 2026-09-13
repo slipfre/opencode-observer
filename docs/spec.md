@@ -100,9 +100,18 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 
 实现层定义自身需要的配置类型，由入口传入匹配的配置数据；不得导入配置解析函数或通过 `ReturnType<typeof loadConfig>` 反向耦合根目录。类型导入、重导出和动态 `import()` 同样遵守层间边界。
 
-适配层内部由 `opencode.ts` 连接宿主 hooks、错误隔离和刷新，`coordinator.ts` 解析原始事件并协调各类观测对象。协调模块负责真实输入识别、按 session 创建各类 tracker、overflow / compaction 恢复判断、模型请求路由和结束顺序。`session.ts` 保留已观察的 session 父关系与活动 task 关联。各对象模块不承担整个适配层的事件分发，也不直接创建或调用其他对象的 tracker；跨对象动作通过协调模块注入的回调完成。
+适配层内部按职责组织为四个目录：
 
-`adapter/run.ts` 只依赖观测契约，接收解析后的用户输入和明确的结束结果，维护 run 身份、输入去重及开始 / 结束状态；不接收 OpenCode `Event`、`UserMessage` 或 `Part`，不持有 interaction / LLM tracker，也不注册或转发 AI SDK 请求。run 的接口为 `userInput()`、`finish()` 和 `close()`。interaction / LLM 可在各自模块内解析已分发给它们的源消息与片段。
+- `opencode/`：宿主 hooks/events 接入、跨对象协调、session 关联和版本查询。
+- `trackers/`：run、interaction、LLM、tool、compaction 和 permission 的生命周期状态。
+- `model/`：AI SDK 消息采集、消息解析、请求参数与 provider 识别、模型用量归一化。
+- `shared/`：跨模块共用的 JSON 快照、错误归一化和非负数值校验。
+
+`opencode/` 可以使用其余三个目录，`trackers/` 可以使用 `model/` 和 `shared/`，`model/` 可以使用 `shared/`；公共转换不反向依赖行为跟踪或宿主协调。模型请求类型属于 `model/request.ts`，AI SDK 采集模块不依赖 tracker。LLM step 与已完成 compaction 摘要共用 `model/usage.ts`，只在组成项有效且总和仍为安全整数时报告合计 token 用量。
+
+`opencode/hooks.ts` 连接宿主 hooks、错误隔离和刷新，`opencode/coordinator.ts` 解析原始事件并协调各类观测对象。协调模块负责真实输入识别、按 session 创建各类 tracker、overflow / compaction 恢复判断、模型请求路由和结束顺序。`opencode/session.ts` 保留已观察的 session 父关系与活动 task 关联。各对象模块不承担整个适配层的事件分发，也不直接创建或调用其他对象的 tracker；跨对象动作通过协调模块注入的回调完成。
+
+`adapter/trackers/run.ts` 只依赖观测契约，接收解析后的用户输入和明确的结束结果，维护 run 身份、输入去重及开始 / 结束状态；不接收 OpenCode `Event`、`UserMessage` 或 `Part`，不持有 interaction / LLM tracker，也不注册或转发 AI SDK 请求。run 的接口为 `userInput()`、`finish()` 和 `close()`。interaction / LLM 可在各自模块内解析已分发给它们的源消息与片段。
 
 遥测实现层内部按 `factory → observer → spans` 组织依赖。`factory.ts` 负责创建 SDK、exporter 和 Observer；`observer.ts` 实现契约并协调记录、导出与关闭；具体 span 的状态管理和数据映射放在 `spans/`，共用配置类型和文本编码放在 `spans/common.ts`，结构化消息编码放在 `spans/messages.ts`。`spans/` 不反向依赖工厂或 Observer 实现。
 
@@ -179,34 +188,38 @@ OpenCode hooks / events、AI SDK lifecycle 回调
 
 当前支持 Trace Schema 中的全部六类 span。普通 LLM 和 tool 挂在所属 interaction 下，摘要 LLM 挂在 compaction 下，permission.check 挂在精确关联的活动 tool 下，前台 subagent run 可挂在父 task tool 下。创建仍要求对应的源行为证据与可识别的父对象。
 
-| 模块                                 | 职责                                                     |
-| ------------------------------------ | -------------------------------------------------------- |
-| `src/index.ts`                       | 配置、依赖注入、日志及宿主生命周期装配                   |
-| `src/adapter/opencode.ts`            | hooks/events 接入、错误隔离和刷新触发                    |
-| `src/adapter/coordinator.ts`         | 原始事件解析、真实输入识别、对象协调、恢复判断及请求路由 |
-| `src/adapter/run.ts`                 | 已识别输入的去重、run 身份及开始 / 结束状态              |
-| `src/adapter/interaction.ts`         | 交互边界、消息归属和最终答复选择                         |
-| `src/adapter/llm.ts`                 | 模型调用证据、step 生命周期、参数快照与用量归一化        |
-| `src/adapter/tool.ts`                | 工具状态快照、assistant 归属、源时间与失败分类           |
-| `src/adapter/compaction.ts`          | 压缩 marker、摘要归属、完成用量及替换 / 失败处理         |
-| `src/adapter/permission.ts`          | 人工权限等待、精确工具关联、回复及待处理容量管理         |
-| `src/adapter/session.ts`             | session 元数据及活动前台 task 的子 session 关联          |
-| `src/adapter/json.ts`                | 消息和工具载荷共用的 JSON 值快照转换                     |
-| `src/adapter/ai-sdk.ts`              | AI SDK 回调注册、请求关联、实例隔离及释放                |
-| `src/adapter/messages.ts`            | 将 AI SDK 输入和输出解析为契约消息快照                   |
-| `src/adapter/error.ts`               | 源错误归一化，供各类观测对象使用                         |
-| `src/contract/observer.ts`           | `Observer` 契约、各类观测对象及关联类型，无第三方依赖    |
-| `src/contract/messages.ts`           | 与 SDK 无关的消息、片段、媒体来源和 JSON 数据类型        |
-| `src/telemetry/factory.ts`           | OTel SDK、OTLP exporter 和 resource 配置                 |
-| `src/telemetry/observer.ts`          | 契约实现、共用属性保护、导出队列与关闭顺序               |
-| `src/telemetry/spans/run.ts`         | run span 管理、数据映射、上下文查找及结束去重            |
-| `src/telemetry/spans/interaction.ts` | interaction span 管理、父子关联、数据映射及结束去重      |
-| `src/telemetry/spans/llm.ts`         | LLM span 管理、父子关联、用量与参数映射及结束去重        |
-| `src/telemetry/spans/tool.ts`        | tool span、任务父上下文、参数及结果的 GenAI 编码         |
-| `src/telemetry/spans/compaction.ts`  | compaction span、摘要父上下文及用量镜像                  |
-| `src/telemetry/spans/permission.ts`  | permission span、人工决策属性及未回复请求清理            |
-| `src/telemetry/spans/messages.ts`    | 将契约消息映射为 GenAI parts，并序列化为属性字符串       |
-| `src/telemetry/spans/common.ts`      | 实现层共用的 span 配置类型和正文编码                     |
+| 模块                                  | 职责                                                     |
+| ------------------------------------- | -------------------------------------------------------- |
+| `src/index.ts`                        | 配置、依赖注入、日志及宿主生命周期装配                   |
+| `src/adapter/opencode/hooks.ts`       | hooks/events 接入、错误隔离和刷新触发                    |
+| `src/adapter/opencode/coordinator.ts` | 原始事件解析、真实输入识别、对象协调、恢复判断及请求路由 |
+| `src/adapter/opencode/session.ts`     | session 元数据及活动前台 task 的子 session 关联          |
+| `src/adapter/opencode/version.ts`     | 通过宿主 client 查询 OpenCode 版本及超时降级             |
+| `src/adapter/trackers/run.ts`         | 已识别输入的去重、run 身份及开始 / 结束状态              |
+| `src/adapter/trackers/interaction.ts` | 交互边界、消息归属和最终答复选择                         |
+| `src/adapter/trackers/llm.ts`         | 模型调用证据、step 生命周期、请求及消息快照关联          |
+| `src/adapter/trackers/tool.ts`        | 工具状态快照、assistant 归属、源时间与失败分类           |
+| `src/adapter/trackers/compaction.ts`  | 压缩 marker、摘要归属、完成用量及替换 / 失败处理         |
+| `src/adapter/trackers/permission.ts`  | 人工权限等待、精确工具关联、回复及待处理容量管理         |
+| `src/adapter/model/ai-sdk.ts`         | AI SDK 回调注册、请求关联、实例隔离及释放                |
+| `src/adapter/model/messages.ts`       | 将 AI SDK 输入和输出解析为契约消息快照                   |
+| `src/adapter/model/request.ts`        | 模型请求类型、参数快照、provider 与 operation 识别       |
+| `src/adapter/model/usage.ts`          | LLM 和 compaction 共用的 token 用量归一化                |
+| `src/adapter/shared/json.ts`          | 消息和工具载荷共用的 JSON 值快照转换                     |
+| `src/adapter/shared/error.ts`         | 源错误归一化，供各类观测对象使用                         |
+| `src/adapter/shared/number.ts`        | 非负有限数值及安全整数校验                               |
+| `src/contract/observer.ts`            | `Observer` 契约、各类观测对象及关联类型，无第三方依赖    |
+| `src/contract/messages.ts`            | 与 SDK 无关的消息、片段、媒体来源和 JSON 数据类型        |
+| `src/telemetry/factory.ts`            | OTel SDK、OTLP exporter 和 resource 配置                 |
+| `src/telemetry/observer.ts`           | 契约实现、共用属性保护、导出队列与关闭顺序               |
+| `src/telemetry/spans/run.ts`          | run span 管理、数据映射、上下文查找及结束去重            |
+| `src/telemetry/spans/interaction.ts`  | interaction span 管理、父子关联、数据映射及结束去重      |
+| `src/telemetry/spans/llm.ts`          | LLM span 管理、父子关联、用量与参数映射及结束去重        |
+| `src/telemetry/spans/tool.ts`         | tool span、任务父上下文、参数及结果的 GenAI 编码         |
+| `src/telemetry/spans/compaction.ts`   | compaction span、摘要父上下文及用量镜像                  |
+| `src/telemetry/spans/permission.ts`   | permission span、人工决策属性及未回复请求清理            |
+| `src/telemetry/spans/messages.ts`     | 将契约消息映射为 GenAI parts，并序列化为属性字符串       |
+| `src/telemetry/spans/common.ts`       | 实现层共用的 span 配置类型和正文编码                     |
 
 契约提供 run、interaction、LLM、tool、compaction 和 permission 的 start / finish 操作，以及 `updateRun`、`updateLlm`、`updateTool`、`flush` 和 `shutdown`。run 使用 session ID 与首个真实用户消息 ID 共同定位；输入以消息 ID 去重，重复更新保留首次快照；最终输出在结束时提交，`undefined` 表示未知，空字符串表示已知空文本。
 
@@ -282,7 +295,7 @@ compaction marker 的 message ID 标识一次压缩，`auto` 取源字段，`ove
 
 ### 7.6 Session 与前台 subagent
 
-`session.ts` 只保留 session 父关系和活动 task 引用，不查询 OpenCode client。running task 的 `state.metadata.sessionId` 精确指向子 session；`background=true` 不建立前台嵌套关系。协调模块在子 run 开始前传入对应 `ToolReference`，遥测实现验证该 parent 为活动 task 工具，并据此创建同一 trace 下的子 run。所有子 span 使用子 session ID，父 session ID 单独记录。
+`opencode/session.ts` 只保留 session 父关系和活动 task 引用，不查询 OpenCode client。running task 的 `state.metadata.sessionId` 精确指向子 session；`background=true` 不建立前台嵌套关系。协调模块在子 run 开始前传入对应 `ToolReference`，遥测实现验证该 parent 为活动 task 工具，并据此创建同一 trace 下的子 run。所有子 span 使用子 session ID，父 session ID 单独记录。
 
 task 结束时清理尚未结束的子 run，随后释放活动绑定；复用子 session 的下一次任务不会继承旧 task 引用。session 元数据或 task 关联若晚于 run 创建，不事后改写 trace 父节点；无法识别父 task 时仍可记录有业务证据的独立 run，并省略未知关联。关闭按实际父子关系递归清理，避免父 task 在子 run 之前结束。run tracker 始终只接收解析后的输入与明确结果，不重新引入原始 event 分发。
 

@@ -1,4 +1,4 @@
-import type { AgentIdentity, ToolReference } from "../contract/observer.js";
+import type { AgentIdentity, ToolReference } from "../../contract/observer.js";
 
 export function createSessionRegistry() {
   const parents = new Map<string, string | undefined>();

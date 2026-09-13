@@ -5,9 +5,9 @@ import type {
   ToolFinish,
   ToolReference,
   ToolStart,
-} from "../contract/observer.js";
+} from "../../contract/observer.js";
 import type { InteractionOwner } from "./interaction.js";
-import { jsonObject } from "./json.js";
+import { jsonObject } from "../shared/json.js";
 
 type ToolCallState = {
   partID: string;

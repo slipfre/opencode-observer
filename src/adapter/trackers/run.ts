@@ -1,4 +1,4 @@
-import type { Observer, RunFinish, RunReference, ToolReference } from "../contract/observer.js";
+import type { Observer, RunFinish, RunReference, ToolReference } from "../../contract/observer.js";
 
 export type RunOptions = {
   observer: Pick<Observer, "startRun" | "updateRun" | "finishRun">;

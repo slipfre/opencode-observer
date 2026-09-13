@@ -1,6 +1,6 @@
 import type { OnStepFinishEvent, OnStepStartEvent } from "ai";
-import type { JsonValue, ModelInput, ModelMessage, ModelPart } from "../contract/messages.js";
-import { jsonValue } from "./json.js";
+import type { JsonValue, ModelInput, ModelMessage, ModelPart } from "../../contract/messages.js";
+import { jsonValue } from "../shared/json.js";
 
 export function parseModelInput(
   event: Pick<OnStepStartEvent, "messages" | "system" | "providerOptions">,

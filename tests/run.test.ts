@@ -6,7 +6,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
-import { createCoordinator, type CoordinatorOptions } from "../src/adapter/coordinator.js";
+import { createCoordinator, type CoordinatorOptions } from "../src/adapter/opencode/coordinator.js";
 import { createObserver, type ObserverOptions } from "../src/telemetry/observer.js";
 
 const providers: BasicTracerProvider[] = [];

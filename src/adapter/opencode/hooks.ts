@@ -1,7 +1,7 @@
 import type { Hooks } from "@opencode-ai/plugin";
-import type { Observer } from "../contract/observer.js";
+import type { Observer } from "../../contract/observer.js";
 import { createCoordinator } from "./coordinator.js";
-import type { createModelMessageCapture } from "./ai-sdk.js";
+import type { createModelMessageCapture } from "../model/ai-sdk.js";
 
 export function createOpenCodeAdapter(options: {
   observer: Observer;
@@ -86,7 +86,7 @@ export function createOpenCodeAdapter(options: {
   };
 
   async function installModelMessageCapture() {
-    const { createModelMessageCapture } = await import("./ai-sdk.js");
+    const { createModelMessageCapture } = await import("../model/ai-sdk.js");
 
     if (!state.closed) {
       state.messageCapture = createModelMessageCapture({
