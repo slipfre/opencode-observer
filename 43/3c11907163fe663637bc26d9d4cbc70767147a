@@ -1,0 +1,69 @@
+docs/spec.md
+  s_cc235c46575c69::t_6af8ec40d21d8c 94-99
+  s_cc235c46575c69::t_81c3991321a794 74,88,111-113,223
+  s_cc235c46575c69::t_04ac57410c0833 109
+  s_cc235c46575c69::t_64619d8a090f77 110
+  s_cc235c46575c69::t_217fba179acf97 62,92
+tests/user-attributes.test.ts
+  s_cc235c46575c69::t_cf7e82d6ef122d 58-119
+  s_cc235c46575c69::t_c8fa892252e66d 55-57
+  s_cc235c46575c69::t_323c9d4b8099c7 120-122
+  s_cc235c46575c69::t_131dc4216cf734 1-54,123-140
+src/user/lookup.ts
+  s_cc235c46575c69::t_f321d446ede159 1-67
+docs/schemas/trace.md
+  s_cc235c46575c69::t_ecffba681a9c60 21,60
+  s_cc235c46575c69::t_39b3ef532a9f33 55-59,61
+  s_cc235c46575c69::t_81c3991321a794 65
+  s_cc235c46575c69::t_b67a26b43e409c 66
+tests/user-resolve.test.ts
+  s_cc235c46575c69::t_04ac57410c0833 1-104
+AGENTS.md
+  s_cc235c46575c69::t_81c3991321a794 21
+e2e/user-id.e2e.test.ts
+  s_cc235c46575c69::t_cf7e82d6ef122d 75,89-127,166
+  s_cc235c46575c69::t_650863321d900d 72-74
+  s_cc235c46575c69::t_00f302a7b4cfd2 76-78,86-88
+  s_cc235c46575c69::t_7d01ef036bf0f1 128-130,163-165
+  s_cc235c46575c69::t_64ad26472ad539 167
+  s_cc235c46575c69::t_46233e8096f096 1-71,79-85,131-162
+src/index.ts
+  s_cc235c46575c69::t_f321d446ede159 18
+  s_cc235c46575c69::t_04ac57410c0833 14
+  s_cc235c46575c69::t_cf7e82d6ef122d 24
+  s_cc235c46575c69::t_ba4255dd3170d4 16-17
+  s_cc235c46575c69::t_f3abe9357d3249 19-23
+  s_cc235c46575c69::t_a2a6887f528f66 25-27
+  s_cc235c46575c69::t_ce7dcb4137175b 28
+tests/user-lookup.test.ts
+  s_cc235c46575c69::t_f321d446ede159 1-113
+.oxlintrc.json
+  s_cc235c46575c69::t_f321d446ede159 29-30,35,108-109
+  s_cc235c46575c69::t_1e904e655dec9f 77-92
+README.md
+  s_cc235c46575c69::t_ecffba681a9c60 65
+  s_cc235c46575c69::t_81c3991321a794 48
+  s_cc235c46575c69::t_fd82c016699158 45-47
+  s_cc235c46575c69::t_1f44254473d535 49-51,62-64
+  s_cc235c46575c69::t_269a53105f60be 35-44,52-61,72
+src/user/resolve.ts
+  s_cc235c46575c69::t_cc4920da6922f7 1-45
+tests/boundaries.test.ts
+  s_cc235c46575c69::t_4df5ed28569692 18-19,29,52-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "433c11907163fe663637bc26d9d4cbc70767147a",
+  "prompts": {},
+  "sessions": {
+    "s_cc235c46575c69": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0998b-f4d4-7b83-81cd-bc8ad27c4a89",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
