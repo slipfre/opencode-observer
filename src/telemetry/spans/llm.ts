@@ -12,6 +12,7 @@ import type {
   LlmReference,
   LlmStart,
   LlmUpdate,
+  ModelHeaders,
   ObservationError,
   RunReference,
   TraceHeaders,
@@ -32,6 +33,10 @@ export function createLlmSpans(
       span: Span;
       messages?: { input: string; system: string | undefined };
       output?: string;
+      outputType?: string;
+      toolDefinitions?: string;
+      requestHeaders?: ModelHeaders;
+      responseHeaders?: ModelHeaders;
     }
   >();
   const finished = new Set<string>();
@@ -52,6 +57,7 @@ export function createLlmSpans(
     calls.delete(key);
     finished.add(key);
     call.span.setAttributes({
+      "gen_ai.output.type": call.outputType,
       "gen_ai.response.finish_reasons": input.finishReason
         ? [input.finishReason]
         : input.error
@@ -71,6 +77,18 @@ export function createLlmSpans(
 
     if (options.captureContent) {
       call.span.setAttributes({
+        "gen_ai.tool.definitions": call.toolDefinitions,
+        ...Object.fromEntries(
+          Object.entries(call.requestHeaders ?? {}).map(([key, value]) => [
+            `http.request.header.${key}`,
+            value,
+          ]),
+        ),
+        ...Object.fromEntries(
+          Object.entries(input.responseHeaders ?? call.responseHeaders ?? {}).map(
+            ([key, value]) => [`http.response.header.${key}`, value],
+          ),
+        ),
         "gen_ai.input.messages": call.messages?.input,
         "gen_ai.system_instructions": call.messages?.system,
         "gen_ai.output.messages":
@@ -117,12 +135,31 @@ export function createLlmSpans(
         JSON.stringify([input.interaction.run.sessionID, input.interaction.run.id, input.id]),
       );
 
-      if (
-        !call ||
-        call.reference.interaction.id !== input.interaction.id ||
-        !options.captureContent
-      ) {
+      if (!call || call.reference.interaction.id !== input.interaction.id) {
         return;
+      }
+
+      if (input.request) {
+        call.outputType = input.request.outputType;
+        delete call.output;
+        delete call.responseHeaders;
+      }
+
+      if (!options.captureContent) {
+        return;
+      }
+
+      if (input.request) {
+        call.toolDefinitions =
+          input.request.toolDefinitions === undefined
+            ? undefined
+            : JSON.stringify(input.request.toolDefinitions);
+        call.requestHeaders =
+          input.request.headers === undefined ? undefined : structuredClone(input.request.headers);
+      }
+
+      if (input.responseHeaders !== undefined) {
+        call.responseHeaders = structuredClone(input.responseHeaders);
       }
 
       if (input.input) {

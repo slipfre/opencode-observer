@@ -96,6 +96,7 @@ export async function withE2EFixture(
             "test-model": {
               name: "Test Model",
               tool_call: true,
+              headers: { "X-Observer-Model": "request-one,two" },
               limit: { context: 100_000, output: 10_000 },
               cost: { input: 0, output: 0 },
             },

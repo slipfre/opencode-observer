@@ -59,6 +59,37 @@ describe("OpenCode run E2E", () => {
           parts: expect.arrayContaining([{ type: "text", content: expect.any(String) }]),
         });
         expect(llm.attributes["gen_ai.system_instructions"]).toBeUndefined();
+        const request = fixture.llm.mainHits()[0]!;
+        expect(llm.attributes["http.request.header.x-observer-model"]).toEqual(["request-one,two"]);
+        expect(request.headers.get("x-observer-model")).toBe("request-one,two");
+        expect(llm.attributes["http.request.header.traceparent"]).toEqual([
+          request.headers.get("traceparent"),
+        ]);
+        expect(llm.attributes["http.response.header.content-type"]).toEqual(["text/event-stream"]);
+        expect(llm.attributes["http.response.header.x-observer-response"]).toEqual([
+          "success-one,two",
+        ]);
+        expect(llm.attributes["http.request.header.x-opencode-observer-request"]).toBeUndefined();
+        expect(llm.attributes["gen_ai.request.seed"]).toBeUndefined();
+        expect(llm.attributes["gen_ai.output.type"]).toBeUndefined();
+        const definitions = JSON.parse(String(llm.attributes["gen_ai.tool.definitions"])) as Array<{
+          type: string;
+          name: string;
+          parameters?: unknown;
+        }>;
+        const sentTools = request.body.tools as Array<{
+          type: string;
+          function: { name: string; parameters?: unknown };
+        }>;
+        expect(definitions.map((definition) => definition.name).sort()).toEqual(
+          sentTools.map((tool) => tool.function.name).sort(),
+        );
+        const read = definitions.find((definition) => definition.name === "read");
+        expect(read).toMatchObject({
+          type: "function",
+          parameters: { type: "object", properties: { filePath: { type: "string" } } },
+        });
+        expect(read).not.toHaveProperty("function");
         expect(messages(llm, "output")).toEqual([
           {
             role: "assistant",
@@ -118,7 +149,14 @@ describe("OpenCode run E2E", () => {
             "gen_ai.system_instructions",
             "gen_ai.tool.call.arguments",
             "gen_ai.tool.call.result",
+            "gen_ai.tool.definitions",
           ].forEach((key) => expect(span.attributes[key]).toBeUndefined());
+          expect(
+            Object.keys(span.attributes).some(
+              (key) =>
+                key.startsWith("http.request.header.") || key.startsWith("http.response.header."),
+            ),
+          ).toBe(false);
         });
         expect(JSON.stringify(fixture.otlp.payloads)).not.toContain("private-");
         expect(
@@ -173,12 +211,21 @@ describe("OpenCode run E2E", () => {
 
   test("exports a prepared LLM span when the provider fails before the first step", () =>
     withE2EFixture(
-      { replies: [{ type: "error", code: "invalid_request", message: "invalid e2e request" }] },
+      {
+        pluginOptions: { captureContent: true },
+        replies: [{ type: "error", code: "invalid_request", message: "invalid e2e request" }],
+      },
       async (fixture) => {
         const result = await fixture.run("fail the model request");
         const spans = requireSpans(fixture, result, 3, 1);
 
         expect(fixture.llm.mainHits()).toHaveLength(1);
+        expect(
+          oneSpan(spans, "e2e.llm").attributes["http.request.header.x-observer-model"],
+        ).toEqual(["request-one,two"]);
+        expect(
+          oneSpan(spans, "e2e.llm").attributes["http.response.header.x-observer-response"],
+        ).toEqual(["error-response"]);
         expect(oneSpan(spans, "e2e.llm").parentSpanId).toBe(
           oneSpan(spans, "e2e.interaction").spanId,
         );

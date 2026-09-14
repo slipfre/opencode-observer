@@ -68,6 +68,21 @@ export type LlmParameters = {
   maxTokens?: number;
 };
 
+export type ModelHeaders = Record<string, string[]>;
+
+export type ToolDefinition = {
+  type: string;
+  name: string;
+  description?: string;
+  parameters?: JsonValue;
+};
+
+export type ModelRequest = {
+  outputType?: "text" | "json";
+  toolDefinitions?: ToolDefinition[];
+  headers?: ModelHeaders;
+};
+
 export type LlmStart = LlmReference & {
   /** Request preparation time, or first model step observation as fallback, in Unix epoch milliseconds. */
   startedAt: number;
@@ -91,6 +106,7 @@ export type LlmFinish = LlmReference & {
   endedAt: number;
   /** Observed assistant text snapshot, with undefined distinct from known empty text. */
   output: string | undefined;
+  responseHeaders?: ModelHeaders;
   finishReason?: string;
   usage?: {
     inputTokens?: number;
@@ -104,6 +120,9 @@ export type LlmFinish = LlmReference & {
 };
 
 export type LlmUpdate = LlmReference & {
+  /** Replace the SDK request snapshot and clear the previous step's response. */
+  request?: ModelRequest;
+  responseHeaders?: ModelHeaders;
   /** Replace the request snapshot and clear the previous attempt's output. */
   input?: ModelInput;
   /** Replace generated candidates; [] means a confirmed empty response. */

@@ -1,6 +1,6 @@
 # Trace Schema
 
-本文档定义 OpenCode v1 trace 监控插件通过 OTLP 导出的 trace 结构、span attributes 及字段口径。字段优先采用 OpenTelemetry（OTel）和 GenAI Semantic Conventions；标准未覆盖的 OpenCode 业务信息使用 `opencode.*` 扩展。新 schema 不再导出 OpenInference 属性，旧字段的迁移关系见第 13 节。
+本文档定义 OpenCode v1 trace 监控插件通过 OTLP 导出的 trace 结构、span attributes 及字段口径。字段优先采用 OpenTelemetry（OTel）和 GenAI Semantic Conventions；标准未覆盖的 OpenCode 业务信息使用 `opencode.*` 扩展。新 schema 不再导出 OpenInference 属性。
 
 默认 span 名称前缀为 `opencode.`；设置 `OPENCODE_TRACE_PREFIX` 后替换此前缀。本文保留 `run`、`interaction`、`llm` 等 OpenCode 专用 span 名称，通过 `gen_ai.operation.name` 表达标准操作语义。这是 GenAI 规范允许的框架专用命名约定；前缀只影响 span 名称，不影响 attribute key 或 operation 值。
 
@@ -297,20 +297,21 @@ usage 公式适用于 OpenCode 已归一化的 token 数据；如果另取 provi
 
 原先聚合在 invocation JSON 中、有标准对应项的参数拆成独立 attributes。只写入实际取得的有效值，不把未配置参数的假定默认值当作实测值。
 
-| 字段                         | 类型         | 来源                                                       |
-| ---------------------------- | ------------ | ---------------------------------------------------------- |
-| `gen_ai.request.max_tokens`  | int          | 取得 `maxOutputTokens`。                                   |
-| `gen_ai.request.temperature` | double       | 取得 `temperature`。                                       |
-| `gen_ai.request.top_p`       | double       | 取得 `topP`。                                              |
-| `gen_ai.request.top_k`       | int          | 取得 `topK`。                                              |
-| `gen_ai.request.seed`        | int          | 取得 `seed`。                                              |
-| `gen_ai.request.stream`      | boolean      | 确认本次请求是否使用流式响应。                             |
-| `gen_ai.output.type`         | string       | 请求显式约束输出类型且可识别，如 `text`、`json`、`image`。 |
-| `gen_ai.tool.definitions`    | string(JSON) | 显式开启工具定义采集，且取得当前 step 的实际激活工具集合。 |
-| `http.request.header.<key>`  | string[]     | 显实际取得的请求 header；key 为小写 header 名。            |
-| `http.response.header.<key>` | string[]     | 实际取得的响应 header；key 为小写 header 名。              |
+`gen_ai.output.type` 独立于正文采集开关。工具定义和模型请求／响应 headers 与输入输出正文共用 `captureContent`，默认关闭，不提供额外开关。`gen_ai.request.seed` 不采集。
 
-`gen_ai.tool.definitions` 使用 [ToolDefinitions JSON Schema][genai-tools-schema]，替代逐项展开的工具属性。函数工具直接使用顶层 `type` / `name`，不能保留 OpenAI 的外层 `function` 包装。默认只记录 `type`、`name`；以下示例假设进一步开启参数定义采集，`parameters` 符合 JSON Schema draft-07：
+| 字段                         | 类型         | 来源                                                                                             |
+| ---------------------------- | ------------ | ------------------------------------------------------------------------------------------------ |
+| `gen_ai.request.max_tokens`  | int          | 取得 `maxOutputTokens`。                                                                         |
+| `gen_ai.request.temperature` | double       | 取得 `temperature`。                                                                             |
+| `gen_ai.request.top_p`       | double       | 取得 `topP`。                                                                                    |
+| `gen_ai.request.top_k`       | int          | 取得 `topK`。                                                                                    |
+| `gen_ai.request.stream`      | boolean      | 确认本次请求是否使用流式响应。                                                                   |
+| `gen_ai.output.type`         | string       | 取得 AI SDK 显式 `output.responseFormat.type`，当前支持 `text`、`json`；未指定或无法识别时省略。 |
+| `gen_ai.tool.definitions`    | string(JSON) | `captureContent=true` 时，取得当前 SDK step 经 `activeTools` 筛选的工具定义。                    |
+| `http.request.header.<key>`  | string[]     | `captureContent=true` 时取得的 SDK step 请求 headers；key 为小写 header 名。                     |
+| `http.response.header.<key>` | string[]     | `captureContent=true` 时取得的 SDK 响应或可关联 API 错误的响应 headers；key 为小写 header 名。   |
+
+`gen_ai.tool.definitions` 使用 [ToolDefinitions JSON Schema][genai-tools-schema]，替代逐项展开的工具属性。函数工具直接使用顶层 `type=function` / `name`，不能保留 OpenAI 的外层 `function` 包装；开启 `captureContent` 后一并记录可取得的 `description` 和 `parameters`。参数定义使用 AI SDK 的 Schema 转换结果，采用 JSON Schema draft-07；转换失败时保留工具身份并省略参数，不影响其他工具。provider 工具使用 SDK 的 provider tool ID 作为 `type`，保留调用名称 `name`，不伪装成函数工具。已知有效工具集合为空时记录 `[]`，没有工具快照时省略。例如：
 
 ```json
 [
@@ -327,6 +328,10 @@ usage 公式适用于 OpenCode 已归一化的 token 数据；如果另取 provi
 ```
 
 HTTP header 示例是原生 attribute 值：`http.request.header.content-type=["application/json"]`。即使只有一个值也必须是 `string[]`，保留 header 名中的连字符；多值按 HTTP 库提供的形式记录，不能任意按逗号拆分。[HTTP 字段规范][otel-http]
+
+请求 headers 反映 SDK 可见值，不补造 provider 或底层 HTTP 库稍后追加的 headers；响应 headers 不要求成功状态，但必须能关联到对应 LLM。内部关联标识 `x-opencode-observer-request` 不采集。模型 headers 与 `otlpHeaders` 配置的 collector 导出 headers 相互独立。
+
+这些字段使用当前 step 的快照；新请求清理旧工具定义、输出类型和响应 headers。异步输出格式与工具 Schema 解析不阻塞模型调用，响应已经到达、绑定失效或 span 结束后的解析结果忽略。不能取得 SDK 回调（例如 native 路径）时省略相应字段，不根据工具执行记录、回答文本或其他请求推测。
 
 ### 8.4 Retry attributes
 
@@ -454,3 +459,19 @@ opencode.run                  gen_ai.operation.name=invoke_workflow
 ```
 
 三个 span 均包含相同的 `session.id` / `gen_ai.conversation.id`，正常结束后 status 保持 `UNSET`。LLM messages 描述单次逻辑模型调用；interaction messages 描述一次用户交互；run input messages 按顺序包含任务内所有 interaction 的用户输入，run output messages 为最后一次 interaction 的最终输出。
+
+[otel-semconv]: https://github.com/open-telemetry/semantic-conventions/tree/v1.44.0/docs
+[otel-errors]: https://github.com/open-telemetry/semantic-conventions/blob/v1.44.0/docs/general/recording-errors.md
+[otel-os]: https://github.com/open-telemetry/semantic-conventions/blob/v1.44.0/docs/resource/os.md
+[otel-host]: https://github.com/open-telemetry/semantic-conventions/blob/v1.44.0/docs/resource/host.md
+[otel-session]: https://github.com/open-telemetry/semantic-conventions/blob/v1.44.0/docs/general/session.md
+[otel-user]: https://github.com/open-telemetry/semantic-conventions/blob/v1.44.0/docs/registry/attributes/user.md
+[otel-http]: https://github.com/open-telemetry/semantic-conventions/blob/v1.44.0/docs/registry/attributes/http.md
+[genai-root]: https://github.com/open-telemetry/semantic-conventions-genai/blob/b5d8440f6f126738fd50f927752cd669772c517b/docs/gen-ai/README.md
+[genai-agents]: https://github.com/open-telemetry/semantic-conventions-genai/blob/b5d8440f6f126738fd50f927752cd669772c517b/docs/gen-ai/gen-ai-agent-spans.md
+[genai-spans]: https://github.com/open-telemetry/semantic-conventions-genai/blob/b5d8440f6f126738fd50f927752cd669772c517b/docs/gen-ai/gen-ai-spans.md
+[genai-input-schema]: https://github.com/open-telemetry/semantic-conventions-genai/blob/b5d8440f6f126738fd50f927752cd669772c517b/model/gen-ai/gen-ai-input-messages.json
+[genai-output-schema]: https://github.com/open-telemetry/semantic-conventions-genai/blob/b5d8440f6f126738fd50f927752cd669772c517b/model/gen-ai/gen-ai-output-messages.json
+[genai-tools-schema]: https://github.com/open-telemetry/semantic-conventions-genai/blob/b5d8440f6f126738fd50f927752cd669772c517b/model/gen-ai/gen-ai-tool-definitions.json
+[genai-tool-args-schema]: https://github.com/open-telemetry/semantic-conventions-genai/blob/b5d8440f6f126738fd50f927752cd669772c517b/model/gen-ai/gen-ai-tool-call-arguments.json
+[genai-tool-result-schema]: https://github.com/open-telemetry/semantic-conventions-genai/blob/b5d8440f6f126738fd50f927752cd669772c517b/model/gen-ai/gen-ai-tool-call-result.json

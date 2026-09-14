@@ -92,6 +92,7 @@ export function createOpenCodeAdapter(options: {
     if (!state.closed) {
       state.messageCapture = createModelMessageCapture({
         bind: coordinator.bindModel,
+        captureContent: options.captureContent,
         log: options.log,
       });
     }
@@ -105,7 +106,7 @@ export function createOpenCodeAdapter(options: {
         (process.env.OPENCODE_EXPERIMENTAL_NATIVE_LLM ?? "").toLowerCase(),
       );
 
-      if (!options.captureContent || state.closed || native) {
+      if (state.closed || native) {
         return Promise.resolve();
       }
 

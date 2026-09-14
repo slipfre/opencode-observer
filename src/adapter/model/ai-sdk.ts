@@ -5,17 +5,19 @@ import {
   type OnStepFinishEvent,
   type TelemetryIntegration,
 } from "ai";
-import type { ModelInput, ModelMessage } from "../../contract/messages.js";
+import type { LlmUpdate } from "../../contract/observer.js";
 import type { LlmRequest } from "./request.js";
 import { parseModelInput, parseModelOutput } from "./messages.js";
 import { createGuard } from "../shared/guard.js";
+import { parseModelHeaders } from "./headers.js";
+import { parseModelSettings } from "./settings.js";
 
 const correlationHeader = "x-opencode-observer-request";
 
 export type ModelCapture = {
   active(): boolean;
-  input(value: ModelInput): void;
-  output(value: ModelMessage[] | undefined): void;
+  input(value: Pick<LlmUpdate, "input" | "request">): void;
+  output(value: Pick<LlmUpdate, "output" | "responseHeaders">): void;
 };
 
 type ModelCaptureListener = {
@@ -30,10 +32,14 @@ type ModelCaptureBroker = { listeners: Set<ModelCaptureListener> };
 
 export function createModelMessageCapture(options: {
   bind(input: LlmRequest[0]): ModelCapture | undefined;
+  captureContent: boolean;
   log(error: unknown): unknown;
 }) {
   const pending = new Map<string, ModelCapture>();
-  const bindings = new WeakMap<object, ModelCapture>();
+  const bindings = new WeakMap<
+    object,
+    { capture: ModelCapture; step: number; responded: boolean }
+  >();
 
   function activeBinding(event: OnStartEvent | OnStepStartEvent | OnStepFinishEvent) {
     if (event.functionId !== "session.llm") {
@@ -42,7 +48,7 @@ export function createModelMessageCapture(options: {
 
     const binding = event.metadata ? bindings.get(event.metadata) : undefined;
 
-    return binding?.active() ? binding : undefined;
+    return binding?.capture.active() ? binding : undefined;
   }
 
   const listener: ModelCaptureListener = {
@@ -59,21 +65,50 @@ export function createModelMessageCapture(options: {
       pending.delete(id);
 
       if (event.functionId === "session.llm" && event.metadata && binding.active()) {
-        bindings.set(event.metadata, binding);
+        bindings.set(event.metadata, { capture: binding, step: 0, responded: false });
       }
     },
     input(event) {
       const binding = activeBinding(event);
 
       if (binding) {
-        binding.input(parseModelInput(event));
+        const step = ++binding.step;
+        const snapshot = {
+          ...(options.captureContent ? { input: parseModelInput(event) } : {}),
+          request: options.captureContent ? { headers: parseModelHeaders(event.headers) } : {},
+        };
+        binding.capture.input(snapshot);
+        binding.responded = false;
+
+        if (event.output || (options.captureContent && event.tools)) {
+          // Schema promises must never hold up the host or hide an observed response.
+          // Only enrich the request while this step is still awaiting its response.
+          void listener.guard(async () => {
+            const settings = await parseModelSettings(event, options.captureContent, (error) => {
+              void listener.guard(() => {
+                throw error;
+              });
+            });
+
+            if (binding.capture.active() && binding.step === step && !binding.responded) {
+              binding.capture.input({ ...snapshot, request: { ...snapshot.request, ...settings } });
+            }
+          });
+        }
       }
     },
     output(event) {
       const binding = activeBinding(event);
 
       if (binding) {
-        binding.output(parseModelOutput(event));
+        binding.responded = true;
+        const snapshot = options.captureContent
+          ? {
+              output: parseModelOutput(event),
+              responseHeaders: parseModelHeaders(event.response?.headers),
+            }
+          : {};
+        binding.capture.output(snapshot);
       }
     },
   };

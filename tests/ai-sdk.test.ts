@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { OnStartEvent, OnStepStartEvent, OnStepFinishEvent } from "ai";
-import { streamText } from "ai";
+import { jsonSchema, Output, streamText, tool } from "ai";
 import { MockLanguageModelV3, convertArrayToReadableStream } from "ai/test";
 import type { LlmFinish, LlmUpdate, Observer } from "../src/contract/observer.js";
 import { createOpenCodeAdapter } from "../src/adapter/opencode/hooks.js";
@@ -339,12 +339,63 @@ test("retry bindings discard old callbacks and session end releases a missing SD
   expect(h.updates).toHaveLength(2);
 });
 
-test("capture disabled and disposed instances do not parse model bodies or retain request markers", async () => {
+test("unresolved settings never block callbacks or discard an observed response", async () => {
+  const h = await setup();
+  const format = Promise.withResolvers<{ type: "json" }>();
+  const event = {
+    ...inputEvent({}, await h.headers()),
+    output: { ...Output.text(), responseFormat: format.promise },
+  };
+  await integration().onStepStart?.(event);
+  await h.step("step-start");
+  await integration().onStepFinish?.({
+    ...outputEvent(event.metadata!),
+    response: { ...outputEvent(event.metadata!).response, headers: { "x-response": "kept" } },
+  });
+  await h.step("step-finish");
+
+  expect(h.finishes).toHaveLength(1);
+  const count = h.updates.length;
+  format.resolve({ type: "json" });
+  await Bun.sleep(0);
+
+  expect(h.updates).toHaveLength(count);
+  expect(h.updates.at(-1)?.output?.[0]?.parts[0]).toEqual({ type: "text", text: "full output" });
+  expect(h.updates.at(-1)?.responseHeaders).toEqual({ "x-response": ["kept"] });
+  expect(h.finishes).toHaveLength(1);
+  expect(h.errors).toEqual([]);
+});
+
+test("late async settings cannot replace a retry's request snapshot", async () => {
+  const h = await setup();
+  const format = Promise.withResolvers<{ type: "json" }>();
+  const first = {
+    ...inputEvent({}, await h.headers(), "old"),
+    output: { ...Output.text(), responseFormat: format.promise },
+  };
+  await integration().onStepStart?.(first);
+  await h.step("step-start");
+  await integration().onStepFinish?.(outputEvent(first.metadata!, "old response"));
+  const retry = inputEvent({}, await h.headers(), "retry");
+  await integration().onStepStart?.(retry);
+  const count = h.updates.length;
+  format.resolve({ type: "json" });
+  await Bun.sleep(0);
+
+  expect(h.updates).toHaveLength(count);
+  expect(h.updates.at(-1)?.input?.messages[0]?.parts[0]).toEqual({ type: "text", text: "retry" });
+  await integration().onStepFinish?.(outputEvent(retry.metadata!, "retry response"));
+  await h.step("step-finish");
+  expect(h.finishes).toHaveLength(1);
+  expect(h.errors).toEqual([]);
+});
+
+test("capture disabled and disposed instances do not parse content and remove request markers", async () => {
   const enabled = await setup();
   const disabled = await setup(false);
   const headers = await enabled.headers();
   enabled.adapter.close();
-  expect(await disabled.headers()).toEqual({ "X-Test": "kept" });
+  const disabledHeaders = await disabled.headers();
   const event = inputEvent({}, headers);
   Object.defineProperty(event, "messages", {
     get() {
@@ -352,10 +403,39 @@ test("capture disabled and disposed instances do not parse model bodies or retai
     },
   });
   await integration().onStepStart?.(event);
+  const disabledEvent = inputEvent({}, disabledHeaders);
+  ["messages", "system", "providerOptions", "tools", "activeTools"].forEach((key) => {
+    Object.defineProperty(disabledEvent, key, {
+      get() {
+        throw new Error("content must not be read");
+      },
+    });
+  });
+  await integration().onStepStart?.(disabledEvent);
+  await disabled.step("step-start");
+  await integration().onStepFinish?.({
+    metadata: disabledEvent.metadata,
+    functionId: "session.llm",
+    get content() {
+      throw new Error("output must not be read");
+    },
+    get response() {
+      throw new Error("response must not be read");
+    },
+  } as unknown as OnStepFinishEvent);
 
   expect(headers).toEqual({ "X-Test": "kept" });
   expect(enabled.updates).toEqual([]);
-  expect(disabled.updates).toEqual([]);
+  expect(disabledHeaders).toEqual({ "X-Test": "kept" });
+  expect(
+    disabled.updates.every(
+      (update) =>
+        update.input === undefined &&
+        update.output === undefined &&
+        update.responseHeaders === undefined,
+    ),
+  ).toBe(true);
+  expect(disabled.updates[0]?.request).toEqual({});
   expect(enabled.errors).toEqual([]);
   expect(disabled.errors).toEqual([]);
 });
@@ -515,75 +595,122 @@ test("native LLM runtime prepares trace headers without callback capture or a re
   }
 });
 
-test("real AI SDK streaming captures full step messages and removes the correlation header before doStream", async () => {
-  const h = await setup();
-  const model = new MockLanguageModelV3({
-    doStream: async () => ({
-      stream: convertArrayToReadableStream([
-        { type: "stream-start", warnings: [] },
-        { type: "reasoning-start", id: "reason" },
-        { type: "reasoning-delta", id: "reason", delta: "consider" },
-        { type: "reasoning-end", id: "reason" },
-        { type: "text-start", id: "text" },
-        { type: "text-delta", id: "text", delta: "real answer" },
-        { type: "text-end", id: "text" },
-        {
-          type: "finish",
-          finishReason: { unified: "stop", raw: "stop" },
-          usage: {
-            inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
-            outputTokens: { total: 1, text: 1, reasoning: 0 },
+test.each([true, false])(
+  "real AI SDK streaming captures settings with content=%s and strips the marker",
+  async (captureContent) => {
+    const h = await setup(captureContent);
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: convertArrayToReadableStream([
+          { type: "stream-start", warnings: [] },
+          { type: "reasoning-start", id: "reason" },
+          { type: "reasoning-delta", id: "reason", delta: "consider" },
+          { type: "reasoning-end", id: "reason" },
+          { type: "text-start", id: "text" },
+          { type: "text-delta", id: "text", delta: '{"answer":"real answer"}' },
+          { type: "text-end", id: "text" },
+          {
+            type: "finish",
+            finishReason: { unified: "stop", raw: "stop" },
+            usage: {
+              inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+              outputTokens: { total: 1, text: 1, reasoning: 0 },
+            },
           },
+        ]),
+        response: {
+          headers: { "content-type": "text/event-stream", "x-model-request": "request-1" },
         },
-      ]),
-    }),
-  });
-  const response = streamText({
-    model,
-    headers: await h.headers(),
-    system: "actual system",
-    messages: [
-      { role: "user", content: "previous question" },
-      { role: "assistant", content: "previous answer" },
-      { role: "user", content: "actual question" },
-    ],
-    experimental_telemetry: {
-      isEnabled: false,
-      functionId: "session.llm",
-      metadata: { sessionId: "s1" },
-    },
-  });
-
-  for await (const part of response.fullStream) {
-    if (part.type === "start-step") {
-      await h.step("step-start");
-    }
-
-    if (part.type === "finish-step") {
-      await h.step("step-finish");
-    }
-  }
-
-  expect(await response.text).toBe("real answer");
-  expect(model.doStreamCalls[0]?.headers?.["x-opencode-observer-request"]).toBeUndefined();
-  expect(model.doStreamCalls[0]?.headers?.["X-Test"]).toBe("kept");
-  expect(h.updates.find((value) => value.input)?.input).toEqual({
-    messages: [
-      { role: "user", parts: [{ type: "text", text: "previous question" }] },
-      { role: "assistant", parts: [{ type: "text", text: "previous answer" }] },
-      { role: "user", parts: [{ type: "text", text: "actual question" }] },
-    ],
-    systemInstructions: [{ type: "text", text: "actual system" }],
-  });
-  expect(h.updates.at(-1)?.output).toEqual([
-    {
-      role: "assistant",
-      parts: [
-        { type: "reasoning", text: "consider" },
-        { type: "text", text: "real answer" },
+      }),
+    });
+    const response = streamText({
+      model,
+      headers: await h.headers(),
+      output: Output.json(),
+      tools: {
+        read: tool({
+          description: "Read a file",
+          inputSchema: jsonSchema({ type: "object", properties: { path: { type: "string" } } }),
+        }),
+        unused: tool({ inputSchema: jsonSchema({ type: "object" }) }),
+      },
+      activeTools: ["read"],
+      system: "actual system",
+      messages: [
+        { role: "user", content: "previous question" },
+        { role: "assistant", content: "previous answer" },
+        { role: "user", content: "actual question" },
       ],
-    },
-  ]);
-  expect(h.finishes).toHaveLength(1);
-  expect(h.errors).toEqual([]);
-});
+      experimental_telemetry: {
+        isEnabled: false,
+        functionId: "session.llm",
+        metadata: { sessionId: "s1" },
+      },
+    });
+
+    for await (const part of response.fullStream) {
+      if (part.type === "start-step") {
+        await h.step("step-start");
+      }
+
+      if (part.type === "finish-step") {
+        await h.step("step-finish");
+      }
+    }
+
+    expect(await response.text).toBe('{"answer":"real answer"}');
+    expect(model.doStreamCalls[0]?.headers?.["x-opencode-observer-request"]).toBeUndefined();
+    expect(model.doStreamCalls[0]?.headers?.["X-Test"]).toBe("kept");
+    const request = h.updates.findLast((update) => update.request?.outputType)?.request;
+    expect(request?.outputType).toBe("json");
+    expect(request?.toolDefinitions).toEqual(
+      captureContent
+        ? [
+            {
+              type: "function",
+              name: "read",
+              description: "Read a file",
+              parameters: { type: "object", properties: { path: { type: "string" } } },
+            },
+          ]
+        : undefined,
+    );
+    expect(request?.headers).toEqual(captureContent ? { "x-test": ["kept"] } : undefined);
+    expect(h.updates.at(-1)?.responseHeaders).toEqual(
+      captureContent
+        ? {
+            "content-type": ["text/event-stream"],
+            "x-model-request": ["request-1"],
+          }
+        : undefined,
+    );
+
+    if (!captureContent) {
+      expect(
+        h.updates.every((update) => update.input === undefined && update.output === undefined),
+      ).toBe(true);
+      expect(h.finishes).toHaveLength(1);
+      expect(h.errors).toEqual([]);
+      return;
+    }
+    expect(h.updates.find((value) => value.input)?.input).toEqual({
+      messages: [
+        { role: "user", parts: [{ type: "text", text: "previous question" }] },
+        { role: "assistant", parts: [{ type: "text", text: "previous answer" }] },
+        { role: "user", parts: [{ type: "text", text: "actual question" }] },
+      ],
+      systemInstructions: [{ type: "text", text: "actual system" }],
+    });
+    expect(h.updates.at(-1)?.output).toEqual([
+      {
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "consider" },
+          { type: "text", text: '{"answer":"real answer"}' },
+        ],
+      },
+    ]);
+    expect(h.finishes).toHaveLength(1);
+    expect(h.errors).toEqual([]);
+  },
+);

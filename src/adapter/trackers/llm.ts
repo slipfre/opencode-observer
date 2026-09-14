@@ -3,6 +3,7 @@ import type {
   LlmFinish,
   LlmReference,
   LlmUpdate,
+  ModelHeaders,
   Observer,
   ObservationError,
 } from "../../contract/observer.js";
@@ -11,6 +12,7 @@ import { nonNegativeNumber } from "../shared/number.js";
 import type { ModelCapture } from "../model/ai-sdk.js";
 import { parseModelRequest, providerName, type LlmRequest } from "../model/request.js";
 import { parseModelUsage } from "../model/usage.js";
+import { parseErrorResponseHeaders } from "../model/headers.js";
 import type { InteractionOwner } from "./interaction.js";
 
 type LlmCallState = {
@@ -30,7 +32,7 @@ type LlmCallState = {
   texts: Map<string, string>;
   capturePending?: boolean;
   generation?: number;
-  messages?: Pick<LlmUpdate, "input" | "output">;
+  messages?: Omit<LlmUpdate, "interaction" | "id">;
 };
 
 export function createLlmTracker(options: {
@@ -131,13 +133,20 @@ export function createLlmTracker(options: {
     return candidates.length === 1 ? candidates[0] : undefined;
   }
 
-  function fail(endedAt: number, error: ObservationError) {
+  function fail(
+    endedAt: number,
+    error: ObservationError,
+    response?: { messageID: string; headers: ModelHeaders | undefined },
+  ) {
     calls.forEach((call, id) => {
       if (call.startedAt === undefined) {
         return;
       }
 
       call.result ??= { endedAt, error };
+      if (options.captureContent && response?.messageID === id) {
+        call.result.responseHeaders = response.headers;
+      }
       call.capturePending = false;
       record(id);
     });
@@ -199,10 +208,6 @@ export function createLlmTracker(options: {
       return call.reference ? options.observer.llmTraceHeaders(call.reference) : undefined;
     },
     bind(input: LlmRequest[0]): ModelCapture | undefined {
-      if (!options.captureContent) {
-        return;
-      }
-
       const candidate = resolveRequest(input);
 
       if (!candidate) {
@@ -219,14 +224,14 @@ export function createLlmTracker(options: {
         active: isActive,
         input(value) {
           if (isActive()) {
-            call.messages = { input: value };
+            call.messages = value;
             call.capturePending = true;
             record(id);
           }
         },
         output(value) {
           if (isActive()) {
-            call.messages = { ...call.messages, output: value };
+            call.messages = { ...call.messages, ...value };
             call.capturePending = false;
             record(id);
           }
@@ -277,6 +282,9 @@ export function createLlmTracker(options: {
           endedAt: observedAt,
           error: errorDetails(info.error),
           finishReason: info.finish,
+          responseHeaders: options.captureContent
+            ? parseErrorResponseHeaders(info.error)
+            : undefined,
         };
       }
 

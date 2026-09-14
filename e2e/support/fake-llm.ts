@@ -57,7 +57,10 @@ export function startFakeLlm(replies: LlmReply[]) {
           { error: { message: reply.message, code: reply.code, type: "invalid_request_error" } },
           {
             status: reply.status ?? 400,
-            headers: { "retry-after-ms": String(reply.retryAfterMs ?? 10) },
+            headers: {
+              "retry-after-ms": String(reply.retryAfterMs ?? 10),
+              "x-observer-response": "error-response",
+            },
           },
         );
       }
@@ -89,7 +92,12 @@ export function startFakeLlm(replies: LlmReply[]) {
 
       return new Response(
         chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n",
-        { headers: { "content-type": "text/event-stream" } },
+        {
+          headers: {
+            "content-type": "text/event-stream",
+            "x-observer-response": "success-one,two",
+          },
+        },
       );
     },
   });

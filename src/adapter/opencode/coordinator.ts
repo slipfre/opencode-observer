@@ -7,6 +7,7 @@ import type {
   ToolReference,
 } from "../../contract/observer.js";
 import { errorDetails } from "../shared/error.js";
+import { parseErrorResponseHeaders } from "../model/headers.js";
 import { createInteractionTracker, type InteractionOwner } from "../trackers/interaction.js";
 import { createLlmTracker } from "../trackers/llm.js";
 import type { LlmRequest } from "../model/request.js";
@@ -255,7 +256,16 @@ export function createCoordinator(options: CoordinatorOptions) {
         };
       }
 
-      session.llms.fail(time, error);
+      session.llms.fail(
+        time,
+        error,
+        options.captureContent && activeRequest
+          ? {
+              messageID: activeRequest.messageID,
+              headers: parseErrorResponseHeaders(event.properties.error),
+            }
+          : undefined,
+      );
 
       if (
         error.type === "ContextOverflowError" &&

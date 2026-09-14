@@ -35,7 +35,7 @@ Resource 默认上报 `service.name=opencode`，`service.version` 来自运行�
 | 插件选项                  | 环境变量                              | 默认值 / 格式                                                        |
 | ------------------------- | ------------------------------------- | -------------------------------------------------------------------- |
 | `enabled`                 | `OPENCODE_ENABLE_TELEMETRY`           | `false`；布尔环境变量接受 `true` / `false` / `1` / `0`               |
-| `captureContent`          | `OPENCODE_CAPTURE_CONTENT`            | `false`；控制输入和输出正文                                          |
+| `captureContent`          | `OPENCODE_CAPTURE_CONTENT`            | `false`；统一控制输入输出正文、LLM 工具定义和模型请求／响应 headers  |
 | `endpoint`                | `OPENCODE_OTLP_ENDPOINT`              | `http://localhost:4318`；自动补齐 `/v1/traces`                       |
 | `tracePrefix`             | `OPENCODE_TRACE_PREFIX`               | `opencode.`                                                          |
 | `otlpHeaders`             | `OPENCODE_OTLP_HEADERS`               | 选项使用字符串值对象；环境变量使用 `key=value,key2=value2`           |
@@ -72,7 +72,9 @@ Resource 默认上报 `service.name=opencode`，`service.version` 来自运行�
 - 开启正文采集后，模型消息可包含历史上下文、系统指令、reasoning、工具调用与结果、多模态内容，工具 span 可记录参数与成功结果。模型正文反映 SDK 可见的内容，后续 provider 转换仍可能改变实际请求。开启 `OPENCODE_EXPERIMENTAL_NATIVE_LLM` 或无法取得完整消息时，普通模型调用降级为所属用户文本和可见答复，摘要调用省略未知输入。
 - 可唯一关联的模型请求在 `chat.headers` 阶段创建 LLM span，并注入该 span 的 W3C `traceparent`；非空 `tracestate` 及启用的身份字段一并传播，不依赖正文采集开关。AI SDK 路径支持端到端传播；当前 OpenCode native HTTP 层会覆盖准备好的 traceparent，因此 native 路径尚不能保证与本插件 trace 关联。标题、归属未知或歧义的调用省略注入；不读取外部 trace 上下文配置。
 - LLM 耗时从请求准备阶段的观察时间开始，未取得请求关联时降级为首个 `step-start` 的观察时间，结束仍使用事件观察边界，可能包含请求准备、事件处理和工具等待开销；当前未精确测量网络请求耗时或首 chunk 耗时。重试字段的 `0` / `[]` 表示尚未确认重试开始，不能据此判断没有重试。
-- 前台子任务的父子关联和权限检查 span 依赖可识别的工具关联；未知关联不会补造。暂不采集工具定义、HTTP headers 或真实响应 ID/model。
+- 同一 `captureContent` 开关还控制 LLM span 的有效工具定义（含可取得的描述和参数 Schema）及模型请求／响应 headers。请求 headers 来自 AI SDK step 回调，响应 headers 来自 SDK 响应或可关联的 OpenCode API 错误；记录可见原值，不代表底层传输追加后的完整请求头。`otlpHeaders` 仅配置发往遥测接收端的导出请求，与模型 headers 采集无关。
+- `gen_ai.output.type` 不受正文开关控制：取得显式 SDK 输出格式时记录 `text` 或 `json`，没有约束或无法识别时省略，不根据回答内容猜测。native 路径没有 SDK 快照时省略输出类型、工具定义及 SDK headers。
+- 前台子任务的父子关联和权限检查 span 依赖可识别的工具关联；未知关联不会补造。不采集 `gen_ai.request.seed` 或真实响应 ID/model。
 
 正常完成的 span 状态为 `UNSET`，失败为 `ERROR`。缺失数据省略，正文未采集与明确为空有不同含义。完整字段、父子关系及生命周期约定见 [Trace Schema](docs/schemas/trace.md)。
 

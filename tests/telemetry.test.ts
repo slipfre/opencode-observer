@@ -813,6 +813,90 @@ test.each([true, false])(
   },
 );
 
+test.each([true, false])(
+  "LLM request settings enforce content=%s and snapshot exported headers",
+  async (captureContent) => {
+    const h = setup({ captureContent });
+    const request = {
+      outputType: "json" as const,
+      toolDefinitions: [{ type: "function", name: "read", parameters: { type: "object" } }],
+      headers: { "x-request": ["one,two"] },
+    };
+    const responseHeaders = { "set-cookie": ["first=1", "second=2"] };
+    h.observer.startRun(start());
+    h.observer.startInteraction(interaction());
+    h.observer.startLlm(llm());
+
+    if (!captureContent) {
+      ["toolDefinitions", "headers"].forEach((key) => {
+        Object.defineProperty(request, key, {
+          get() {
+            throw new Error("content must not be read");
+          },
+        });
+      });
+    }
+
+    h.observer.updateLlm({ ...llm(), input: undefined, request });
+    h.observer.updateLlm({ ...llm(), input: undefined, responseHeaders });
+    responseHeaders["set-cookie"].push("later=3");
+    h.observer.finishLlm({ ...llm(), endedAt: 1500, output: undefined });
+    await h.observer.flush();
+
+    const attributes = h.spans[0]!.attributes;
+    expect(attributes["gen_ai.output.type"]).toBe("json");
+    expect(attributes["gen_ai.tool.definitions"]).toBe(
+      captureContent
+        ? '[{"type":"function","name":"read","parameters":{"type":"object"}}]'
+        : undefined,
+    );
+    expect(attributes["http.request.header.x-request"]).toEqual(
+      captureContent ? ["one,two"] : undefined,
+    );
+    expect(attributes["http.response.header.set-cookie"]).toEqual(
+      captureContent ? ["first=1", "second=2"] : undefined,
+    );
+    expect(attributes["gen_ai.request.seed"]).toBeUndefined();
+  },
+);
+
+test("new request snapshots clear stale tools, output types and both header directions", async () => {
+  const h = setup();
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+  h.observer.updateLlm({
+    ...llm(),
+    input: undefined,
+    request: {
+      outputType: "json",
+      toolDefinitions: [{ type: "function", name: "old" }],
+      headers: { old: ["request"] },
+    },
+  });
+  h.observer.updateLlm({ ...llm(), input: undefined, responseHeaders: { old: ["response"] } });
+  h.observer.updateLlm({
+    ...llm(),
+    input: undefined,
+    request: { toolDefinitions: [], headers: {} },
+  });
+  h.observer.finishLlm({
+    ...llm(),
+    endedAt: 1500,
+    output: undefined,
+    error: { type: "APIError" },
+    responseHeaders: { "x-error": ["terminal"] },
+  });
+  await h.observer.flush();
+
+  const attributes = h.spans[0]!.attributes;
+  expect(attributes["gen_ai.output.type"]).toBeUndefined();
+  expect(attributes["gen_ai.tool.definitions"]).toBe("[]");
+  expect(attributes["http.request.header.old"]).toBeUndefined();
+  expect(attributes["http.response.header.old"]).toBeUndefined();
+  expect(attributes["http.response.header.x-error"]).toEqual(["terminal"]);
+});
+
 test("LLM failures omit successful usage, and run cleanup is scoped to its own calls", async () => {
   const h = setup();
   h.observer.startRun(start());

@@ -250,7 +250,7 @@ LLM 使用所属 `InteractionReference` 和 assistant message ID 定位，适配
 
 `step-finish` 提交正常结束，终点取该事件的观察时间；assistant 错误和会话错误提交失败。可恢复 overflow 结束失败的 LLM，但保留 run / interaction 等待恢复。idle、删除和关闭清理未结束 LLM；正常父操作不因子 LLM 失败而自动标错。实现层关闭顺序为 LLM、interaction、run；steer 只结束旧 interaction，既有和迟到的旧 LLM 继续使用原 parent。
 
-这些时间是请求准备或事件可见边界，不能声称是网络请求或响应流的精确边界；请求准备、step 事件的投递、快照处理和工具等待可能影响耗时。请求准备后、首个 step 前失败也结束对应 LLM span。AI SDK lifecycle 回调目前只补充正文，不改变 span 时间和用量来源，不使用 `assistant.time.created/completed` 或首个文本事件补造精确请求时间、TTFC 或 attempt 起点。
+这些时间是请求准备或事件可见边界，不能声称是网络请求或响应流的精确边界；请求准备、step 事件的投递、快照处理和工具等待可能影响耗时。请求准备后、首个 step 前失败也结束对应 LLM span。AI SDK lifecycle 回调补充正文、输出类型、工具定义和模型 headers，不改变 span 时间和用量来源，不使用 `assistant.time.created/completed` 或首个文本事件补造精确请求时间、TTFC 或 attempt 起点。
 
 同一 assistant 的重复 step / 重试保留一个逻辑 LLM span。新 step 清理前一 attempt 的文本快照，忽略前一 attempt 已知文本 part 的迟到更新；重复 step ID 不清空当前输出。`session.status.retry` 的 `next` 不作为开始证据；当前不能精确确认 attempt 起点，因此 `retry_count=0`、`retry_history=[]` 仅表示未确认重试开始，不代表没有重试。
 
@@ -258,7 +258,7 @@ LLM 使用所属 `InteractionReference` 和 assistant message ID 定位，适配
 
 `step-finish` 的归一化用量中，输入为 input + cache read + cache write，输出为 output + reasoning；同时保留 reasoning、cache read、cache write 分量和 cost。仅接受有限非负数，token 必须为安全整数；缺少某个求和分量时省略对应总量。不能用 assistant 创建时初始化的零用量冒充完成 usage。失败 LLM 不导出成功 usage / cost；成功零值正常保留。
 
-正文开启时，优先使用第 7.2 节的结构化消息；没有取得对应快照时，输入 fallback 为 owner 用户文本，输出 fallback 为当前调用可观察到的 assistant 文本。同一文本 part 更新替换、删除移除，已知空文本与未知输出区分。正文关闭时，适配层不保留或传递正文，实现层再次执行采集开关。当前仍不采集工具定义、HTTP headers 或真实响应 ID/model。自定义属性不能伪造这些未采集数据，也不能覆盖内建 GenAI 字段。
+正文开启时，优先使用第 7.2 节的结构化消息；没有取得对应快照时，输入 fallback 为 owner 用户文本，输出 fallback 为当前调用可观察到的 assistant 文本。同一文本 part 更新替换、删除移除，已知空文本与未知输出区分。`captureContent` 统一控制正文、LLM 工具定义和模型请求／响应 headers，适配层和实现层均执行开关；关闭时不解析、传递或导出这些内容。输出类型独立于该开关。当前不采集 seed 或真实响应 ID/model，自定义属性不能伪造未采集数据，也不能覆盖内建 GenAI 或 HTTP header 字段。
 
 `chat.headers` 在请求准备后调用契约的 `llmTraceHeaders`，把当前 LLM span 的 trace ID、span ID、采样标记和非空 traceState 作为 W3C headers 写入输出；此路径独立于正文采集和 AI SDK 回调。native LLM 同样准备这些字段，但当前 OpenCode native HTTP 层会另行注入并覆盖 traceparent，端到端关联尚未支持；native 自动回退到 AI SDK 时可正常传播。重复准备同一逻辑调用保留原 span 和起点；结束、关闭或无法唯一关联时不传播。顶层 trace 仍从空上下文创建，不恢复外部 trace 上下文配置。模型配置、其他插件及底层传输的同名 headers 冲突处理暂未覆盖。
 
@@ -266,13 +266,17 @@ LLM 使用所属 `InteractionReference` 和 assistant message ID 定位，适配
 
 已有 run 的 Trace Schema 和测试所约定的行为继续保持。新增其他观测对象时遵循相同边界，再扩展父对象引用和对应字段；具体文件数量根据实现复杂度决定，不增加空转发模块。
 
-### 7.2 LLM 结构化消息采集
+### 7.2 LLM 请求与结构化消息采集
 
 使用 AI SDK 6 的 `registerTelemetryIntegration`，当前依赖固定为 `ai@6.0.168`，对接 OpenCode 的 `streamText` 路径。生命周期回调独立于宿主是否开启 AI SDK 的 OTel 导出。`OPENCODE_EXPERIMENTAL_NATIVE_LLM` 开启时，原生运行路径绕过这些回调，因此跳过该采集模块，继续使用事件文本降级。
 
 `chat.headers` 在当前 session 内按 user message ID、provider、配置 model ID 和 agent，匹配唯一的未完成 assistant，并附加一次性关联标识。普通调用要求可解析 interaction，摘要调用要求可解析 compaction。AI SDK `onStart` 将标识绑定到此次调用的 metadata 对象，随后移除标识，避免发送给模型服务。后续回调同时校验 `functionId=session.llm`、metadata 对象身份和绑定的有效性。不能仅凭 session ID 归属消息；未匹配、匹配歧义、标题和缺少父节点的摘要调用均不采集。
 
-回调通过进程内单个分发器注册，各插件实例只接收自身已绑定的调用；释放实例时移除监听器、清理待关联记录，已释放绑定不再接受正文。关联标识属于适配层内部数据，不进入契约或 span；消息采集关闭时不添加标识，也不访问 AI SDK 正文。
+回调通过进程内单个分发器注册，各插件实例只接收自身已绑定的调用；释放实例时移除监听器、清理待关联记录，已释放绑定不再接受更新。关联标识属于适配层内部数据，不进入契约或 span；正文采集关闭时仍建立关联以观察显式输出类型，但不访问正文、工具定义和 headers 内容。标识仍在 provider 执行前移除。
+
+`onStepStart` 从显式 `output.responseFormat.type` 观察 `text` / `json`，未指定或未知类型省略，不从回答内容推测。开启 `captureContent` 时，从 `tools` 中按 `activeTools` 选择当前有效工具；函数工具的参数使用 AI SDK `asSchema` 转为 JSON Schema，携带名称和可选描述；provider 工具保留其 ID 和名称。异步格式或 Schema 解析不阻塞宿主回调，失败按字段降级并记录诊断；新 step、重新绑定、响应到达或关闭后丢弃迟到结果，不能因此延迟已观察响应的提交。
+
+同一开关开启时，请求 headers 来自 SDK step，响应 headers 来自 `onStepFinish.response.headers`；明确关联的 OpenCode API 错误可补充终止响应 headers。header 名转小写，值复制为 `string[]`，不按逗号拆分，不保留内部关联标识。不把这些 SDK 可见值称为完整线上请求 headers，也不把 collector 的 `otlpHeaders` 当作模型 headers。契约使用 SDK 无关的 `ModelRequest`、`ToolDefinition` 和 `ModelHeaders`，实现层负责 GenAI / HTTP attribute 编码。
 
 `onStepStart` 采集当前 step 的 `messages`，保留消息顺序、角色和支持的内容片段，包含实际传入 SDK 的历史上下文。单独提供的 `system` 作为系统指令；两处均无 system 时，才使用 provider options 中的 `instructions`。这反映 `prepareStep` 后的 SDK 消息视图，后续 provider middleware 和协议转换仍可能改变线上请求，不等同于原始 HTTP payload。
 
@@ -280,7 +284,7 @@ LLM 使用所属 `InteractionReference` 和 assistant message ID 定位，适配
 
 适配层将源消息转换为 `ModelInput`、`ModelMessage` 和 `ModelPart`。契约仅包含角色、文本、reasoning、工具调用及结果、媒体 URI 或 base64 数据；工具参数尽量解析为 JSON，无法解析的参数字符串保留原值。媒体不额外下载，未知片段省略，循环引用等无法表达的值不透传。实现层将这些对象映射为 GenAI 的 `text`、`reasoning`、`tool_call`、`tool_call_response`、`uri`、`blob` parts，再进行一次 JSON 序列化，分别写入 `gen_ai.input.messages`、`gen_ai.output.messages` 和 `gen_ai.system_instructions`。不导出 OpenInference 消息属性。
 
-`updateLlm` 使用完整快照替换语义：`input` 携带消息与可选系统指令，并清理上一请求的输出；`output` 替换当前输出。`undefined` 表示未提供，已知没有候选使用 `[]`，空文本候选保留空 text part。实现层接收更新时立即编码，避免后续对象修改改变已提交数据。新请求绑定使旧 generation 失效，旧回调不能覆盖重试后的消息。
+`updateLlm` 使用完整快照替换语义：`request` 替换输出类型、工具定义及请求 headers，并清理上一请求的输出与响应 headers；`input` 携带消息与可选系统指令，并清理上一请求的输出；`output` 和 `responseHeaders` 替换当前响应快照。`undefined` 表示未提供，已知没有候选或工具使用 `[]`，空文本候选保留空 text part。实现层接收更新时编码或复制内容，避免后续对象修改改变已提交数据。新请求绑定使旧 generation 失效，旧回调不能覆盖重试后的快照。
 
 SDK 回调先于 `step-start` 时，适配层暂存结构化快照，待源事件确认 LLM 后提交。成功的 `step-finish` 先于正在等待的 SDK 输出回调时，保留原结束观察时间，待正文回调提交后结束 span；idle、终止错误或关闭负责清理，不无限等待缺失的回调。已取得的结构化输入或输出分别优先于 `startLlm.input`、`finishLlm.output` 的文本降级数据，结束后的更新被忽略。该机制不创建额外 span。
 
