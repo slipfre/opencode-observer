@@ -46,22 +46,6 @@
       }
     },
     {
-      "files": ["src/adapter/trackers/run.ts"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": ["*", "!../../contract/**"],
-                "message": "Run tracking only depends on the contract. Source event dispatch and sibling coordination belong in coordinator.ts."
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
       "files": ["src/contract/**/*.ts"],
       "rules": {
         "no-restricted-imports": [

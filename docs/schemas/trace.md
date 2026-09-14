@@ -286,7 +286,7 @@ usage 公式适用于 OpenCode 已归一化的 token 数据；如果另取 provi
 
 转换和降级规则：
 
-- 当前实现从 AI SDK `onStepStart` 采集 SDK 可见的请求消息与独立 system，从 `onStepFinish.content` 采集当前 step 的生成内容；只在后者不可用时取 `response.messages` 的最后一个 assistant。输出不包含历史 step 或本地工具执行结果。采集通道和关联约束见 [架构实现 Spec](../spec.md#72-llm-结构化消息采集)。
+- 当前实现从 AI SDK `onStepStart` 采集 SDK 可见的请求消息与独立 system，从 `onStepFinish.content` 采集当前 step 的生成内容；只在后者不可用时取 `response.messages` 的最后一个 assistant。输出不包含历史 step 或本地工具执行结果。采集通道和关联约束见 [适配层设计 §3](../adapter.md#3-llm-关联与采集)。
 - OpenAI 风格的 `content` / `tool_calls` 要转换为 GenAI `parts`；不能只改外层 attribute key。工具调用的 `arguments` 尽量解析为结构化 JSON，并保持 call ID 与工具 span、工具结果消息一致。
 - 保留文本、tool call、tool response 等已采集片段的顺序；多模态内容按相应 part schema 处理。文本的类型由 `type=text` 表达，不再导出通用的 input/output MIME attributes。
 - reasoning 使用 `reasoning` part；媒体 URL 使用 `uri`，二进制和 data URI 使用 base64 `blob`。不下载媒体内容，不将未知片段或整个 SDK 对象作为正文透传。
@@ -331,7 +331,7 @@ HTTP header 示例是原生 attribute 值：`http.request.header.content-type=["
 
 请求 headers 反映 SDK 可见值，不补造 provider 或底层 HTTP 库稍后追加的 headers；响应 headers 不要求成功状态，但必须能关联到对应 LLM。内部关联标识 `x-opencode-observer-request` 不采集。模型 headers 与 `otlpHeaders` 配置的 collector 导出 headers 相互独立。
 
-这些字段使用当前 step 的快照；新请求清理旧工具定义、输出类型和响应 headers。异步输出格式与工具 Schema 解析不阻塞模型调用，响应已经到达、绑定失效或 span 结束后的解析结果忽略。不能取得 SDK 回调（例如 native 路径）时省略相应字段，不根据工具执行记录、回答文本或其他请求推测。
+这些字段使用当前 step 的快照；新请求清理旧工具定义、输出类型和响应 headers。不能取得 SDK 回调（例如 native 路径）时省略相应字段，不根据工具执行记录、回答文本或其他请求推测。异步解析、快照提交及迟到结果处理见 [适配层设计 §3.3](../adapter.md#33-数据转换与快照提交)。
 
 ### 8.4 Retry attributes
 
