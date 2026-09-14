@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, relative, resolve } from "node:path";
 
 test("runtime imports stay within each layer and its allowed dependencies", async () => {
@@ -75,4 +77,71 @@ test("runtime imports stay within each layer and its allowed dependencies", asyn
   ).flat();
 
   expect(violations).toEqual([]);
+});
+
+test("lint applies the same SDK and telemetry import boundaries to every tracker", async () => {
+  await using workspace = {
+    directory: await mkdtemp(resolve(tmpdir(), "opencode-observer-lint-")),
+    async [Symbol.asyncDispose]() {
+      await rm(this.directory, { recursive: true, force: true });
+    },
+  };
+  const files = ["run", "interaction", "llm", "tool", "compaction", "permission"].map((name) =>
+    resolve(workspace.directory, "src/adapter/trackers", `${name}.ts`),
+  );
+  await Bun.write(
+    resolve(workspace.directory, ".oxlintrc.json"),
+    Bun.file(resolve(import.meta.dir, "../.oxlintrc.json")),
+  );
+  await Promise.all(
+    files.map((file) =>
+      Bun.write(
+        file,
+        `import type { UserMessage } from "@opencode-ai/sdk";
+import { nonNegativeNumber } from "../shared/number.js";
+export type { Observer } from "../../contract/observer.js";
+export { parseModelUsage } from "../model/usage.js";
+export function observedTime(input: UserMessage) {
+  return nonNegativeNumber(input.time.created);
+}
+`,
+      ),
+    ),
+  );
+  const command = [
+    resolve(
+      import.meta.dir,
+      "../node_modules/.bin",
+      process.platform === "win32" ? "oxlint.exe" : "oxlint",
+    ),
+    "--deny-warnings",
+    "--format=json",
+    ...files,
+  ];
+
+  const allowed = Bun.spawnSync(command, {
+    cwd: workspace.directory,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(allowed.exitCode).toBe(0);
+  expect(JSON.parse(allowed.stdout.toString()).diagnostics).toEqual([]);
+
+  await Promise.all(
+    files.map((file) =>
+      Bun.write(file, 'export { createTelemetry } from "../../telemetry/factory.js";\n'),
+    ),
+  );
+
+  const forbidden = Bun.spawnSync(command, {
+    cwd: workspace.directory,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(forbidden.exitCode).toBe(1);
+  expect(JSON.parse(forbidden.stdout.toString()).diagnostics).toEqual(
+    files.map(() => expect.objectContaining({ code: "eslint(no-restricted-imports)" })),
+  );
 });

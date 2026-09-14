@@ -98,7 +98,8 @@ E2E 需要提前准备已安装依赖的 OpenCode 源码，并通过 `OPENCODE_E
 项目采用 OpenCode 适配层、观测契约层和遥测实现层三层结构，通过契约连接行为识别与 trace 导出。
 
 - [AGENTS.md](AGENTS.md)：项目目标、主要目录、构建测试方法和开发约束。
-- [架构实现 Spec](docs/spec.md)：模块职责、依赖方向、事件处理和内部实现。
+- [总体架构](docs/architecture.md)：模块职责、依赖方向、观测契约和运行约束。
+- [适配层设计](docs/adapter.md)：行为识别、模型采集、跨对象协调及乱序和清理规则。
 - [Trace Schema](docs/schemas/trace.md)：trace 拓扑、字段语义、生命周期和异常处理规则。
 
 ## 协议
