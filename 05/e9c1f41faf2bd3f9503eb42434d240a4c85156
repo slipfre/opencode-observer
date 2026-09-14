@@ -1,0 +1,91 @@
+src/adapter/opencode/coordinator.ts
+  s_4b46456fa11a8b::t_408e1a0e995fa1 10,259-262,267-268
+  s_4b46456fa11a8b::t_b6cc25648efd37 263-266
+src/telemetry/spans/llm.ts
+  s_4b46456fa11a8b::t_0597b28a5021ba 15,36-39,60,80-87,91,138-148,152,159-163
+  s_4b46456fa11a8b::t_b6cc25648efd37 88-90,153-158
+  s_4b46456fa11a8b::t_cd0e9dc2cfa9bb 164
+docs/spec.md
+  s_4b46456fa11a8b::t_19f49a72fdc5a8 275-277
+  s_4b46456fa11a8b::t_e9b8f7cd265bdc 278-279
+  s_8c3f784b7068de::t_6aa6079d1ac9ac 253,261,269,287
+docs/schemas/trace.md
+  s_4b46456fa11a8b::t_b6cc25648efd37 302-308,310-312
+  s_4b46456fa11a8b::t_b081de50ca86cf 3,462-477
+  s_4b46456fa11a8b::t_19f49a72fdc5a8 300-301,309,314,332-334
+  s_4b46456fa11a8b::t_0efb6053128b42 313,335
+src/contract/observer.ts
+  s_4b46456fa11a8b::t_408e1a0e995fa1 109
+  s_4b46456fa11a8b::t_282c9ba98ec207 71-85,123-125
+tests/ai-sdk.test.ts
+  s_4b46456fa11a8b::t_b754df81602dcc 342,357-358,362,364
+  s_4b46456fa11a8b::t_b6cc25648efd37 345-348,351-354,372-375,408-412,416-424,430-437,598-618,620-622,624-649,651-654,656-658,661-700,702-712,715-716
+  s_4b46456fa11a8b::t_26e50c09adb873 343-344,349-350,355-356,359-361,363,365-371,376-392
+  s_4b46456fa11a8b::t_619de23caad240 3,393,398,406-407,413-415,425,429,438
+  s_4b46456fa11a8b::t_9614251cfc23ea 713-714
+e2e/run.e2e.test.ts
+  s_4b46456fa11a8b::t_c6d6f7d37527de 62-64,68,72-74,87,92,152
+  s_4b46456fa11a8b::t_b6cc25648efd37 65-67,69-71,75-86,88-91,154-159,214-217,223-228
+e2e/support/fake-llm.ts
+  s_4b46456fa11a8b::t_b6cc25648efd37 60-63,95-100
+src/adapter/model/settings.ts
+  s_4b46456fa11a8b::t_282c9ba98ec207 1-27,31-51
+  s_4b46456fa11a8b::t_b6cc25648efd37 28-30
+e2e/support/fixture.ts
+  s_4b46456fa11a8b::t_c6d6f7d37527de 99
+src/adapter/trackers/llm.ts
+  s_4b46456fa11a8b::t_408e1a0e995fa1 6,15,136-140,147-149
+  s_4b46456fa11a8b::t_b6cc25648efd37 285-287
+  s_4b46456fa11a8b::t_282c9ba98ec207 35,227,234
+src/adapter/opencode/hooks.ts
+  s_4b46456fa11a8b::t_282c9ba98ec207 95,109
+tests/model-settings.test.ts
+  s_4b46456fa11a8b::t_619de23caad240 1-12,19-32,43-45,49-50,57-67,76,80-109
+  s_4b46456fa11a8b::t_b6cc25648efd37 13-18,33-42,46-48,51-56,68-75,77-79
+AGENTS.md
+  s_4b46456fa11a8b::t_19f49a72fdc5a8 10
+README.md
+  s_4b46456fa11a8b::t_19f49a72fdc5a8 75-77
+  s_4b46456fa11a8b::t_b6cc25648efd37 38
+src/adapter/model/ai-sdk.ts
+  s_4b46456fa11a8b::t_c85165f8105f2c 78
+  s_4b46456fa11a8b::t_282c9ba98ec207 8,12-13,19-20,35,39-40,42,51,75-77,79-80,82-83,87,91-92,94-97,105,110
+  s_4b46456fa11a8b::t_b754df81602dcc 41,68,81,84-86,93,104,111
+  s_4b46456fa11a8b::t_b6cc25648efd37 88-90,106-109
+tests/telemetry.test.ts
+  s_4b46456fa11a8b::t_454b2642efa0c1 829,839,845,862-867,890-899
+  s_4b46456fa11a8b::t_b6cc25648efd37 816-828,830-838,840-844,846-861,868-876,878-889
+  s_4b46456fa11a8b::t_26e50c09adb873 877
+src/adapter/model/headers.ts
+  s_4b46456fa11a8b::t_408e1a0e995fa1 30-41
+  s_4b46456fa11a8b::t_282c9ba98ec207 1-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "05e9c1f41faf2bd3f9503eb42434d240a4c85156",
+  "prompts": {},
+  "humans": {
+    "h_076b07aabc3f4d": {
+      "author": "happy <sxh139726845@163.com>"
+    }
+  },
+  "sessions": {
+    "s_4b46456fa11a8b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09d90-ee8e-7233-ab9c-754fe21f8dda",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    },
+    "s_8c3f784b7068de": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a089fc-33cb-7260-896c-00f2a748d986",
+        "model": "unknown"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
