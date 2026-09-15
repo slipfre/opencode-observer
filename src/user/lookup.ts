@@ -45,7 +45,6 @@ async function queryUserByToken(token: string, options: UserLookupOptions) {
 
   if (!response.ok) {
     await response.body?.cancel();
-
     return;
   }
 
@@ -62,6 +61,5 @@ async function queryUserByToken(token: string, options: UserLookupOptions) {
   }
 
   const userID = typeof result.ssicNo === "string" ? result.ssicNo.trim() : undefined;
-
   return userID && userID !== "unknown" ? { id: userID } : undefined;
 }

@@ -90,7 +90,6 @@ export function createRunSpans(
           parent,
         ),
       });
-
       return true;
     },
     update(input: RunUpdate) {
@@ -104,7 +103,6 @@ export function createRunSpans(
     },
     context(reference: RunReference) {
       const run = runs.get(JSON.stringify([reference.sessionID, reference.id]));
-
       return run ? trace.setSpan(options.rootContext, run.span) : undefined;
     },
     close(endedAt: number) {

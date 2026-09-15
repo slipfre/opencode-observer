@@ -5,7 +5,6 @@ import type { ExportedSpan } from "./otlp-receiver.js";
 export function oneSpan(spans: ExportedSpan[], name: string) {
   const matches = spans.filter((span) => span.name === name);
   expect(matches).toHaveLength(1);
-
   return matches[0]!;
 }
 
@@ -24,7 +23,6 @@ export function expectError(span: ExportedSpan, type: string) {
 export function messages(span: ExportedSpan, direction: "input" | "output") {
   const value = span.attributes[`gen_ai.${direction}.messages`];
   expect(value).toBeString();
-
   return JSON.parse(String(value)) as unknown;
 }
 
@@ -67,7 +65,6 @@ export function requireSpans(
     if (hit.title || count === 0) {
       expect(hit.headers.has("traceparent")).toBe(false);
       expect(hit.headers.has("tracestate")).toBe(false);
-
       return;
     }
 

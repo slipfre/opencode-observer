@@ -122,7 +122,6 @@ export function createLlmSpans(
         headers,
         defaultTextMapSetter,
       );
-
       return headers.traceparent
         ? {
             traceparent: headers.traceparent,

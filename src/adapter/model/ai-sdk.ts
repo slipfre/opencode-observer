@@ -47,7 +47,6 @@ export function createModelMessageCapture(options: {
     }
 
     const binding = event.metadata ? bindings.get(event.metadata) : undefined;
-
     return binding?.capture.active() ? binding : undefined;
   }
 

@@ -44,6 +44,5 @@ function readInteger(
   }
 
   const parsed = Number(value);
-
   return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
 }

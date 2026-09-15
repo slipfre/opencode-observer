@@ -39,7 +39,6 @@ function setup(
     coordinator: createCoordinator({ observer, captureContent: true, now: () => 2000, ...options }),
     async spans() {
       await provider.forceFlush();
-
       return exporter
         .getFinishedSpans()
         .filter((span) => span.attributes["gen_ai.operation.name"] === "invoke_workflow");

@@ -114,7 +114,7 @@ Coverage includes trace structure, content and usage, disabled telemetry/content
 - Do not extract single-use helpers preemptively. Inline the logic at the call site unless the helper is reused, hides a genuinely complex boundary, or has a clear independent name that improves the caller.
 - Avoid `try`/`catch` where possible
 - Avoid using the `any` type
-- Separate semantic blocks with exactly one blank line: setup, validation, processing, cleanup. Keep closely related declarations, assignments, and assertions together; do not add a blank line after every statement. In tests, separate setup, actions, and assertions, including distinct lifecycle phases.
+- Group closely related statements together and separate distinct semantic phases with exactly one blank line. A declaration, assignment, assertion, or `return` does not create a separate phase by itself. Follow the Blank Lines rules below.
 - Use Bun APIs when possible, like `Bun.file()`
 - Rely on type inference when possible; avoid explicit type annotations or interfaces unless necessary for exports or clarity
 - Prefer functional array methods (flatMap, filter, map) over for loops; use type guards on filter to maintain type inference downstream
@@ -128,6 +128,44 @@ const journal = await Bun.file(path.join(dir, "journal.json")).json();
 // Bad
 const journalPath = path.join(dir, "journal.json");
 const journal = await Bun.file(journalPath).json();
+```
+
+### Blank Lines
+
+These rules apply to all source code, unit tests, E2E tests, and their helpers.
+
+- Keep a short branch's operation and its following `return` together, without a blank line between them. This includes `if` blocks, `switch` cases, and callbacks.
+- Keep a lookup, calculation, or assignment together with the `return` that immediately uses its result when they form one logical step. Do not insert a blank line merely because the next statement is `return`.
+- Judge grouping by meaning, not physical line count. A call or expression spanning several lines can still belong to the same group as the following `return`.
+- Use exactly one blank line between distinct phases, such as validation and the main processing path, separate event cases, or a longer preparation sequence and construction of a factory's returned object. In tests, retain the separation between setup, actions, assertions, and distinct lifecycle phases.
+
+```ts
+// Good: performing the operation and exiting form one branch.
+if (partID !== undefined) {
+  calls.get(messageID)?.texts.delete(partID);
+  return;
+}
+
+// Bad: the blank line unnecessarily splits a short branch.
+if (partID !== undefined) {
+  calls.get(messageID)?.texts.delete(partID);
+
+  return;
+}
+
+// Good: looking up a value and returning the derived result form one step.
+function at(time: number) {
+  const owner = inputs.findLast((input) => input.created <= time);
+  return owner ? resolve(owner.id) : undefined;
+}
+
+// Good: validation and processing are separate phases.
+if (!session) {
+  return;
+}
+
+session.interactions.message(info);
+session.tools.refresh();
 ```
 
 ### Destructuring

@@ -84,7 +84,6 @@ export function createCompactionSpans(
     context(reference: CompactionReference) {
       const key = operationKey(reference);
       const compaction = compactions.get(key);
-
       return compaction
         ? trace.setSpan(options.rootContext, compaction.span)
         : contexts.get(key)?.context;

@@ -4,6 +4,5 @@ export function nonNegativeNumber(value: unknown) {
 
 export function nonNegativeInteger(value: unknown) {
   const number = nonNegativeNumber(value);
-
   return number !== undefined && Number.isSafeInteger(number) ? number : undefined;
 }

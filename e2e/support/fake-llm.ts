@@ -35,7 +35,6 @@ export function startFakeLlm(replies: LlmReply[]) {
     async fetch(request) {
       if (request.method !== "POST" || new URL(request.url).pathname !== "/v1/chat/completions") {
         errors.push(`Unexpected model route: ${request.method} ${request.url}`);
-
         return new Response("Not found", { status: 404 });
       }
 
@@ -48,7 +47,6 @@ export function startFakeLlm(replies: LlmReply[]) {
 
       if (!reply) {
         errors.push("Model reply queue exhausted");
-
         return Response.json({ error: { message: "No scripted response" } }, { status: 400 });
       }
 

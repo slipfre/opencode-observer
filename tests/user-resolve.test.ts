@@ -40,7 +40,6 @@ test("resolver passes identity parameters and waits for the lookup result", asyn
     OPENCODE_USER_ID_TIMEOUT: "100",
   }).then((user) => {
     completed();
-
     return user;
   });
   await Bun.sleep(0);

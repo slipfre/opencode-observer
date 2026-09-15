@@ -31,7 +31,6 @@ export function jsonValue(value: unknown, parents = new WeakSet<object>()): Json
     : Object.fromEntries(
         Object.entries(value).flatMap(([key, item]) => {
           const cleaned = jsonValue(item, parents);
-
           return cleaned === undefined ? [] : [[key, cleaned]];
         }),
       );
@@ -42,7 +41,6 @@ export function jsonValue(value: unknown, parents = new WeakSet<object>()): Json
 
 export function jsonObject(value: unknown) {
   const result = jsonValue(value);
-
   return result !== null && typeof result === "object" && !Array.isArray(result)
     ? result
     : undefined;

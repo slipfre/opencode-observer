@@ -75,7 +75,6 @@ export function createCoordinator(options: CoordinatorOptions) {
         .forEach((part) => activeSession?.compactions.part(part, now(), activeSession.trigger));
       activeSession?.llms.message(info, now());
       activeSession?.tools.refresh();
-
       return;
     }
 
@@ -193,184 +192,183 @@ export function createCoordinator(options: CoordinatorOptions) {
       return;
     }
 
-    if (event.type === "session.created" || event.type === "session.updated") {
-      registry.observe(event.properties.info);
+    switch (event.type) {
+      case "session.created":
+      case "session.updated": {
+        registry.observe(event.properties.info);
+        return;
+      }
 
-      return;
-    }
+      case "permission.asked": {
+        sessions.get(event.properties.sessionID)?.permissions.asked(event.properties, time);
+        return;
+      }
 
-    if (event.type === "permission.asked") {
-      sessions.get(event.properties.sessionID)?.permissions.asked(event.properties, time);
+      case "permission.replied": {
+        const session = sessions.get(event.properties.sessionID);
+        const requestID =
+          "requestID" in event.properties
+            ? event.properties.requestID
+            : event.properties.permissionID;
+        const reply =
+          "reply" in event.properties ? event.properties.reply : event.properties.response;
 
-      return;
-    }
+        if (session && (reply === "once" || reply === "always" || reply === "reject")) {
+          const rejected = session.permissions.replied(requestID, reply, time);
 
-    if (event.type === "permission.replied") {
-      const session = sessions.get(event.properties.sessionID);
-      const requestID =
-        "requestID" in event.properties
-          ? event.properties.requestID
-          : event.properties.permissionID;
-      const reply =
-        "reply" in event.properties ? event.properties.reply : event.properties.response;
+          if (rejected) {
+            session.tools.reject(rejected);
+          }
+        }
+        return;
+      }
 
-      if (session && (reply === "once" || reply === "always" || reply === "reject")) {
-        const rejected = session.permissions.replied(requestID, reply, time);
+      case "session.status":
+      case "session.idle": {
+        if (event.type === "session.status" && event.properties.status.type !== "idle") {
+          return;
+        }
 
-        if (rejected) {
-          session.tools.reject(rejected);
+        endSession(
+          event.properties.sessionID,
+          time,
+          sessions.get(event.properties.sessionID)?.overflow,
+        );
+        return;
+      }
+
+      case "session.error": {
+        const id = event.properties.sessionID;
+        const session = id ? sessions.get(id) : undefined;
+
+        if (!id || !session) {
+          return;
+        }
+
+        const error = errorDetails(event.properties.error);
+        const activeRequest = session.llms.activeRequest();
+
+        if (error.type === "ContextOverflowError" && activeRequest) {
+          session.trigger = {
+            messageID: activeRequest.messageID,
+            owner: session.interactions.resolve(activeRequest.ownerMessageID),
+          };
+        }
+
+        session.llms.fail(
+          time,
+          error,
+          options.captureContent && activeRequest
+            ? {
+                messageID: activeRequest.messageID,
+                headers: parseErrorResponseHeaders(event.properties.error),
+              }
+            : undefined,
+        );
+
+        if (
+          error.type === "ContextOverflowError" &&
+          !session.compactions.active() &&
+          !session.overflow
+        ) {
+          session.overflow = error;
+          return;
+        }
+
+        endSession(id, time, error);
+        return;
+      }
+
+      case "session.compacted": {
+        const session = sessions.get(event.properties.sessionID);
+
+        if (session?.compactions.completed(time)) {
+          delete session.overflow;
+          delete session.trigger;
+        }
+        return;
+      }
+
+      case "session.deleted": {
+        endSession(event.properties.info.id, time, {
+          type: "_OTHER",
+          message: "session deleted before run completed",
+        });
+        registry.remove(event.properties.info.id);
+        return;
+      }
+
+      case "message.updated": {
+        const info = event.properties.info;
+        const session = sessions.get(info.sessionID);
+
+        if (!session) {
+          return;
+        }
+
+        session.interactions.message(info);
+
+        if (
+          info.role === "assistant" &&
+          !info.summary &&
+          info.error &&
+          errorDetails(info.error).type === "ContextOverflowError"
+        ) {
+          session.trigger = {
+            messageID: info.id,
+            owner: session.interactions.resolve(info.parentID),
+          };
+        }
+
+        session.llms.message(info, time);
+        session.tools.refresh();
+        const error = session.compactions.message(info, time);
+        session.llms.refresh();
+
+        if (error) {
+          endSession(info.sessionID, time, error);
+        }
+        return;
+      }
+
+      case "message.part.updated": {
+        const part = event.properties.part;
+        const session = sessions.get(part.sessionID);
+
+        if (!session) {
+          return;
+        }
+
+        switch (part.type) {
+          case "compaction": {
+            session.compactions.part(part, time, session.trigger);
+            session.llms.refresh();
+            return;
+          }
+
+          case "tool": {
+            session.tools.part(part, time);
+            return;
+          }
+
+          default: {
+            session.interactions.part(part);
+            session.llms.part(part, time);
+            return;
+          }
         }
       }
 
-      return;
-    }
-
-    if (
-      (event.type === "session.status" && event.properties.status.type === "idle") ||
-      event.type === "session.idle"
-    ) {
-      endSession(
-        event.properties.sessionID,
-        time,
-        sessions.get(event.properties.sessionID)?.overflow,
-      );
-
-      return;
-    }
-
-    if (event.type === "session.error") {
-      const id = event.properties.sessionID;
-      const session = id ? sessions.get(id) : undefined;
-
-      if (!id || !session) {
+      case "message.part.removed":
+      case "message.removed": {
+        const session = sessions.get(event.properties.sessionID);
+        const partID = "partID" in event.properties ? event.properties.partID : undefined;
+        session?.llms.remove(event.properties.messageID, time, partID);
+        session?.tools.remove(event.properties.messageID, time, partID);
+        session?.compactions.remove(event.properties.messageID, time, partID);
+        session?.interactions.remove(event.properties.messageID, partID);
         return;
       }
-
-      const error = errorDetails(event.properties.error);
-      const activeRequest = session.llms.activeRequest();
-
-      if (error.type === "ContextOverflowError" && activeRequest) {
-        session.trigger = {
-          messageID: activeRequest.messageID,
-          owner: session.interactions.resolve(activeRequest.ownerMessageID),
-        };
-      }
-
-      session.llms.fail(
-        time,
-        error,
-        options.captureContent && activeRequest
-          ? {
-              messageID: activeRequest.messageID,
-              headers: parseErrorResponseHeaders(event.properties.error),
-            }
-          : undefined,
-      );
-
-      if (
-        error.type === "ContextOverflowError" &&
-        !session.compactions.active() &&
-        !session.overflow
-      ) {
-        session.overflow = error;
-
-        return;
-      }
-
-      endSession(id, time, error);
-
-      return;
-    }
-
-    if (event.type === "session.compacted") {
-      const session = sessions.get(event.properties.sessionID);
-
-      if (session?.compactions.completed(time)) {
-        delete session.overflow;
-        delete session.trigger;
-      }
-
-      return;
-    }
-
-    if (event.type === "session.deleted") {
-      endSession(event.properties.info.id, time, {
-        type: "_OTHER",
-        message: "session deleted before run completed",
-      });
-      registry.remove(event.properties.info.id);
-
-      return;
-    }
-
-    if (event.type === "message.updated") {
-      const info = event.properties.info;
-      const session = sessions.get(info.sessionID);
-
-      if (!session) {
-        return;
-      }
-
-      session.interactions.message(info);
-
-      if (
-        info.role === "assistant" &&
-        !info.summary &&
-        info.error &&
-        errorDetails(info.error).type === "ContextOverflowError"
-      ) {
-        session.trigger = {
-          messageID: info.id,
-          owner: session.interactions.resolve(info.parentID),
-        };
-      }
-
-      session.llms.message(info, time);
-      session.tools.refresh();
-      const error = session.compactions.message(info, time);
-      session.llms.refresh();
-
-      if (error) {
-        endSession(info.sessionID, time, error);
-      }
-
-      return;
-    }
-
-    if (event.type === "message.part.updated") {
-      const part = event.properties.part;
-      const session = sessions.get(part.sessionID);
-
-      if (!session) {
-        return;
-      }
-
-      if (part.type === "compaction") {
-        session.compactions.part(part, time, session.trigger);
-        session.llms.refresh();
-
-        return;
-      }
-
-      if (part.type === "tool") {
-        session.tools.part(part, time);
-
-        return;
-      }
-
-      session.interactions.part(part);
-      session.llms.part(part, time);
-
-      return;
-    }
-
-    if (event.type === "message.part.removed" || event.type === "message.removed") {
-      const session = sessions.get(event.properties.sessionID);
-      const partID = "partID" in event.properties ? event.properties.partID : undefined;
-      session?.llms.remove(event.properties.messageID, time, partID);
-      session?.tools.remove(event.properties.messageID, time, partID);
-      session?.compactions.remove(event.properties.messageID, time, partID);
-      session?.interactions.remove(event.properties.messageID, partID);
     }
   }
 

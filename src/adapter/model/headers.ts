@@ -34,7 +34,6 @@ export function parseErrorResponseHeaders(error: unknown) {
   }
 
   const data = error.data;
-
   return data && typeof data === "object" && "responseHeaders" in data
     ? parseModelHeaders(data.responseHeaders)
     : undefined;

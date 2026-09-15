@@ -91,7 +91,6 @@ export function createInteractionSpans(
     context(reference: InteractionReference) {
       const key = JSON.stringify([reference.run.sessionID, reference.run.id, reference.id]);
       const interaction = interactions.get(key);
-
       return interaction
         ? trace.setSpan(options.rootContext, interaction.span)
         : contexts.get(key)?.context;

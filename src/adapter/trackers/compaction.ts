@@ -118,7 +118,6 @@ export function createCompactionTracker(options: {
       if (info.role === "user") {
         users.set(info.id, info.time.created);
         records.forEach(record);
-
         return;
       }
 
@@ -131,7 +130,6 @@ export function createCompactionTracker(options: {
       if (info.error && state.active === info.parentID) {
         const error = errorDetails(info.error);
         finish(observedAt, error);
-
         return error;
       }
 
@@ -143,7 +141,6 @@ export function createCompactionTracker(options: {
     },
     resolve(id: string): InteractionOwner | undefined {
       const compaction = records.get(id);
-
       return compaction?.reference && compaction.owner
         ? { ...compaction.owner, input: undefined }
         : undefined;

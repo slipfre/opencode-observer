@@ -82,7 +82,6 @@ test("tool, permission and compaction with summary LLM export through plugin eve
       }
 
       payloads.push((await request.json()) as ExportPayload);
-
       return Response.json({});
     },
   });
@@ -323,7 +322,6 @@ test("AI SDK history and generated tool calls reach OTLP through the plugin", as
       if (new URL(request.url).pathname === "/v1/traces") {
         payloads.push((await request.json()) as ExportPayload);
       }
-
       return Response.json({});
     },
   });
@@ -529,7 +527,6 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
       if (path === "/v1/traces") {
         headers.push(request.headers.get("x-test") ?? "");
         payloads.push((await request.json()) as ExportPayload);
-
         return Response.json({});
       }
 
@@ -745,7 +742,6 @@ test("a slow collector does not block chat hooks and dispose waits for export", 
         payloads.push((await request.json()) as ExportPayload);
         exporting.resolve();
         await release.promise;
-
         return Response.json({});
       }
 
@@ -844,7 +840,6 @@ test.each([
     port: 0,
     async fetch(request) {
       payloads.push((await request.json()) as ExportPayload);
-
       return Response.json({});
     },
   });
@@ -908,7 +903,6 @@ test("disabled plugin installs no hooks, listeners, or network requests", async 
     port: 0,
     fetch(request) {
       requests.push(request.url);
-
       return Response.json(null);
     },
   });
@@ -930,7 +924,6 @@ test.each(["options", "environment"])(
       port: 0,
       async fetch(request) {
         payloads.push((await request.json()) as ExportPayload);
-
         return Response.json({});
       },
     });

@@ -34,7 +34,6 @@ function setup(
 
       if (exporting) {
         exporting(batch, callback);
-
         return;
       }
 

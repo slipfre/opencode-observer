@@ -111,7 +111,6 @@ export function createOpenCodeAdapter(options: {
       }
 
       state.messageCaptureSetup ??= installModelMessageCapture();
-
       return state.messageCaptureSetup;
     },
     close() {

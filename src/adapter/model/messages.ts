@@ -40,7 +40,6 @@ export function parseModelOutput(
       .filter((part) => part.type !== "tool-result" && part.type !== "tool-error")
       .map(parseModelPart)
       .filter((part) => part !== undefined);
-
     return parts.length > 0
       ? [{ role: "assistant", parts }]
       : event.content.length === 0
@@ -55,7 +54,6 @@ export function parseModelOutput(
   const assistant = parseModelMessages(event.response.messages).findLast(
     (message) => message.role === "assistant",
   );
-
   return assistant ? [assistant] : [];
 }
 
@@ -78,7 +76,6 @@ function parseModelMessages(values: unknown): ModelMessage[] {
     }
 
     const parts = value.content.map(parseModelPart).filter((part) => part !== undefined);
-
     return parts.length > 0 || value.content.length === 0 ? [{ role: value.role, parts }] : [];
   });
 }

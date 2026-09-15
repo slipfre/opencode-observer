@@ -54,7 +54,6 @@ export const ObserverPlugin: Plugin = async (input, options) => {
   function shutdown() {
     process.off("beforeExit", beforeExit);
     adapter.close();
-
     return observer.shutdown().catch(log);
   }
 

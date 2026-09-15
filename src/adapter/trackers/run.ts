@@ -43,7 +43,6 @@ export function createRunTracker(options: RunOptions) {
       const text = options.captureContent ? input.text : undefined;
       seen.add(key);
       options.observer.updateRun({ ...reference, input: { id: input.id, text } });
-
       return { reference, text, userID };
     },
     finish(input: RunFinish) {

@@ -46,7 +46,6 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
     directory: "/test",
     log(error) {
       errors.push(error);
-
       return log?.(error);
     },
     onDispose: observer.shutdown,

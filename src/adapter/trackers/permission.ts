@@ -78,7 +78,6 @@ export function createPermissionTracker(options: {
       }
 
       finish({ ...reference, reply, endedAt: observedAt });
-
       return reply === "reject" ? reference.tool : undefined;
     },
     closeTool(tool: ToolReference, observedAt: number, error?: ObservationError) {

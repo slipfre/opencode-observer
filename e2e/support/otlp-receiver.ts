@@ -57,7 +57,6 @@ export function startOtlpReceiver() {
     async fetch(request) {
       if (request.method !== "POST" || new URL(request.url).pathname !== "/v1/traces") {
         errors.push(`Unexpected OTLP route: ${request.method} ${request.url}`);
-
         return new Response("Not found", { status: 404 });
       }
 
@@ -71,11 +70,9 @@ export function startOtlpReceiver() {
         }
 
         payloads.push(payload);
-
         return Response.json({});
       } catch (error) {
         errors.push(String(error));
-
         return Response.json({}, { status: 400 });
       }
     },

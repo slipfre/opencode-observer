@@ -42,7 +42,6 @@ export function createInteractionTracker(options: {
 
   function resolve(userMessageID: string): InteractionOwner | undefined {
     const owner = inputs.find((input) => input.id === owners.get(userMessageID));
-
     return owner
       ? {
           ...options.identity?.(),
@@ -59,13 +58,11 @@ export function createInteractionTracker(options: {
     resolve,
     at(time: number) {
       const owner = inputs.findLast((input) => input.created <= time);
-
       return owner ? resolve(owner.id) : undefined;
     },
     resolveAssistant(messageID: string) {
       const info = assistants.get(messageID)?.info;
       const owner = info ? resolve(info.parentID) : undefined;
-
       return owner && info
         ? {
             ...owner,
@@ -107,7 +104,6 @@ export function createInteractionTracker(options: {
     message(info: UserMessage | AssistantMessage) {
       if (info.role === "user") {
         continuation(info);
-
         return;
       }
 
@@ -134,7 +130,6 @@ export function createInteractionTracker(options: {
     remove(messageID: string, partID?: string) {
       if (partID !== undefined) {
         assistants.get(messageID)?.texts.delete(partID);
-
         return;
       }
 
@@ -161,7 +156,6 @@ export function createInteractionTracker(options: {
           status: "failed",
           error: error ?? errorDetails(assistant?.info?.error),
         });
-
         return;
       }
 
@@ -173,7 +167,6 @@ export function createInteractionTracker(options: {
           status: "failed",
           error: { type: "_OTHER", message: "session ended before interaction completed" },
         });
-
         return;
       }
 
@@ -188,7 +181,6 @@ export function createInteractionTracker(options: {
         status: "completed",
         output,
       });
-
       return output;
     },
   };

@@ -246,7 +246,6 @@ export function createObserver(options: ObserverOptions): Observer {
       const flushing = state.flushing.then(() => options.provider.forceFlush());
       // Keep the queue usable after a failure; the returned promise still rejects.
       state.flushing = flushing.catch(() => undefined);
-
       return flushing;
     },
     shutdown() {

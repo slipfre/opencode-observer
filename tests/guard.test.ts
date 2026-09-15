@@ -7,7 +7,6 @@ test("guard processes source events immediately and does not wait for diagnostic
   const events: string[] = [];
   const log = mock(() => {
     events.push("log");
-
     return logging.promise;
   });
   const guard = createGuard(log);

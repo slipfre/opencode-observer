@@ -82,7 +82,6 @@ export function createToolSpans(
     },
     context(reference: ToolReference, taskOnly = false) {
       const tool = tools.get(operationKey(reference));
-
       return tool && (!taskOnly || tool.name === "task")
         ? trace.setSpan(options.rootContext, tool.span)
         : undefined;

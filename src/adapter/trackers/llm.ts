@@ -129,7 +129,6 @@ export function createLlmTracker(options: {
         call.info.completed === undefined &&
         resolveParent(call.info),
     );
-
     return candidates.length === 1 ? candidates[0] : undefined;
   }
 
@@ -169,7 +168,6 @@ export function createLlmTracker(options: {
         ([_id, call]) =>
           call.info && !call.info.summary && call.startedAt !== undefined && !call.result,
       );
-
       return activeCalls.length === 1 && activeCalls[0]?.[1].info
         ? {
             messageID: activeCalls[0][0],
@@ -204,7 +202,6 @@ export function createLlmTracker(options: {
       const call = candidate[1];
       call.startedAt ??= observedAt;
       record(candidate[0]);
-
       return call.reference ? options.observer.llmTraceHeaders(call.reference) : undefined;
     },
     bind(input: LlmRequest[0]): ModelCapture | undefined {
@@ -250,7 +247,6 @@ export function createLlmTracker(options: {
     message(info: UserMessage | AssistantMessage, observedAt: number) {
       if (info.role === "user") {
         calls.forEach((_call, id) => record(id));
-
         return;
       }
 
@@ -261,7 +257,6 @@ export function createLlmTracker(options: {
       if (info.summary && closedCompactions.has(info.parentID)) {
         calls.delete(info.id);
         finished.add(info.id);
-
         return;
       }
 
@@ -336,7 +331,6 @@ export function createLlmTracker(options: {
         if (call.startedAt === undefined) {
           calls.delete(part.messageID);
           finished.add(part.messageID);
-
           return;
         }
 
@@ -356,7 +350,6 @@ export function createLlmTracker(options: {
     remove(messageID: string, observedAt: number, partID?: string) {
       if (partID !== undefined) {
         calls.get(messageID)?.texts.delete(partID);
-
         return;
       }
 

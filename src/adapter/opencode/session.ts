@@ -11,7 +11,6 @@ export function createSessionRegistry() {
     identity(sessionID: string): AgentIdentity {
       const parentSessionID =
         tasks.get(sessionID)?.interaction.run.sessionID ?? parents.get(sessionID);
-
       return {
         parentSessionID,
         agentType: parentSessionID ? "subagent" : parents.has(sessionID) ? "primary" : undefined,

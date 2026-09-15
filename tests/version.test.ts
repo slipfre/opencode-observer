@@ -9,7 +9,6 @@ test("reads the running OpenCode version using the client transport and authenti
     headers: { authorization: "Basic test-auth" },
     fetch: async (request) => {
       requests.push(request as Request);
-
       return Response.json({ healthy: true, version: " 1.18.30-dev.123 " });
     },
   });
