@@ -7,7 +7,7 @@ import {
   SimpleSpanProcessor,
   type ReadableSpan,
 } from "@opentelemetry/sdk-trace-base";
-import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
+import { createCoordinatorHarness } from "./support/coordinator.js";
 import { createObserver } from "../src/telemetry/observer.js";
 import type { ToolStart } from "../src/contract/observer.js";
 
@@ -41,17 +41,14 @@ function setup(captureContent = true) {
       "gen_ai.tool.call.result": "fake",
     },
   });
-  const coordinator = createCoordinator({ observer, captureContent, now: () => 1100 });
-  cleanups.push(async () => {
-    coordinator.close();
-    await observer.shutdown();
-  });
+  const coordinator = createCoordinatorHarness({ observer, captureContent, now: () => 1100 });
+  cleanups.push(coordinator.hooks.dispose);
 
   return {
     observer,
     coordinator,
     spans,
-    session(id = "s1", parentID?: string) {
+    async session(id = "s1", parentID?: string) {
       const info: Session = {
         id,
         projectID: "project",
@@ -61,10 +58,10 @@ function setup(captureContent = true) {
         parentID,
         time: { created: 900, updated: 900 },
       };
-      coordinator.event({ type: "session.created", properties: { info } }, 900);
+      await coordinator.event({ type: "session.created", properties: { info } }, 900);
     },
-    user(info = user()) {
-      coordinator.userMessage(info, [
+    async user(info = user()) {
+      await coordinator.message(info, [
         {
           id: info.id + "-text",
           messageID: info.id,
@@ -74,17 +71,17 @@ function setup(captureContent = true) {
         },
       ]);
     },
-    message(info: AssistantMessage | UserMessage, time = 1200) {
-      coordinator.event({ type: "message.updated", properties: { info } }, time);
+    async message(info: AssistantMessage | UserMessage, time = 1200) {
+      await coordinator.event({ type: "message.updated", properties: { info } }, time);
     },
-    part(part: Part, time = 1200) {
-      coordinator.event({ type: "message.part.updated", properties: { part } }, time);
+    async part(part: Part, time = 1200) {
+      await coordinator.event({ type: "message.part.updated", properties: { part } }, time);
     },
-    idle(sessionID = "s1", time = 2000) {
-      coordinator.event({ type: "session.idle", properties: { sessionID } }, time);
+    async idle(sessionID = "s1", time = 2000) {
+      await coordinator.event({ type: "session.idle", properties: { sessionID } }, time);
     },
-    ask(id = "p1", messageID = "a1", callID = "call1", sessionID = "s1", time = 1250) {
-      coordinator.event(
+    async ask(id = "p1", messageID = "a1", callID = "call1", sessionID = "s1", time = 1250) {
+      await coordinator.event(
         {
           type: "permission.asked",
           properties: {
@@ -100,8 +97,8 @@ function setup(captureContent = true) {
         time,
       );
     },
-    reply(reply: "once" | "always" | "reject", id = "p1", sessionID = "s1", time = 1300) {
-      coordinator.event(
+    async reply(reply: "once" | "always" | "reject", id = "p1", sessionID = "s1", time = 1300) {
+      await coordinator.event(
         { type: "permission.replied", properties: { sessionID, requestID: id, reply } },
         time,
       );
@@ -178,9 +175,9 @@ function step(messageID: string, type: "step-start" | "step-finish", sessionID =
       };
 }
 
-function marker(h: ReturnType<typeof setup>, id = "c1", time = 1400, overflow = false) {
-  h.message(user(id, "s1", time), time);
-  h.part(
+async function marker(h: ReturnType<typeof setup>, id = "c1", time = 1400, overflow = false) {
+  await h.message(user(id, "s1", time), time);
+  await h.part(
     {
       type: "compaction",
       id: id + "-part",
@@ -193,16 +190,16 @@ function marker(h: ReturnType<typeof setup>, id = "c1", time = 1400, overflow = 
   );
 }
 
-test("tool keeps its original interaction across steer and uses source times", () => {
+test("tool keeps its original interaction across steer and uses source times", async () => {
   const h = setup();
-  h.session();
-  h.user();
-  h.message(assistant());
-  h.part(tool());
-  h.user(user("u2", "s1", 1300));
-  h.part(tool(completed()), 5000);
-  h.part(tool(completed("late")), 6000);
-  h.idle("s1", 7000);
+  await h.session();
+  await h.user();
+  await h.message(assistant());
+  await h.part(tool());
+  await h.user(user("u2", "s1", 1300));
+  await h.part(tool(completed()), 5000);
+  await h.part(tool(completed("late")), 6000);
+  await h.idle("s1", 7000);
   const span = h.spans.find((value) => value.name === "opencode.tool.read");
   const parent = h.spans.find((value) => value.attributes["opencode.interaction.id"] === "u1");
 
@@ -227,13 +224,13 @@ test.each([
   ["", { content: "" }],
 ])(
   "terminal tool snapshots backfill a missing running event and encode result %s",
-  (output, expected) => {
+  async (output, expected) => {
     const h = setup();
-    h.user();
-    h.part(tool(completed(output)));
+    await h.user();
+    await h.part(tool(completed(output)));
     expect(h.spans).toHaveLength(0);
-    h.part(tool({ status: "running", input: { path: "stale" }, time: { start: 1200 } }));
-    h.message(assistant());
+    await h.part(tool({ status: "running", input: { path: "stale" }, time: { start: 1200 } }));
+    await h.message(assistant());
 
     expect(h.spans).toHaveLength(1);
     expect(JSON.parse(String(h.spans[0]?.attributes["gen_ai.tool.call.result"]))).toEqual(expected);
@@ -242,19 +239,21 @@ test.each([
   },
 );
 
-test("permission rejection ends normally and classifies only the precisely associated failed tool", () => {
+test("permission rejection ends normally and classifies only the precisely associated failed tool", async () => {
   const h = setup();
-  h.session();
-  h.user();
-  h.message(assistant());
-  h.part(tool());
-  h.ask("wrong", "other");
-  h.ask();
-  h.ask();
-  h.reply("reject");
-  h.reply("always");
-  h.part(tool({ status: "error", input: {}, error: "denied", time: { start: 1200, end: 1400 } }));
-  h.part(
+  await h.session();
+  await h.user();
+  await h.message(assistant());
+  await h.part(tool());
+  await h.ask("wrong", "other");
+  await h.ask();
+  await h.ask();
+  await h.reply("reject");
+  await h.reply("always");
+  await h.part(
+    tool({ status: "error", input: {}, error: "denied", time: { start: 1200, end: 1400 } }),
+  );
+  await h.part(
     tool(
       { status: "error", input: {}, error: "failed", time: { start: 1200, end: 1500 } },
       { callID: "call2", id: "part2" },
@@ -280,19 +279,19 @@ test("permission rejection ends normally and classifies only the precisely assoc
   expect(other?.attributes["error.type"]).toBe("ExecutionError");
 });
 
-test("tool completion closes unanswered permissions before the tool and ignores later replies", () => {
+test("tool completion closes unanswered permissions before the tool and ignores later replies", async () => {
   const h = setup();
-  h.user();
-  h.message(assistant());
-  h.ask("early");
-  h.part(tool());
-  h.reply("once", "out-of-order");
-  h.ask("out-of-order");
-  h.ask();
-  h.part(tool(completed()), 1500);
-  h.reply("once");
-  h.ask();
-  h.ask("after");
+  await h.user();
+  await h.message(assistant());
+  await h.ask("early");
+  await h.part(tool());
+  await h.reply("once", "out-of-order");
+  await h.ask("out-of-order");
+  await h.ask();
+  await h.part(tool(completed()), 1500);
+  await h.reply("once");
+  await h.ask();
+  await h.ask("after");
 
   expect(h.spans.map((value) => value.name)).toEqual([
     "opencode.permission.check",
@@ -305,24 +304,24 @@ test("tool completion closes unanswered permissions before the tool and ignores 
   expect(h.spans[1]?.status.code).toBe(SpanStatusCode.UNSET);
 });
 
-test("permission capacity eviction ends the oldest wait with an error and keeps replies correlated", () => {
+test("permission capacity eviction ends the oldest wait with an error and keeps replies correlated", async () => {
   const h = setup(false);
-  h.user();
-  h.message(assistant());
-  h.part(tool());
-  Array.from({ length: 1025 }, (_, index) => h.ask("p" + index));
-  h.reply("always", "p1024");
+  await h.user();
+  await h.message(assistant());
+  await h.part(tool());
+  await Promise.all(Array.from({ length: 1025 }, (_, index) => h.ask("p" + index)));
+  await h.reply("always", "p1024");
 
   expect(h.spans).toHaveLength(2);
   expect(h.spans[0]?.status.message).toBe("permission correlation capacity exceeded");
   expect(h.spans[1]?.attributes["opencode.permission.granted"]).toBe(true);
 });
 
-test("compaction owns its summary LLM and only completed summary usage is mirrored", () => {
+test("compaction owns its summary LLM and only completed summary usage is mirrored", async () => {
   const h = setup();
-  h.session();
-  h.user();
-  marker(h);
+  await h.session();
+  await h.user();
+  await marker(h);
   const summary = assistant({
     id: "summary",
     parentID: "c1",
@@ -330,14 +329,14 @@ test("compaction owns its summary LLM and only completed summary usage is mirror
     summary: true,
     time: { created: 1500 },
   });
-  h.message(summary, 1500);
-  h.part(step("summary", "step-start"), 1500);
-  h.part(
+  await h.message(summary, 1500);
+  await h.part(step("summary", "step-start"), 1500);
+  await h.part(
     { id: "summary-text", sessionID: "s1", messageID: "summary", type: "text", text: "summary" },
     1600,
   );
-  h.part(step("summary", "step-finish"), 1700);
-  h.message(
+  await h.part(step("summary", "step-finish"), 1700);
+  await h.message(
     {
       ...summary,
       time: { created: 1500, completed: 1700 },
@@ -345,17 +344,17 @@ test("compaction owns its summary LLM and only completed summary usage is mirror
     },
     1700,
   );
-  h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1800);
-  h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1850);
-  h.message(
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1800);
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1850);
+  await h.message(
     assistant({ id: "final", time: { created: 1900, completed: 1950 }, finish: "stop" }),
     1950,
   );
-  h.part(
+  await h.part(
     { id: "final-text", sessionID: "s1", messageID: "final", type: "text", text: "answer" },
     1950,
   );
-  h.idle();
+  await h.idle();
   const compaction = h.spans.find((value) => value.name === "opencode.compaction");
   const llm = h.spans.find((value) => value.name === "opencode.llm");
   const run = h.spans.find((value) => value.name === "opencode.run");
@@ -415,10 +414,10 @@ test.each([
     output: undefined,
     summary: Number.MAX_SAFE_INTEGER,
   },
-])("LLM and compaction preserve the same usage limits for $name", (scenario) => {
+])("LLM and compaction preserve the same usage limits for $name", async (scenario) => {
   const h = setup();
-  h.user();
-  marker(h);
+  await h.user();
+  await marker(h);
   const summary = assistant({
     id: "summary",
     parentID: "c1",
@@ -426,10 +425,10 @@ test.each([
     summary: true,
     time: { created: 1500 },
   });
-  h.message(summary, 1500);
-  h.part(step("summary", "step-start"), 1500);
+  await h.message(summary, 1500);
+  await h.part(step("summary", "step-start"), 1500);
 
-  h.part(
+  await h.part(
     {
       type: "step-finish",
       id: "summary-finish",
@@ -441,11 +440,11 @@ test.each([
     },
     1700,
   );
-  h.message(
+  await h.message(
     { ...summary, time: { created: 1500, completed: 1700 }, tokens: scenario.tokens },
     1700,
   );
-  h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1800);
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1800);
   const llm = h.spans.find((value) => value.name === "opencode.llm");
   const compaction = h.spans.find((value) => value.name === "opencode.compaction");
 
@@ -459,12 +458,12 @@ test.each([
   expect(compaction?.attributes["opencode.compaction.summary_tokens"]).toBe(scenario.summary);
 });
 
-test("overflow compaction retains the triggering interaction across steer", () => {
+test("overflow compaction retains the triggering interaction across steer", async () => {
   const h = setup();
-  h.user();
-  h.message(assistant());
-  h.part(step("a1", "step-start"), 1100);
-  h.coordinator.event(
+  await h.user();
+  await h.message(assistant());
+  await h.part(step("a1", "step-start"), 1100);
+  await h.coordinator.event(
     {
       type: "session.error",
       properties: {
@@ -474,10 +473,10 @@ test("overflow compaction retains the triggering interaction across steer", () =
     },
     1200,
   );
-  h.user(user("u2", "s1", 1300));
-  marker(h, "c1", 1400, true);
-  h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1500);
-  h.idle();
+  await h.user(user("u2", "s1", 1300));
+  await marker(h, "c1", 1400, true);
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1500);
+  await h.idle();
   const compaction = h.spans.find((value) => value.name === "opencode.compaction");
   const owner = h.spans.find((value) => value.attributes["opencode.interaction.id"] === "u1");
 
@@ -490,15 +489,15 @@ test("overflow compaction retains the triggering interaction across steer", () =
   );
 });
 
-test("replacing compaction ends its unfinished summary first and duplicate markers cannot replace the new one", () => {
+test("replacing compaction ends its unfinished summary first and duplicate markers cannot replace the new one", async () => {
   const h = setup();
-  h.user();
-  marker(h);
-  h.message(assistant({ id: "summary", parentID: "c1", summary: true }));
-  h.part(step("summary", "step-start"), 1500);
-  marker(h, "c2", 1600);
-  marker(h, "c1", 1700);
-  h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1800);
+  await h.user();
+  await marker(h);
+  await h.message(assistant({ id: "summary", parentID: "c1", summary: true }));
+  await h.part(step("summary", "step-start"), 1500);
+  await marker(h, "c2", 1600);
+  await marker(h, "c1", 1700);
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1800);
 
   expect(h.spans.map((value) => value.name)).toEqual([
     "opencode.llm",
@@ -511,11 +510,11 @@ test("replacing compaction ends its unfinished summary first and duplicate marke
   expect(h.spans[2]?.attributes["opencode.compaction.id"]).toBe("c2");
 });
 
-test("summary failure ends compaction and the run without reporting successful compaction usage", () => {
+test("summary failure ends compaction and the run without reporting successful compaction usage", async () => {
   const h = setup();
-  h.user();
-  marker(h);
-  h.message(
+  await h.user();
+  await marker(h);
+  await h.message(
     assistant({
       id: "summary",
       parentID: "c1",
@@ -524,7 +523,7 @@ test("summary failure ends compaction and the run without reporting successful c
     }),
     1600,
   );
-  h.idle();
+  await h.idle();
   const compaction = h.spans.find((value) => value.name === "opencode.compaction");
 
   expect(compaction?.status.code).toBe(SpanStatusCode.ERROR);
@@ -535,20 +534,20 @@ test("summary failure ends compaction and the run without reporting successful c
   );
 });
 
-test("foreground task metadata attaches child run and all child spans retain their own session identity", () => {
+test("foreground task metadata attaches child run and all child spans retain their own session identity", async () => {
   const h = setup();
-  h.session();
-  h.user();
-  h.part(
+  await h.session();
+  await h.user();
+  await h.part(
     tool(
       { status: "running", input: {}, metadata: { sessionId: "s2" }, time: { start: 1200 } },
       { tool: "task" },
     ),
   );
-  h.message(assistant());
-  h.session("s2", "s1");
-  h.user(user("child-input", "s2", 1250));
-  h.message(
+  await h.message(assistant());
+  await h.session("s2", "s1");
+  await h.user(user("child-input", "s2", 1250));
+  await h.message(
     assistant({
       id: "child-assistant",
       sessionID: "s2",
@@ -558,10 +557,12 @@ test("foreground task metadata attaches child run and all child spans retain the
     }),
     1450,
   );
-  h.part(tool(completed("child", 1350, 1400), { sessionID: "s2", messageID: "child-assistant" }));
-  h.idle("s2", 1500);
-  h.part(tool(completed("child result", 1200, 1600), { tool: "task" }));
-  h.idle();
+  await h.part(
+    tool(completed("child", 1350, 1400), { sessionID: "s2", messageID: "child-assistant" }),
+  );
+  await h.idle("s2", 1500);
+  await h.part(tool(completed("child result", 1200, 1600), { tool: "task" }));
+  await h.idle();
   const task = h.spans.find((value) => value.name === "opencode.tool.task");
   const child = h.spans.find(
     (value) => value.name === "opencode.run" && value.attributes["session.id"] === "s2",
@@ -581,8 +582,8 @@ test("foreground task metadata attaches child run and all child spans retain the
       .every((value) => value.attributes["opencode.agent.type"] === "subagent"),
   ).toBe(true);
   expect(h.spans.indexOf(child!)).toBeLessThan(h.spans.indexOf(task!));
-  h.user(user("later-input", "s2", 3000));
-  h.idle("s2", 4000);
+  await h.user(user("later-input", "s2", 3000));
+  await h.idle("s2", 4000);
   const later = h.spans.find((value) => value.attributes["opencode.run.id"] === "later-input");
 
   expect(later?.parentSpanContext).toBeUndefined();
@@ -591,21 +592,20 @@ test("foreground task metadata attaches child run and all child spans retain the
 
 test("shutdown closes nested permissions, tools and child runs before their parent task exactly once", async () => {
   const h = setup();
-  h.user();
-  h.message(assistant());
-  h.part(
+  await h.user();
+  await h.message(assistant());
+  await h.part(
     tool(
       { status: "running", input: {}, metadata: { sessionId: "s2" }, time: { start: 1200 } },
       { tool: "task" },
     ),
   );
-  h.user(user("child-input", "s2", 1300));
-  h.message(assistant({ id: "child-assistant", sessionID: "s2", parentID: "child-input" }));
-  h.part(tool(undefined, { sessionID: "s2", messageID: "child-assistant" }));
-  h.ask("child-permission", "child-assistant", "call1", "s2");
-  h.coordinator.close();
-  await h.observer.shutdown();
-  await h.observer.shutdown();
+  await h.user(user("child-input", "s2", 1300));
+  await h.message(assistant({ id: "child-assistant", sessionID: "s2", parentID: "child-input" }));
+  await h.part(tool(undefined, { sessionID: "s2", messageID: "child-assistant" }));
+  await h.ask("child-permission", "child-assistant", "call1", "s2");
+  await h.coordinator.hooks.dispose();
+  await h.coordinator.hooks.dispose();
 
   expect(h.spans.map((value) => value.name)).toEqual([
     "opencode.permission.check",
@@ -620,13 +620,13 @@ test("shutdown closes nested permissions, tools and child runs before their pare
   expect(h.spans.every((value) => value.endTime[0] === 9)).toBe(true);
 });
 
-test("legacy permission replies pair with the same request and preserve the human decision", () => {
+test("legacy permission replies pair with the same request and preserve the human decision", async () => {
   const h = setup();
-  h.user();
-  h.message(assistant());
-  h.part(tool());
-  h.ask();
-  h.coordinator.event(
+  await h.user();
+  await h.message(assistant());
+  await h.part(tool());
+  await h.ask();
+  await h.coordinator.event(
     {
       type: "permission.replied",
       properties: { sessionID: "s1", permissionID: "p1", response: "always" },
@@ -639,11 +639,11 @@ test("legacy permission replies pair with the same request and preserve the huma
   expect(h.spans[0]?.status.code).toBe(SpanStatusCode.UNSET);
 });
 
-test("background task metadata does not create a foreground child-run binding", () => {
+test("background task metadata does not create a foreground child-run binding", async () => {
   const h = setup();
-  h.user();
-  h.message(assistant());
-  h.part(
+  await h.user();
+  await h.message(assistant());
+  await h.part(
     tool(
       {
         status: "running",
@@ -654,12 +654,12 @@ test("background task metadata does not create a foreground child-run binding", 
       { tool: "task" },
     ),
   );
-  h.session("s2", "s1");
-  h.user(user("child-input", "s2", 1300));
-  h.part(tool(completed("background started"), { tool: "task" }), 1500);
+  await h.session("s2", "s1");
+  await h.user(user("child-input", "s2", 1300));
+  await h.part(tool(completed("background started"), { tool: "task" }), 1500);
 
   expect(h.spans.some((span) => span.name === "opencode.run")).toBe(false);
-  h.idle("s2", 1700);
+  await h.idle("s2", 1700);
   const child = h.spans.find((span) => span.name === "opencode.run");
   const task = h.spans.find((span) => span.name === "opencode.tool.task");
 
@@ -668,18 +668,18 @@ test("background task metadata does not create a foreground child-run binding", 
   expect(child?.attributes["opencode.session.parent_id"]).toBe("s1");
 });
 
-test("a direct task finish cleans only its child run before ending the task", () => {
+test("a direct task finish cleans only its child run before ending the task", async () => {
   const h = setup();
-  h.user();
-  h.message(assistant());
-  h.part(
+  await h.user();
+  await h.message(assistant());
+  await h.part(
     tool(
       { status: "running", input: {}, metadata: { sessionId: "s2" }, time: { start: 1200 } },
       { tool: "task" },
     ),
   );
-  h.user(user("child-input", "s2", 1300));
-  h.user(user("unrelated-input", "s3", 1300));
+  await h.user(user("child-input", "s2", 1300));
+  await h.user(user("unrelated-input", "s3", 1300));
   h.observer.finishTool({
     interaction: { run: { sessionID: "s1", id: "u1" }, id: "u1" },
     messageID: "a1",
@@ -687,7 +687,6 @@ test("a direct task finish cleans only its child run before ending the task", ()
     endedAt: 1500,
     output: "done",
   });
-  h.coordinator.close();
 
   expect(h.spans.map((span) => span.name)).toEqual([
     "opencode.interaction",
@@ -699,10 +698,10 @@ test("a direct task finish cleans only its child run before ending the task", ()
   expect(h.spans[2]?.status.code).toBe(SpanStatusCode.UNSET);
 });
 
-test("disabled tool capture never accesses body getters and permission patterns remain operational metadata", () => {
+test("disabled tool capture never accesses body getters and permission patterns remain operational metadata", async () => {
   const h = setup(false);
-  h.user();
-  h.message(assistant());
+  await h.user();
+  await h.message(assistant());
   const state = completed();
   Object.defineProperty(state, "input", {
     get() {
@@ -714,10 +713,10 @@ test("disabled tool capture never accesses body getters and permission patterns 
       throw new Error("output read");
     },
   });
-  h.part(tool());
-  h.ask();
-  h.reply("once");
-  h.part(tool(state));
+  await h.part(tool());
+  await h.ask();
+  await h.reply("once");
+  await h.part(tool(state));
 
   expect(
     h.spans.every(
@@ -749,7 +748,7 @@ test("direct contract rejects unknown parents and cannot use an ordinary tool as
     toolName: "read",
     patterns: [],
   });
-  h.user();
+  await h.user();
   h.observer.startTool(start);
   h.observer.startRun({
     sessionID: "child",
@@ -767,7 +766,7 @@ test("direct contract rejects unknown parents and cannot use an ordinary tool as
     toolName: "read",
     patterns: [],
   });
-  await h.observer.shutdown();
+  await h.coordinator.hooks.dispose();
 
   expect(h.spans.filter((value) => value.name === "opencode.tool.read")).toHaveLength(1);
   expect(h.spans.filter((value) => value.name === "opencode.permission.check")).toHaveLength(0);

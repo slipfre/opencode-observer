@@ -3,7 +3,7 @@ import path from "node:path";
 import { expectUnset, requireSpans } from "./support/assertions.js";
 import { withE2EFixture } from "./support/fixture.js";
 
-test("OpenCode disposes observer subscriptions before process exit", () =>
+test("OpenCode dispose releases observer subscriptions without process exit listeners", () =>
   withE2EFixture(
     {
       pluginEntry: path.join(import.meta.dir, "support/disposal-plugin.ts"),
@@ -21,12 +21,12 @@ test("OpenCode disposes observer subscriptions before process exit", () =>
       spans.forEach(expectUnset);
       expect(disposal.installed).toEqual({
         captures: disposal.initial.captures + 1,
-        exits: disposal.initial.exits + 1,
+        exits: disposal.initial.exits,
       });
       expect(disposal.before.captures).toBe(disposal.installed.captures);
       expect(disposal.after).toEqual({
         captures: disposal.before.captures - 1,
-        exits: disposal.before.exits - 1,
+        exits: disposal.before.exits,
       });
       expect(disposal.repeated).toEqual(disposal.after);
     },

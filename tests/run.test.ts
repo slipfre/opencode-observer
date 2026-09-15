@@ -1,18 +1,20 @@
 import { afterEach, expect, test } from "bun:test";
 import type { AssistantMessage, Part, TextPart, UserMessage } from "@opencode-ai/sdk";
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { ExportResultCode } from "@opentelemetry/core";
 import {
   BasicTracerProvider,
-  InMemorySpanExporter,
   SimpleSpanProcessor,
+  type ReadableSpan,
 } from "@opentelemetry/sdk-trace-base";
-import { createCoordinator, type CoordinatorOptions } from "../src/adapter/opencode/coordinator.js";
+import type { CoordinatorOptions } from "../src/adapter/opencode/coordinator.js";
+import { createCoordinatorHarness } from "./support/coordinator.js";
 import { createObserver, type ObserverOptions } from "../src/telemetry/observer.js";
 
-const providers: BasicTracerProvider[] = [];
+const cleanups: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
-  await Promise.all(providers.splice(0).map((provider) => provider.shutdown()));
+  await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
 function setup(
@@ -20,12 +22,19 @@ function setup(
     Omit<CoordinatorOptions, "observer"> & Omit<ObserverOptions, "provider" | "scope">
   > = {},
 ) {
-  const exporter = new InMemorySpanExporter();
+  const spans: ReadableSpan[] = [];
   const provider = new BasicTracerProvider({
     spanLimits: { attributeCountLimit: 4096 },
-    spanProcessors: [new SimpleSpanProcessor(exporter)],
+    spanProcessors: [
+      new SimpleSpanProcessor({
+        export(batch, callback) {
+          spans.push(...batch);
+          callback({ code: ExportResultCode.SUCCESS });
+        },
+        shutdown: async () => {},
+      }),
+    ],
   });
-  providers.push(provider);
 
   const observer = createObserver({
     provider,
@@ -35,13 +44,19 @@ function setup(
     ...options,
   });
 
+  const coordinator = createCoordinatorHarness({
+    observer,
+    captureContent: true,
+    now: () => 2000,
+    ...options,
+  });
+  cleanups.push(coordinator.hooks.dispose);
+
   return {
-    coordinator: createCoordinator({ observer, captureContent: true, now: () => 2000, ...options }),
+    coordinator,
     async spans() {
-      await provider.forceFlush();
-      return exporter
-        .getFinishedSpans()
-        .filter((span) => span.attributes["gen_ai.operation.name"] === "invoke_workflow");
+      await observer.flush();
+      return spans.filter((span) => span.attributes["gen_ai.operation.name"] === "invoke_workflow");
     },
   };
 }
@@ -84,27 +99,27 @@ function assistant(
   };
 }
 
-function reply(
-  coordinator: ReturnType<typeof createCoordinator>,
+async function reply(
+  coordinator: ReturnType<typeof createCoordinatorHarness>,
   info = assistant(),
   content = "answer",
 ) {
-  coordinator.event({
+  await coordinator.event({
     type: "message.part.updated",
     properties: { part: text(info.id, content, info.sessionID) },
   });
-  coordinator.event({ type: "message.updated", properties: { info } });
+  await coordinator.event({ type: "message.updated", properties: { info } });
 }
 
-function idle(coordinator: ReturnType<typeof createCoordinator>, sessionID = "s1") {
-  coordinator.event({
+async function idle(coordinator: ReturnType<typeof createCoordinatorHarness>, sessionID = "s1") {
+  await coordinator.event({
     type: "session.status",
     properties: { sessionID, status: { type: "idle" } },
   });
 }
 
-function overflow(coordinator: ReturnType<typeof createCoordinator>) {
-  coordinator.event({
+async function overflow(coordinator: ReturnType<typeof createCoordinatorHarness>) {
+  await coordinator.event({
     type: "session.error",
     properties: {
       sessionID: "s1",
@@ -113,9 +128,9 @@ function overflow(coordinator: ReturnType<typeof createCoordinator>) {
   });
 }
 
-function compact(coordinator: ReturnType<typeof createCoordinator>) {
-  coordinator.event({ type: "message.updated", properties: { info: user("compact", 1200) } });
-  coordinator.event({
+async function compact(coordinator: ReturnType<typeof createCoordinatorHarness>) {
+  await coordinator.event({ type: "message.updated", properties: { info: user("compact", 1200) } });
+  await coordinator.event({
     type: "message.part.updated",
     properties: {
       part: {
@@ -132,13 +147,13 @@ function compact(coordinator: ReturnType<typeof createCoordinator>) {
 test("run records workflow identity, real input, final output, and UNSET status", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
+  await h.coordinator.message(user(), [text("u1", "question")]);
 
   expect(await h.spans()).toHaveLength(0);
 
-  reply(h.coordinator);
-  idle(h.coordinator);
-  h.coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } });
+  await reply(h.coordinator);
+  await idle(h.coordinator);
+  await h.coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } });
 
   const spans = await h.spans();
 
@@ -168,19 +183,19 @@ test("run records workflow identity, real input, final output, and UNSET status"
 test("steers share a run and late output from the old owner never replaces the final answer", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "first")]);
-  h.coordinator.userMessage(user(), [text("u1", "duplicate hook")]);
-  reply(h.coordinator, assistant(), "intermediate");
+  await h.coordinator.message(user(), [text("u1", "first")]);
+  await h.coordinator.message(user(), [text("u1", "duplicate hook")]);
+  await reply(h.coordinator, assistant(), "intermediate");
 
-  h.coordinator.userMessage(user("u2", 1300), [text("u2", "steer")]);
-  reply(h.coordinator, assistant("a2", "u2", 1400), "final");
+  await h.coordinator.message(user("u2", 1300), [text("u2", "steer")]);
+  await reply(h.coordinator, assistant("a2", "u2", 1400), "final");
 
-  reply(
+  await reply(
     h.coordinator,
     assistant("a1", "u1", 1100, { time: { created: 1100, completed: 1900 } }),
     "late old answer",
   );
-  idle(h.coordinator);
+  await idle(h.coordinator);
 
   const spans = await h.spans();
 
@@ -196,11 +211,11 @@ test("steers share a run and late output from the old owner never replaces the f
 test("new tasks create independent traces while concurrent sessions remain isolated", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "one")]);
-  h.coordinator.userMessage(user("child", 1050, "s2"), [text("child", "two", "s2")]);
+  await h.coordinator.message(user(), [text("u1", "one")]);
+  await h.coordinator.message(user("child", 1050, "s2"), [text("child", "two", "s2")]);
 
   for (const type of ["session.created", "session.updated"] as const) {
-    h.coordinator.event({
+    await h.coordinator.event({
       type,
       properties: {
         info: {
@@ -216,13 +231,13 @@ test("new tasks create independent traces while concurrent sessions remain isola
     });
   }
 
-  idle(h.coordinator);
+  await idle(h.coordinator);
 
   expect(await h.spans()).toHaveLength(1);
 
-  h.coordinator.userMessage(user("u2", 1300), [text("u2", "three")]);
-  idle(h.coordinator, "s2");
-  idle(h.coordinator);
+  await h.coordinator.message(user("u2", 1300), [text("u2", "three")]);
+  await idle(h.coordinator, "s2");
+  await idle(h.coordinator);
 
   const spans = await h.spans();
 
@@ -241,15 +256,15 @@ test("synthetic and compaction-only messages never create runs; mixed input keep
     synthetic: true,
   };
 
-  h.coordinator.userMessage(user(), [synthetic]);
-  h.coordinator.userMessage(user(), [
+  await h.coordinator.message(user(), [synthetic]);
+  await h.coordinator.message(user(), [
     { id: "c", messageID: "u1", sessionID: "s1", type: "compaction", auto: true },
   ]);
 
   expect(await h.spans()).toHaveLength(0);
 
-  h.coordinator.userMessage(user(), [synthetic, { ...text("u1", "actual"), id: "real" }]);
-  idle(h.coordinator);
+  await h.coordinator.message(user(), [synthetic, { ...text("u1", "actual"), id: "real" }]);
+  await idle(h.coordinator);
 
   const spans = await h.spans();
 
@@ -261,8 +276,8 @@ test("synthetic and compaction-only messages never create runs; mixed input keep
 test("missing input is omitted instead of exporting partial input or fabricating empty text", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "known")]);
-  h.coordinator.userMessage(user("u2", 1300), [
+  await h.coordinator.message(user(), [text("u1", "known")]);
+  await h.coordinator.message(user("u2", 1300), [
     {
       id: "f",
       messageID: "u2",
@@ -272,7 +287,7 @@ test("missing input is omitted instead of exporting partial input or fabricating
       url: "https://example.test/image.png",
     },
   ]);
-  idle(h.coordinator);
+  await idle(h.coordinator);
 
   expect((await h.spans())[0]?.attributes["gen_ai.input.messages"]).toBeUndefined();
 });
@@ -283,9 +298,9 @@ test("disabled content capture omits both bodies and cannot be bypassed with cus
     spanAttributes: { "gen_ai.input.messages": "leak", "gen_ai.output.messages": "leak" },
   });
 
-  h.coordinator.userMessage(user(), [text("u1", "secret")]);
-  reply(h.coordinator);
-  idle(h.coordinator);
+  await h.coordinator.message(user(), [text("u1", "secret")]);
+  await reply(h.coordinator);
+  await idle(h.coordinator);
 
   const span = (await h.spans())[0];
 
@@ -296,12 +311,12 @@ test("disabled content capture omits both bodies and cannot be bypassed with cus
 test("known empty output is represented as text, unknown output is omitted", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "")]);
-  reply(h.coordinator, assistant(), "");
-  idle(h.coordinator);
+  await h.coordinator.message(user(), [text("u1", "")]);
+  await reply(h.coordinator, assistant(), "");
+  await idle(h.coordinator);
 
-  h.coordinator.userMessage(user("u2", 1300), [text("u2", "next")]);
-  idle(h.coordinator);
+  await h.coordinator.message(user("u2", 1300), [text("u2", "next")]);
+  await idle(h.coordinator);
 
   const spans = await h.spans();
 
@@ -314,10 +329,14 @@ test("known empty output is represented as text, unknown output is omitted", asy
 test("the latest unfinished assistant cannot fall back to a previous answer", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  reply(h.coordinator);
-  reply(h.coordinator, assistant("a2", "u1", 1500, { time: { created: 1500 } }), "unfinished");
-  idle(h.coordinator);
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await reply(h.coordinator);
+  await reply(
+    h.coordinator,
+    assistant("a2", "u1", 1500, { time: { created: 1500 } }),
+    "unfinished",
+  );
+  await idle(h.coordinator);
 
   expect((await h.spans())[0]?.attributes["gen_ai.output.messages"]).toBeUndefined();
 });
@@ -325,21 +344,21 @@ test("the latest unfinished assistant cannot fall back to a previous answer", as
 test("text updates replace snapshots instead of appending deltas; removed parts are excluded", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  reply(h.coordinator, assistant(), "hel");
-  h.coordinator.event({
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await reply(h.coordinator, assistant(), "hel");
+  await h.coordinator.event({
     type: "message.part.updated",
     properties: { part: text("a1", "hello"), delta: "lo" },
   });
-  h.coordinator.event({
+  await h.coordinator.event({
     type: "message.part.updated",
     properties: { part: { ...text("a1", "remove"), id: "removed" } },
   });
-  h.coordinator.event({
+  await h.coordinator.event({
     type: "message.part.removed",
     properties: { sessionID: "s1", messageID: "a1", partID: "removed" },
   });
-  idle(h.coordinator);
+  await idle(h.coordinator);
 
   expect((await h.spans())[0]?.attributes["gen_ai.output.messages"]).toBe(
     '[{"role":"assistant","parts":[{"type":"text","content":"hello"}]}]',
@@ -349,9 +368,9 @@ test("text updates replace snapshots instead of appending deltas; removed parts 
 test("overflow survives retry, compaction and synthetic continuation, then succeeds", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  overflow(h.coordinator);
-  h.coordinator.event({
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await overflow(h.coordinator);
+  await h.coordinator.event({
     type: "session.status",
     properties: {
       sessionID: "s1",
@@ -361,23 +380,26 @@ test("overflow survives retry, compaction and synthetic continuation, then succe
 
   expect(await h.spans()).toHaveLength(0);
 
-  compact(h.coordinator);
-  reply(
+  await compact(h.coordinator);
+  await reply(
     h.coordinator,
     assistant("summary", "compact", 1250, { summary: true }),
     "internal summary",
   );
-  h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } });
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } });
 
-  h.coordinator.event({ type: "message.updated", properties: { info: user("continue", 1400) } });
-  h.coordinator.event({
+  await h.coordinator.event({
+    type: "message.updated",
+    properties: { info: user("continue", 1400) },
+  });
+  await h.coordinator.event({
     type: "message.part.updated",
     properties: {
       part: { ...text("continue", "continue"), type: "text", text: "continue", synthetic: true },
     },
   });
-  reply(h.coordinator, assistant("a2", "continue", 1500), "recovered answer");
-  idle(h.coordinator);
+  await reply(h.coordinator, assistant("a2", "continue", 1500), "recovered answer");
+  await idle(h.coordinator);
 
   const span = (await h.spans())[0];
 
@@ -390,12 +412,15 @@ test("overflow survives retry, compaction and synthetic continuation, then succe
 test("late synthetic continuation keeps its pre-steer owner", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "first")]);
-  h.coordinator.userMessage(user("u2", 1500), [text("u2", "second")]);
-  h.coordinator.event({ type: "message.updated", properties: { info: user("continue", 1400) } });
-  reply(h.coordinator, assistant("new", "u2", 1600), "new answer");
-  reply(h.coordinator, assistant("old", "continue", 1800), "old answer");
-  idle(h.coordinator);
+  await h.coordinator.message(user(), [text("u1", "first")]);
+  await h.coordinator.message(user("u2", 1500), [text("u2", "second")]);
+  await h.coordinator.event({
+    type: "message.updated",
+    properties: { info: user("continue", 1400) },
+  });
+  await reply(h.coordinator, assistant("new", "u2", 1600), "new answer");
+  await reply(h.coordinator, assistant("old", "continue", 1800), "old answer");
+  await idle(h.coordinator);
 
   expect(String((await h.spans())[0]?.attributes["gen_ai.output.messages"])).toContain(
     "new answer",
@@ -405,10 +430,10 @@ test("late synthetic continuation keeps its pre-steer owner", async () => {
 test("overflow still pending at idle fails without successful output", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  reply(h.coordinator);
-  overflow(h.coordinator);
-  idle(h.coordinator);
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await reply(h.coordinator);
+  await overflow(h.coordinator);
+  await idle(h.coordinator);
 
   const span = (await h.spans())[0];
 
@@ -421,16 +446,16 @@ test("overflow still pending at idle fails without successful output", async () 
 test("another overflow during compaction fails immediately", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  overflow(h.coordinator);
-  compact(h.coordinator);
-  overflow(h.coordinator);
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await overflow(h.coordinator);
+  await compact(h.coordinator);
+  await overflow(h.coordinator);
 
   expect(await h.spans()).toHaveLength(1);
   expect((await h.spans())[0]?.status.code).toBe(SpanStatusCode.ERROR);
 
-  h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } });
-  idle(h.coordinator);
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } });
+  await idle(h.coordinator);
 
   expect(await h.spans()).toHaveLength(1);
 });
@@ -438,9 +463,9 @@ test("another overflow during compaction fails immediately", async () => {
 test("summary failure terminates the run even without a second session.error", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  compact(h.coordinator);
-  reply(
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await compact(h.coordinator);
+  await reply(
     h.coordinator,
     assistant("summary", "compact", 1300, {
       summary: true,
@@ -457,7 +482,7 @@ test("summary failure terminates the run even without a second session.error", a
 test("terminal errors end once and late events cannot recreate or mutate a run", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
+  await h.coordinator.message(user(), [text("u1", "question")]);
 
   const error = {
     type: "session.error" as const,
@@ -467,11 +492,11 @@ test("terminal errors end once and late events cannot recreate or mutate a run",
     },
   };
 
-  h.coordinator.event(error);
-  h.coordinator.event(error);
-  reply(h.coordinator);
-  h.coordinator.event({ type: "message.updated", properties: { info: user() } });
-  idle(h.coordinator);
+  await h.coordinator.event(error);
+  await h.coordinator.event(error);
+  await reply(h.coordinator);
+  await h.coordinator.event({ type: "message.updated", properties: { info: user() } });
+  await idle(h.coordinator);
 
   const spans = await h.spans();
 
@@ -483,12 +508,12 @@ test("terminal errors end once and late events cannot recreate or mutate a run",
 test("errors without a session do not affect runs; unknown error types use _OTHER", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  h.coordinator.event({ type: "session.error", properties: { error: "unrelated" } });
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await h.coordinator.event({ type: "session.error", properties: { error: "unrelated" } });
 
   expect(await h.spans()).toHaveLength(0);
 
-  h.coordinator.event({
+  await h.coordinator.event({
     type: "session.error",
     properties: { sessionID: "s1", error: { message: "unclassified" } },
   });
@@ -512,8 +537,8 @@ test("custom attributes allow user.id but cannot override other derived or error
     },
   });
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  idle(h.coordinator);
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await idle(h.coordinator);
 
   const span = (await h.spans())[0];
 
@@ -534,12 +559,12 @@ test("resolved user identity is only used on newly created spans", async () => {
   const identity: { value?: string } = {};
   const h = setup({ userID: () => identity.value });
 
-  h.coordinator.userMessage(user(), [text("u1", "first")]);
+  await h.coordinator.message(user(), [text("u1", "first")]);
   identity.value = "alice";
-  idle(h.coordinator);
+  await idle(h.coordinator);
 
-  h.coordinator.userMessage(user("u2", 1500), [text("u2", "next")]);
-  idle(h.coordinator);
+  await h.coordinator.message(user("u2", 1500), [text("u2", "next")]);
+  await idle(h.coordinator);
 
   const spans = await h.spans();
 
@@ -547,24 +572,37 @@ test("resolved user identity is only used on newly created spans", async () => {
   expect(spans[1]?.attributes["user.id"]).toBe("alice");
 });
 
-test("closing the source tracker releases it without interpreting later events", async () => {
+test("dispose exports an unfinished run once and ignores later events", async () => {
   const h = setup();
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  h.coordinator.close();
-  h.coordinator.close();
-  h.coordinator.userMessage(user("u2", 1500), [text("u2", "ignored")]);
-  idle(h.coordinator);
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  await h.coordinator.hooks.dispose();
+  await h.coordinator.hooks.dispose();
+  await h.coordinator.message(user("u2", 1500), [text("u2", "ignored")]);
+  await idle(h.coordinator);
 
-  // The observer owns shutdown and the unfinished span; the tracker only releases source state.
-  expect(await h.spans()).toHaveLength(0);
+  const spans = await h.spans();
+
+  expect(spans).toHaveLength(1);
+  expect(spans[0]?.attributes["opencode.run.id"]).toBe("u1");
+  expect(spans[0]?.endTime).toEqual([2, 0]);
+  expect(spans[0]?.status).toEqual({
+    code: SpanStatusCode.ERROR,
+    message: "plugin disposed before run completed",
+  });
 });
 
 test("idle uses the event observation time even when processing is delayed", async () => {
-  const h = setup({ now: () => 9000 });
+  const clock = { time: 1000 };
+  const h = setup({ now: () => clock.time });
 
-  h.coordinator.userMessage(user(), [text("u1", "question")]);
-  h.coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await h.coordinator.message(user(), [text("u1", "question")]);
+  clock.time = 2000;
+  const idle = h.coordinator.hooks.event({
+    event: { type: "session.idle", properties: { sessionID: "s1" } },
+  });
+  clock.time = 9000;
+  await idle;
 
   expect((await h.spans())[0]?.endTime).toEqual([2, 0]);
 });

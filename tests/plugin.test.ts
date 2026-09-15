@@ -42,13 +42,7 @@ const servers: Server<undefined>[] = [];
 const hooks: Hooks[] = [];
 
 afterEach(async () => {
-  await Promise.all(
-    hooks.splice(0).map((hook) =>
-      hook.event?.({
-        event: { type: "server.instance.disposed", properties: { directory: "/test" } },
-      }),
-    ),
-  );
+  await Promise.all(hooks.splice(0).map((hook) => hook.dispose?.()));
   await Promise.all(servers.splice(0).map((server) => server.stop(true)));
 });
 
@@ -259,9 +253,7 @@ test("tool, permission and compaction with summary LLM export through plugin eve
     await hook.event?.({ event: event as Parameters<NonNullable<Hooks["event"]>>[0]["event"] });
   }
 
-  await hook.event?.({
-    event: { type: "server.instance.disposed", properties: { directory: "/test" } },
-  });
+  await hook.dispose?.();
   const spans = payloads.flatMap((payload) =>
     payload.resourceSpans.flatMap((resource) =>
       resource.scopeSpans.flatMap((scope) => scope.spans),
@@ -470,9 +462,7 @@ test("AI SDK history and generated tool calls reach OTLP through the plugin", as
       },
     },
   });
-  await hook.event?.({
-    event: { type: "server.instance.disposed", properties: { directory: "/test" } },
-  });
+  await hook.dispose?.();
 
   const span = payloads
     .flatMap((payload) =>
@@ -629,9 +619,7 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
   await Promise.all([start, llmStart, part, llmFinish, message, idle]);
 
   await hook.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
-  await hook.event?.({
-    event: { type: "server.instance.disposed", properties: { directory: "/test" } },
-  });
+  await hook.dispose?.();
 
   expect(payloads).toHaveLength(1);
   expect(requests).toEqual(["/global/health", "/v1/traces"]);
@@ -785,17 +773,17 @@ test("a slow collector does not block chat hooks and dispose waits for export", 
   const elapsed = performance.now() - before;
 
   expect(hook.dispose).toBeFunction();
-  const disposed = { complete: false };
+  const disposed = { complete: false, repeated: false };
   const disposal = hook.dispose?.().then(() => {
     disposed.complete = true;
   });
-  const repeated = hook.event?.({
-    event: { type: "server.instance.disposed", properties: { directory: "/test" } },
+  const repeated = hook.dispose?.().then(() => {
+    disposed.repeated = true;
   });
   await message("ignored");
   await hook.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
 
-  expect(disposed.complete).toBe(false);
+  expect(disposed).toEqual({ complete: false, repeated: false });
   clearTimeout(timeout);
   release.resolve();
   await Promise.all([idle, disposal, repeated]);
@@ -806,7 +794,7 @@ test("a slow collector does not block chat hooks and dispose waits for export", 
     ),
   );
 
-  expect(disposed.complete).toBe(true);
+  expect(disposed).toEqual({ complete: true, repeated: true });
   expect(elapsed).toBeLessThan(400);
   expect(spans.map((span) => [span.name, span.status.code ?? 0])).toEqual([
     ["opencode.interaction", 2],
@@ -876,9 +864,7 @@ test.each([
       parts: [{ id: "u1-text", messageID: "u1", sessionID: "s1", type: "text", text: "question" }],
     },
   );
-  await hook.event?.({
-    event: { type: "server.instance.disposed", properties: { directory: "/test" } },
-  });
+  await hook.dispose?.();
 
   expect(payloads).toHaveLength(1);
   payloads[0]?.resourceSpans.forEach((resource) => {

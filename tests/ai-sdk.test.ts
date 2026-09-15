@@ -1,14 +1,16 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import type { OnStartEvent, OnStepStartEvent, OnStepFinishEvent } from "ai";
 import { jsonSchema, Output, streamText, tool } from "ai";
 import { MockLanguageModelV3, convertArrayToReadableStream } from "ai/test";
 import type { LlmFinish, LlmUpdate, Observer } from "../src/contract/observer.js";
-import { createOpenCodeAdapter } from "../src/adapter/opencode/hooks.js";
+import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
 import type { LlmRequest } from "../src/adapter/model/request.js";
 
-const adapters: ReturnType<typeof createOpenCodeAdapter>[] = [];
+const adapters: ReturnType<typeof createCoordinator>[] = [];
 
-afterEach(() => adapters.splice(0).forEach((adapter) => adapter.close()));
+afterEach(async () => {
+  await Promise.all(adapters.splice(0).map((adapter) => adapter.hooks.dispose()));
+});
 
 async function setup(captureContent = true, log?: (error: unknown) => unknown) {
   const updates: LlmUpdate[] = [];
@@ -40,15 +42,13 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
     flush: async () => {},
     shutdown: async () => {},
   };
-  const adapter = createOpenCodeAdapter({
+  const adapter = createCoordinator({
     observer,
     captureContent,
-    directory: "/test",
     log(error) {
       errors.push(error);
       return log?.(error);
     },
-    onDispose: observer.shutdown,
   });
   adapters.push(adapter);
   await adapter.startModelMessageCapture();
@@ -287,7 +287,7 @@ test.each(["onStart", "onStepStart"] as const)(
   "AI SDK %s contains header cleanup failures and only logs to active instances",
   async (callback) => {
     const disposed = await setup();
-    disposed.adapter.close();
+    await disposed.adapter.hooks.dispose();
     const first = await setup(true, () => {
       throw new Error("logging failed");
     });
@@ -304,13 +304,60 @@ test.each(["onStart", "onStepStart"] as const)(
     expect(second.errors).toEqual(first.errors);
     expect(headers["X-Test"]).toBe("kept");
 
-    first.adapter.close();
-    second.adapter.close();
+    await first.adapter.hooks.dispose();
+    await second.adapter.hooks.dispose();
     await expect(integration()[callback]?.(event)).resolves.toBeUndefined();
     expect(first.errors).toHaveLength(1);
     expect(second.errors).toHaveLength(1);
   },
 );
+
+test("dispose continues observer shutdown when capture cleanup fails", async () => {
+  const h = await setup();
+  const failure = new Error("capture cleanup failed");
+  h.observer.shutdown = mock(async () => {});
+  const root = globalThis as typeof globalThis & {
+    __opencodeObserverModelCapture: { listeners: Set<unknown> };
+  };
+  const listeners = root.__opencodeObserverModelCapture.listeners;
+  const cleanup = spyOn(listeners, "delete").mockImplementation((listener) => {
+    Set.prototype.delete.call(listeners, listener);
+    throw failure;
+  });
+
+  try {
+    await expect(h.adapter.hooks.dispose()).resolves.toBeUndefined();
+    await h.adapter.hooks.dispose();
+  } finally {
+    cleanup.mockRestore();
+  }
+
+  expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
+  expect(h.errors).toEqual([failure]);
+});
+
+test("closing during SDK setup prevents late listener registration and restart", async () => {
+  const active = await setup();
+  const errors: unknown[] = [];
+  const closing = createCoordinator({
+    observer: active.observer,
+    log: (error) => errors.push(error),
+  });
+  adapters.push(closing);
+
+  const installation = closing.startModelMessageCapture();
+  await closing.hooks.dispose();
+  await installation;
+  await closing.startModelMessageCapture();
+  await integration().onStart?.(
+    inputEvent({}, Object.freeze({ "x-opencode-observer-request": "unbound" })) as OnStartEvent &
+      OnStepStartEvent,
+  );
+
+  expect(active.errors).toHaveLength(1);
+  expect(active.errors[0]).toBeInstanceOf(TypeError);
+  expect(errors).toEqual([]);
+});
 
 test("retry bindings discard old callbacks and session end releases a missing SDK output", async () => {
   const h = await setup();
@@ -393,7 +440,8 @@ test("capture disabled and disposed instances do not parse content and remove re
   const enabled = await setup();
   const disabled = await setup(false);
   const headers = await enabled.headers();
-  enabled.adapter.close();
+  await enabled.adapter.hooks.dispose();
+  expect(await enabled.headers()).toEqual({ "X-Test": "kept" });
   const disabledHeaders = await disabled.headers();
   const event = inputEvent({}, headers);
   Object.defineProperty(event, "messages", {

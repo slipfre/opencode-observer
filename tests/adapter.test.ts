@@ -11,9 +11,9 @@ import type {
   RunStart,
   RunUpdate,
 } from "../src/contract/observer.js";
-import { createOpenCodeAdapter } from "../src/adapter/opencode/hooks.js";
 import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
 import type { LlmRequest } from "../src/adapter/model/request.js";
+import { createCoordinatorHarness } from "./support/coordinator.js";
 
 function recording() {
   const starts: RunStart[] = [];
@@ -89,8 +89,8 @@ function text(messageID = "u1", content = "question"): TextPart {
   return { id: `${messageID}-text`, sessionID: "s1", messageID, type: "text", text: content };
 }
 
-function reply(
-  coordinator: ReturnType<typeof createCoordinator>,
+async function reply(
+  coordinator: ReturnType<typeof createCoordinatorHarness>,
   content = "answer",
   overrides: Partial<AssistantMessage> = {},
 ) {
@@ -109,11 +109,11 @@ function reply(
     finish: "stop",
     ...overrides,
   };
-  coordinator.event({
+  await coordinator.event({
     type: "message.part.updated",
     properties: { part: { ...text(info.id, content), sessionID: info.sessionID } },
   });
-  coordinator.event({ type: "message.updated", properties: { info } });
+  await coordinator.event({ type: "message.updated", properties: { info } });
 }
 
 function modelMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
@@ -179,11 +179,9 @@ function modelRequest(): LlmRequest {
 test("chat.params observes compatible API settings without mutating the hook output", async () => {
   const h = recording();
   const failures: unknown[] = [];
-  const adapter = createOpenCodeAdapter({
+  const adapter = createCoordinator({
     observer: h.observer,
-    directory: "/test",
     captureContent: true,
-    onDispose: h.observer.shutdown,
     log: (error) => failures.push(error),
   });
   const request = modelRequest();
@@ -223,11 +221,11 @@ test("chat.params observes compatible API settings without mutating the hook out
       maxTokens: undefined,
     },
   });
-  adapter.close();
+  await adapter.hooks.dispose();
 });
 
-function modelPart(
-  coordinator: ReturnType<typeof createCoordinator>,
+async function modelPart(
+  coordinator: ReturnType<typeof createCoordinatorHarness>,
   type: "step-start" | "step-finish",
   time: number,
   messageID = "a1",
@@ -246,30 +244,30 @@ function modelPart(
           tokens: { input: 10, output: 4, reasoning: 3, cache: { read: 2, write: 1 } },
         };
 
-  coordinator.event(
+  await coordinator.event(
     { type: "message.part.updated", properties: { part: { ...part, ...overrides } as Part } },
     time,
   );
 }
 
-test("request preparation starts one logical LLM before steps and preserves its owner across steer", () => {
+test("request preparation starts one logical LLM before steps and preserves its owner across steer", async () => {
   const h = recording();
   const headers = {
     traceparent: "00-12345678901234567890123456789012-1234567890123456-01",
     tracestate: "vendor=value",
   };
   h.observer.llmTraceHeaders = mock(() => headers);
-  const coordinator = createCoordinator({ observer: h.observer, now: () => 1080 });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, now: () => 1080 });
   const request = modelRequest();
-  coordinator.userMessage(user(), [text()]);
-  coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1050);
-  coordinator.request(...request);
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1050);
+  await coordinator.params(...request);
   expect(h.llms).toEqual([]);
 
-  expect(coordinator.prepareModel(request[0])).toEqual(headers);
-  coordinator.userMessage(user("u2", 1090), [text("u2", "steer")]);
-  expect(coordinator.prepareModel(request[0])).toEqual(headers);
-  modelPart(coordinator, "step-start", 1200);
+  expect(await coordinator.headers(request[0])).toEqual(headers);
+  await coordinator.message(user("u2", 1090), [text("u2", "steer")]);
+  expect(await coordinator.headers(request[0])).toEqual(headers);
+  await modelPart(coordinator, "step-start", 1200);
 
   expect(h.llms).toHaveLength(1);
   expect(h.llms[0]).toMatchObject({
@@ -285,11 +283,11 @@ test("request preparation starts one logical LLM before steps and preserves its 
     interaction: h.llms[0]!.interaction,
   });
 
-  modelPart(coordinator, "step-finish", 1300);
+  await modelPart(coordinator, "step-finish", 1300);
   expect(h.llmFinishes).toHaveLength(1);
-  expect(coordinator.prepareModel(request[0])).toBeUndefined();
-  coordinator.close();
-  expect(coordinator.prepareModel(request[0])).toBeUndefined();
+  expect(await coordinator.headers(request[0])).toEqual({});
+  await coordinator.hooks.dispose();
+  expect(await coordinator.headers(request[0])).toEqual({});
 });
 
 test.each([
@@ -301,12 +299,12 @@ test.each([
   "completed",
   "missing-parent",
   "summary",
-])("request preparation omits propagation for %s without inventing a span", (scenario) => {
+])("request preparation omits propagation for %s without inventing a span", async (scenario) => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer });
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
   const request = modelRequest()[0];
-  coordinator.userMessage(user(), [text()]);
-  coordinator.event({
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({
     type: "message.updated",
     properties: {
       info: modelMessage({
@@ -318,7 +316,7 @@ test.each([
   });
 
   if (scenario === "ambiguous") {
-    coordinator.event({
+    await coordinator.event({
       type: "message.updated",
       properties: { info: modelMessage({ id: "a2" }) },
     });
@@ -334,10 +332,10 @@ test.each([
       providerID: scenario === "provider" ? "unknown" : request.model.providerID,
     },
   };
-  expect(coordinator.prepareModel(input)).toBeUndefined();
+  expect(await coordinator.headers(input)).toEqual({});
   expect(h.llms).toEqual([]);
   expect(h.observer.llmTraceHeaders).not.toHaveBeenCalled();
-  coordinator.close();
+  await coordinator.hooks.dispose();
 });
 
 test.each([false, true])(
@@ -350,12 +348,10 @@ test.each([false, true])(
     };
     h.observer.llmTraceHeaders = mock(() => headers);
     const failures: unknown[] = [];
-    const adapter = createOpenCodeAdapter({
+    const adapter = createCoordinator({
       observer: h.observer,
-      directory: "/test",
       captureContent,
       log: (error) => failures.push(error),
-      onDispose: h.observer.shutdown,
     });
     const request = modelRequest();
     await adapter.hooks["chat.message"]?.(
@@ -387,7 +383,7 @@ test.each([false, true])(
     expect(h.llmFinishes).toHaveLength(1);
     expect(h.llmFinishes[0]?.error).toEqual({ type: "APIError", message: "before first step" });
     expect(h.llmFinishes[0]?.usage).toBeUndefined();
-    adapter.close();
+    await adapter.hooks.dispose();
   },
 );
 
@@ -410,13 +406,11 @@ test.each([
       id: input.id,
     };
     const failures: unknown[] = [];
-    const adapter = createOpenCodeAdapter({
+    const adapter = createCoordinator({
       observer: h.observer,
-      directory: "/test",
       captureContent: false,
       userIdentity: identity,
       log: (error) => failures.push(error),
-      onDispose: h.observer.shutdown,
     });
     const request = modelRequest()[0];
     identity.enabled = !identity.enabled;
@@ -446,7 +440,7 @@ test.each([
     const title = { headers: {} };
     await adapter.hooks["chat.headers"]?.({ ...request, agent: "title" }, title);
     expect(title.headers).toEqual({});
-    adapter.close();
+    await adapter.hooks.dispose();
     const disposed = { headers: {} };
     await adapter.hooks["chat.headers"]?.(request, disposed);
     expect(disposed.headers).toEqual({});
@@ -460,12 +454,10 @@ test("a propagation failure leaves the model headers usable and is contained by 
     throw failure;
   };
   const failures: unknown[] = [];
-  const adapter = createOpenCodeAdapter({
+  const adapter = createCoordinator({
     observer: h.observer,
-    directory: "/test",
     captureContent: false,
     log: (error) => failures.push(error),
-    onDispose: h.observer.shutdown,
   });
   await adapter.hooks["chat.message"]?.({ sessionID: "s1" }, { message: user(), parts: [text()] });
   await adapter.hooks.event?.({
@@ -477,16 +469,16 @@ test("a propagation failure leaves the model headers usable and is contained by 
 
   expect(output.headers).toEqual({ "X-Test": "kept" });
   expect(failures).toEqual([failure]);
-  adapter.close();
+  await adapter.hooks.dispose();
 });
 
-test("source messages become run operations with explicit unsupported associations", () => {
+test("source messages become run operations with explicit unsupported associations", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
 
-  coordinator.userMessage(user(), [text(), { ...text(), id: "synthetic", synthetic: true }]);
-  coordinator.userMessage(user("u2", 1500), [text("u2", "steer")]);
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2500);
+  await coordinator.message(user(), [text(), { ...text(), id: "synthetic", synthetic: true }]);
+  await coordinator.message(user("u2", 1500), [text("u2", "steer")]);
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2500);
 
   expect(h.starts).toEqual([
     {
@@ -507,13 +499,13 @@ test("source messages become run operations with explicit unsupported associatio
   ]);
 });
 
-test("disabled capture never sends user or assistant bodies across the contract", () => {
+test("disabled capture never sends user or assistant bodies across the contract", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: false });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: false });
 
-  coordinator.userMessage(user(), [text("u1", "secret input")]);
-  reply(coordinator, "secret output");
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await coordinator.message(user(), [text("u1", "secret input")]);
+  await reply(coordinator, "secret output");
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
 
   expect(h.updates[0]?.input.text).toBeUndefined();
   expect(h.finishes[0]?.output).toBeUndefined();
@@ -523,16 +515,16 @@ test("disabled capture never sends user or assistant bodies across the contract"
   ).not.toContain("secret");
 });
 
-test("replayed user hooks cannot reopen an ended run or attach old input to the next run", () => {
+test("replayed user hooks cannot reopen an ended run or attach old input to the next run", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
 
-  coordinator.userMessage(user(), [text()]);
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
-  coordinator.userMessage(user(), [text("u1", "replayed")]);
-  coordinator.userMessage(user("u2", 3000), [text("u2", "next")]);
-  coordinator.userMessage(user(), [text("u1", "late old input")]);
-  coordinator.userMessage(user("u1", 1000, "s2"), [{ ...text(), sessionID: "s2" }]);
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await coordinator.message(user(), [text("u1", "replayed")]);
+  await coordinator.message(user("u2", 3000), [text("u2", "next")]);
+  await coordinator.message(user(), [text("u1", "late old input")]);
+  await coordinator.message(user("u1", 1000, "s2"), [{ ...text(), sessionID: "s2" }]);
 
   expect(h.starts.map((input) => [input.sessionID, input.id])).toEqual([
     ["s1", "u1"],
@@ -548,12 +540,12 @@ test("replayed user hooks cannot reopen an ended run or attach old input to the 
   ]);
 });
 
-test("recoverable overflow is interpreted before submitting a terminal failure", () => {
+test("recoverable overflow is interpreted before submitting a terminal failure", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer });
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
 
-  coordinator.userMessage(user(), [text()]);
-  coordinator.event(
+  await coordinator.message(user(), [text()]);
+  await coordinator.event(
     {
       type: "session.error",
       properties: {
@@ -567,7 +559,7 @@ test("recoverable overflow is interpreted before submitting a terminal failure",
   expect(h.finishes).toHaveLength(0);
   expect(h.completed).toHaveLength(0);
 
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
 
   expect(h.finishes).toEqual([
     {
@@ -586,12 +578,94 @@ test("recoverable overflow is interpreted before submitting a terminal failure",
   });
 });
 
+test("hooks record synchronously with the coordinator clock before asynchronous export", async () => {
+  const h = recording();
+  const clock = { time: 1000 };
+  const flushing = Promise.withResolvers<void>();
+  h.observer.flush = mock(() => flushing.promise);
+  const coordinator = createCoordinator({ observer: h.observer, now: () => clock.time });
+
+  const message = coordinator.hooks["chat.message"]?.(
+    { sessionID: "s1" },
+    { message: user(), parts: [text()] },
+  );
+
+  expect(h.starts).toHaveLength(1);
+  expect(h.interactions).toHaveLength(1);
+
+  clock.time = 2000;
+  const idle = coordinator.hooks.event?.({
+    event: { type: "session.idle", properties: { sessionID: "s1" } },
+  });
+  clock.time = 3000;
+
+  expect(h.finishes).toHaveLength(1);
+  expect(h.finishes[0]?.endedAt).toBe(2000);
+  expect(h.completed[0]?.endedAt).toBe(2000);
+  expect(h.observer.flush).toHaveBeenCalledTimes(1);
+  await message;
+  await idle;
+  flushing.resolve();
+  await coordinator.hooks.dispose();
+});
+
+test("dispose stops observation immediately and waits for one shared shutdown", async () => {
+  const h = recording();
+  const shutdown = Promise.withResolvers<void>();
+  const settled = { value: false };
+  h.observer.shutdown = mock(() => shutdown.promise);
+  const coordinator = createCoordinator({ observer: h.observer });
+  const request = modelRequest();
+  await coordinator.hooks["chat.message"](
+    { sessionID: "s1" },
+    { message: user(), parts: [text()] },
+  );
+  await coordinator.hooks.event({
+    event: { type: "message.updated", properties: { info: modelMessage() } },
+  });
+  const disposal = coordinator.hooks.dispose();
+  const repeated = coordinator.hooks.dispose();
+  void disposal.then(() => {
+    settled.value = true;
+  });
+
+  await coordinator.hooks["chat.message"](
+    { sessionID: "s1" },
+    { message: user("u2", 2000), parts: [text("u2")] },
+  );
+  await coordinator.hooks["chat.params"](...request);
+  const output = { headers: { "X-Test": "kept" } };
+  await coordinator.hooks["chat.headers"](request[0], output);
+  await coordinator.hooks.event({
+    event: { type: "session.idle", properties: { sessionID: "s1" } },
+  });
+
+  expect(h.starts).toHaveLength(1);
+  expect(h.interactions).toHaveLength(1);
+  expect(h.llms).toHaveLength(0);
+  expect(h.llmUpdates).toHaveLength(0);
+  expect(h.finishes).toHaveLength(0);
+  expect(h.observer.flush).not.toHaveBeenCalled();
+  expect(h.observer.llmTraceHeaders).not.toHaveBeenCalled();
+  expect(output.headers).toEqual({ "X-Test": "kept" });
+  expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
+  expect(repeated).toBe(disposal);
+  expect(settled.value).toBe(false);
+
+  shutdown.resolve();
+  await Promise.all([disposal, repeated]);
+
+  expect(settled.value).toBe(true);
+  expect(coordinator.hooks.dispose()).toBe(disposal);
+  expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
+});
+
 test("hooks isolate recording and export failures and return before flush settles", async () => {
   const h = recording();
   const error = new Error("recording failed");
   const flushing = Promise.withResolvers<void>();
   const failures: unknown[] = [];
-  const adapter = createOpenCodeAdapter({
+  const adapter = createCoordinator({
     observer: {
       ...h.observer,
       startRun() {
@@ -601,9 +675,7 @@ test("hooks isolate recording and export failures and return before flush settle
         return flushing.promise;
       },
     },
-    directory: "/test",
     captureContent: true,
-    onDispose: h.observer.shutdown,
     log(error) {
       failures.push(error);
     },
@@ -621,7 +693,7 @@ test("hooks isolate recording and export failures and return before flush settle
 
   expect(failures).toHaveLength(2);
   expect(failures[1]).toEqual(new Error("export failed"));
-  adapter.close();
+  await adapter.hooks.dispose();
 });
 
 test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async (mode) => {
@@ -629,7 +701,14 @@ test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async
   const exportError = new Error("export failed");
   const disposeError = new Error("disposal failed");
   const failures: unknown[] = [];
-  const adapter = createOpenCodeAdapter({
+  h.observer.shutdown = mock(() => {
+    if (mode === "throw") {
+      throw disposeError;
+    }
+
+    return Promise.reject(disposeError);
+  });
+  const adapter = createCoordinator({
     observer: {
       ...h.observer,
       flush() {
@@ -640,16 +719,8 @@ test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async
         return Promise.reject(exportError);
       },
     },
-    directory: "/test",
     captureContent: false,
     log: (error) => failures.push(error),
-    onDispose() {
-      if (mode === "throw") {
-        throw disposeError;
-      }
-
-      return Promise.reject(disposeError);
-    },
   });
 
   await expect(
@@ -660,12 +731,16 @@ test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async
       event: { type: "server.instance.disposed", properties: { directory: "/test" } },
     }),
   ).resolves.toBeUndefined();
+
+  expect(failures).toEqual([exportError]);
+
   await expect(adapter.hooks.dispose?.()).resolves.toBeUndefined();
   await adapter.hooks["chat.message"]?.({ sessionID: "s1" }, { message: user(), parts: [text()] });
+  await adapter.hooks.dispose();
 
-  expect(failures).toEqual([exportError, disposeError, disposeError]);
-  expect(h.starts).toHaveLength(1);
-  adapter.close();
+  expect(failures).toEqual([exportError, disposeError]);
+  expect(h.starts).toHaveLength(0);
+  expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
 });
 
 test.each(["throw", "reject"])(
@@ -674,11 +749,9 @@ test.each(["throw", "reject"])(
     const h = recording();
     const failures: unknown[] = [];
     const errors = ["message", "params", "headers", "event"].map((name) => new Error(name));
-    const adapter = createOpenCodeAdapter({
+    const adapter = createCoordinator({
       observer: h.observer,
-      directory: "/test",
       captureContent: true,
-      onDispose: h.observer.shutdown,
       log(error) {
         failures.push(error);
 
@@ -732,17 +805,17 @@ test.each(["throw", "reject"])(
     expect(failures).toEqual(errors);
     expect(output).toEqual({ message: user(), parts: [text()] });
     expect(h.starts).toHaveLength(1);
-    adapter.close();
+    await adapter.hooks.dispose();
   },
 );
 
-test("interaction uses the owner agent and assistant completion time while run uses idle observation", () => {
+test("interaction uses the owner agent and assistant completion time while run uses idle observation", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
 
-  coordinator.userMessage({ ...user(), agent: "review" }, [text()]);
-  reply(coordinator, "final");
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2500);
+  await coordinator.message({ ...user(), agent: "review" }, [text()]);
+  await reply(coordinator, "final");
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2500);
 
   expect(h.interactions).toEqual([
     {
@@ -768,27 +841,30 @@ test("interaction uses the owner agent and assistant completion time while run u
   expect(h.finishes[0]).toMatchObject({ endedAt: 2500, output: "final" });
 });
 
-test("steer supersedes the old interaction exactly at the next input and ignores late old output", () => {
+test("steer supersedes the old interaction exactly at the next input and ignores late old output", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
 
-  coordinator.userMessage(user(), [text()]);
-  reply(coordinator, "intermediate");
-  coordinator.userMessage(user("u2", 1500), [text("u2", "steer")]);
-  coordinator.event({ type: "message.updated", properties: { info: user("continue", 1400) } });
-  reply(coordinator, "final", {
+  await coordinator.message(user(), [text()]);
+  await reply(coordinator, "intermediate");
+  await coordinator.message(user("u2", 1500), [text("u2", "steer")]);
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: user("continue", 1400) },
+  });
+  await reply(coordinator, "final", {
     id: "a2",
     parentID: "u2",
     time: { created: 1600, completed: 1700 },
   });
-  reply(coordinator, "late old", {
+  await reply(coordinator, "late old", {
     id: "old",
     parentID: "continue",
     time: { created: 1800, completed: 1900 },
   });
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2500);
-  reply(coordinator, "late after idle");
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 3000);
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2500);
+  await reply(coordinator, "late after idle");
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 3000);
 
   expect(h.completed).toEqual([
     { run: { sessionID: "s1", id: "u1" }, id: "u1", endedAt: 1500, status: "superseded" },
@@ -805,68 +881,68 @@ test("steer supersedes the old interaction exactly at the next input and ignores
   expect(h.finishes[0]?.output).toBe("final");
 });
 
-test("synthetic and compaction messages retain the interaction through successful recovery", () => {
+test("synthetic and compaction messages retain the interaction through successful recovery", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
 
-  coordinator.userMessage(user(), [{ ...text(), synthetic: true }]);
-  coordinator.userMessage(user(), [
+  await coordinator.message(user(), [{ ...text(), synthetic: true }]);
+  await coordinator.message(user(), [
     { id: "c", sessionID: "s1", messageID: "u1", type: "compaction", auto: true },
   ]);
 
   expect(h.interactions).toHaveLength(0);
 
-  coordinator.userMessage(user(), [
+  await coordinator.message(user(), [
     { ...text(), ignored: true },
     { ...text("u1", "real"), id: "real" },
   ]);
-  coordinator.event(
+  await coordinator.event(
     {
       type: "session.error",
       properties: { sessionID: "s1", error: { name: "ContextOverflowError" } },
     },
     1200,
   );
-  coordinator.event({ type: "message.updated", properties: { info: user("compact", 1300) } });
-  coordinator.event({
+  await coordinator.event({ type: "message.updated", properties: { info: user("compact", 1300) } });
+  await coordinator.event({
     type: "message.part.updated",
     properties: {
       part: { id: "c", sessionID: "s1", messageID: "compact", type: "compaction", auto: true },
     },
   });
-  reply(coordinator, "summary", {
+  await reply(coordinator, "summary", {
     id: "summary",
     parentID: "compact",
     summary: true,
     time: { created: 1300, completed: 1350 },
   });
-  coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } });
-  coordinator.userMessage(user("continue", 1400), [
+  await coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } });
+  await coordinator.message(user("continue", 1400), [
     { ...text("continue", "continue"), synthetic: true },
   ]);
 
   expect(h.completed).toHaveLength(0);
 
-  reply(coordinator, "recovered", {
+  await reply(coordinator, "recovered", {
     id: "a2",
     parentID: "continue",
     time: { created: 1500, completed: 1600 },
   });
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
 
   expect(h.interactions).toHaveLength(1);
   expect(h.interactions[0]?.input).toBe("real");
   expect(h.completed[0]).toMatchObject({ status: "completed", endedAt: 1600, output: "recovered" });
 });
 
-test("latest unfinished assistant causes observed-time cleanup instead of a fabricated completion", () => {
+test("latest unfinished assistant causes observed-time cleanup instead of a fabricated completion", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
 
-  coordinator.userMessage(user(), [text()]);
-  reply(coordinator, "earlier answer");
-  reply(coordinator, "unfinished", { id: "a2", time: { created: 1500 } });
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await coordinator.message(user(), [text()]);
+  await reply(coordinator, "earlier answer");
+  await reply(coordinator, "unfinished", { id: "a2", time: { created: 1500 } });
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
 
   expect(h.completed[0]).toMatchObject({
     status: "failed",
@@ -876,15 +952,15 @@ test("latest unfinished assistant causes observed-time cleanup instead of a fabr
   expect(h.finishes[0]).toMatchObject({ output: undefined, error: undefined });
 });
 
-test("terminal assistant error fails its interaction without inventing a run-level failure", () => {
+test("terminal assistant error fails its interaction without inventing a run-level failure", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
 
-  coordinator.userMessage(user(), [text()]);
-  reply(coordinator, "partial", {
+  await coordinator.message(user(), [text()]);
+  await reply(coordinator, "partial", {
     error: { name: "UnknownError", data: { message: "generation failed" } },
   });
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
 
   expect(h.completed[0]).toMatchObject({
     status: "failed",
@@ -894,39 +970,42 @@ test("terminal assistant error fails its interaction without inventing a run-lev
   expect(h.finishes[0]?.output).toBeUndefined();
 });
 
-test("new interactions resolve user identity independently without altering the existing run", () => {
+test("new interactions resolve user identity independently without altering the existing run", async () => {
   const h = recording();
   const identity: { value?: string } = {};
-  const coordinator = createCoordinator({ observer: h.observer, userID: () => identity.value });
+  const coordinator = createCoordinatorHarness({
+    observer: h.observer,
+    userID: () => identity.value,
+  });
 
-  coordinator.userMessage(user(), [text()]);
+  await coordinator.message(user(), [text()]);
   identity.value = "alice";
-  coordinator.userMessage(user("u2", 1500), [text("u2", "steer")]);
+  await coordinator.message(user("u2", 1500), [text("u2", "steer")]);
 
   expect(h.starts[0]?.userID).toBeUndefined();
   expect(h.interactions.map((item) => item.userID)).toEqual([undefined, "alice"]);
 });
 
-test("LLM steps establish observed boundaries, request metadata and normalized usage", () => {
+test("LLM steps establish observed boundaries, request metadata and normalized usage", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
   const request = modelRequest();
-  coordinator.userMessage(user(), [text()]);
-  coordinator.request(...request);
-  coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1060);
+  await coordinator.message(user(), [text()]);
+  await coordinator.params(...request);
+  await coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1060);
 
   expect(h.llms).toHaveLength(0);
 
-  modelPart(coordinator, "step-start", 1100);
-  coordinator.event(
+  await modelPart(coordinator, "step-start", 1100);
+  await coordinator.event(
     { type: "message.part.updated", properties: { part: text("a1", "partial") } },
     1150,
   );
-  coordinator.event(
+  await coordinator.event(
     { type: "message.part.updated", properties: { part: text("a1", "answer") } },
     1200,
   );
-  modelPart(coordinator, "step-finish", 1300);
+  await modelPart(coordinator, "step-finish", 1300);
 
   expect(h.llms[0]).toMatchObject({
     id: "a1",
@@ -960,7 +1039,7 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
   expect(h.llmFinishes[0]?.error).toBeUndefined();
   expect(JSON.stringify(h.llms)).not.toContain("secret");
 
-  coordinator.event(
+  await coordinator.event(
     {
       type: "message.updated",
       properties: {
@@ -969,8 +1048,8 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
     },
     3500,
   );
-  modelPart(coordinator, "step-finish", 4000);
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 4500);
+  await modelPart(coordinator, "step-finish", 4000);
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 4500);
 
   expect(h.llms).toHaveLength(1);
   expect(h.llmFinishes).toHaveLength(1);
@@ -978,57 +1057,57 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
   expect(h.completed[0]?.endedAt).toBe(3000);
 });
 
-test("LLM spans omit fabricated assistants, unmatched parents, summaries and finish-only observations", () => {
+test("LLM spans omit fabricated assistants, unmatched parents, summaries and finish-only observations", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
-  coordinator.userMessage(user(), [text()]);
-  reply(coordinator);
-  coordinator.event(
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
+  await coordinator.message(user(), [text()]);
+  await reply(coordinator);
+  await coordinator.event(
     {
       type: "message.updated",
       properties: { info: modelMessage({ id: "summary", summary: true }) },
     },
     1100,
   );
-  modelPart(coordinator, "step-start", 1200, "summary");
-  coordinator.event(
+  await modelPart(coordinator, "step-start", 1200, "summary");
+  await coordinator.event(
     {
       type: "message.updated",
       properties: { info: modelMessage({ id: "orphan", parentID: "unknown" }) },
     },
     1100,
   );
-  modelPart(coordinator, "step-start", 1200, "orphan");
-  coordinator.event(
+  await modelPart(coordinator, "step-start", 1200, "orphan");
+  await coordinator.event(
     { type: "message.updated", properties: { info: modelMessage({ id: "finish-only" }) } },
     1100,
   );
-  modelPart(coordinator, "step-finish", 1300, "finish-only");
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await modelPart(coordinator, "step-finish", 1300, "finish-only");
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
 
   expect(h.llms).toEqual([]);
   expect(h.llmFinishes).toEqual([]);
 });
 
-test("LLM step events can precede metadata and late synthetic ownership stays with the old interaction", () => {
+test("LLM step events can precede metadata and late synthetic ownership stays with the old interaction", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
-  coordinator.userMessage(user(), [text()]);
-  coordinator.userMessage(user("u2", 1500), [text("u2", "steer")]);
-  modelPart(coordinator, "step-start", 1600);
-  coordinator.event(
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
+  await coordinator.message(user(), [text()]);
+  await coordinator.message(user("u2", 1500), [text("u2", "steer")]);
+  await modelPart(coordinator, "step-start", 1600);
+  await coordinator.event(
     { type: "message.part.updated", properties: { part: text("a1", "old answer") } },
     1650,
   );
-  modelPart(coordinator, "step-finish", 1700);
-  coordinator.event(
+  await modelPart(coordinator, "step-finish", 1700);
+  await coordinator.event(
     { type: "message.updated", properties: { info: modelMessage({ parentID: "continuation" }) } },
     1800,
   );
 
   expect(h.llms).toHaveLength(0);
 
-  coordinator.event(
+  await coordinator.event(
     { type: "message.updated", properties: { info: user("continuation", 1400) } },
     1900,
   );
@@ -1041,17 +1120,17 @@ test("LLM step events can precede metadata and late synthetic ownership stays wi
   expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1700, output: "old answer" });
 });
 
-test("LLM retries retain one span, reset attempt text and ignore scheduled retry time", () => {
+test("LLM retries retain one span, reset attempt text and ignore scheduled retry time", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer, captureContent: true });
-  coordinator.userMessage(user(), [text()]);
-  coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1050);
-  modelPart(coordinator, "step-start", 1100);
-  coordinator.event(
+  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1050);
+  await modelPart(coordinator, "step-start", 1100);
+  await coordinator.event(
     { type: "message.part.updated", properties: { part: text("a1", "failed partial") } },
     1150,
   );
-  coordinator.event(
+  await coordinator.event(
     {
       type: "session.status",
       properties: {
@@ -1064,21 +1143,21 @@ test("LLM retries retain one span, reset attempt text and ignore scheduled retry
 
   expect(h.llmFinishes).toHaveLength(0);
 
-  modelPart(coordinator, "step-start", 1600, "a1", { id: "retry-step" });
-  coordinator.event(
+  await modelPart(coordinator, "step-start", 1600, "a1", { id: "retry-step" });
+  await coordinator.event(
     {
       type: "message.part.updated",
       properties: { part: { ...text("a1", "recovered"), id: "retry-text" } },
     },
     1650,
   );
-  coordinator.event(
+  await coordinator.event(
     { type: "message.part.updated", properties: { part: text("a1", "late failed partial") } },
     1675,
   );
-  modelPart(coordinator, "step-start", 1700, "a1", { id: "retry-step" });
-  modelPart(coordinator, "step-finish", 1800);
-  modelPart(coordinator, "step-start", 1900, "a1", { id: "late-step" });
+  await modelPart(coordinator, "step-start", 1700, "a1", { id: "retry-step" });
+  await modelPart(coordinator, "step-finish", 1800);
+  await modelPart(coordinator, "step-start", 1900, "a1", { id: "late-step" });
 
   expect(h.llms).toHaveLength(1);
   expect(h.llms[0]?.startedAt).toBe(1100);
@@ -1087,13 +1166,13 @@ test("LLM retries retain one span, reset attempt text and ignore scheduled retry
   expect(h.llmFinishes[0]?.error).toBeUndefined();
 });
 
-test("recoverable overflow fails only the active model call and idle cleans unfinished calls", () => {
+test("recoverable overflow fails only the active model call and idle cleans unfinished calls", async () => {
   const h = recording();
-  const coordinator = createCoordinator({ observer: h.observer });
-  coordinator.userMessage(user(), [text()]);
-  coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1050);
-  modelPart(coordinator, "step-start", 1100);
-  coordinator.event(
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1050);
+  await modelPart(coordinator, "step-start", 1100);
+  await coordinator.event(
     {
       type: "session.error",
       properties: {
@@ -1111,7 +1190,7 @@ test("recoverable overflow fails only the active model call and idle cleans unfi
   expect(h.completed).toHaveLength(0);
   expect(h.finishes).toHaveLength(0);
 
-  coordinator.event(
+  await coordinator.event(
     {
       type: "message.part.updated",
       properties: {
@@ -1126,14 +1205,14 @@ test("recoverable overflow fails only the active model call and idle cleans unfi
     },
     1250,
   );
-  coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1400);
-  coordinator.event(
+  await coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1400);
+  await coordinator.event(
     { type: "message.updated", properties: { info: modelMessage({ id: "a2" }) } },
     1450,
   );
-  modelPart(coordinator, "step-start", 1500, "a2");
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
-  coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2100);
+  await modelPart(coordinator, "step-start", 1500, "a2");
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2100);
 
   expect(h.llmFinishes).toHaveLength(2);
   expect(h.llmFinishes[1]).toMatchObject({
@@ -1145,28 +1224,31 @@ test("recoverable overflow fails only the active model call and idle cleans unfi
 
 test.each([true, false])(
   "LLM text snapshots respect removal and capture=%s without fabricating token data",
-  (captureContent) => {
+  async (captureContent) => {
     const h = recording();
-    const coordinator = createCoordinator({ observer: h.observer, captureContent });
-    coordinator.userMessage(user(), [text("u1", "secret")]);
-    coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1050);
-    modelPart(coordinator, "step-start", 1100);
-    coordinator.event(
+    const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent });
+    await coordinator.message(user(), [text("u1", "secret")]);
+    await coordinator.event(
+      { type: "message.updated", properties: { info: modelMessage() } },
+      1050,
+    );
+    await modelPart(coordinator, "step-start", 1100);
+    await coordinator.event(
       { type: "message.part.updated", properties: { part: text("a1", "removed") } },
       1150,
     );
-    coordinator.event(
+    await coordinator.event(
       {
         type: "message.part.removed",
         properties: { sessionID: "s1", messageID: "a1", partID: "a1-text" },
       },
       1175,
     );
-    coordinator.event(
+    await coordinator.event(
       { type: "message.part.updated", properties: { part: { ...text("a1", ""), id: "empty" } } },
       1200,
     );
-    modelPart(coordinator, "step-finish", 1300, "a1", {
+    await modelPart(coordinator, "step-finish", 1300, "a1", {
       tokens: {
         input: Number.NaN,
         output: -1,

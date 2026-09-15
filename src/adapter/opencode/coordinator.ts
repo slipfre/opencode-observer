@@ -1,3 +1,4 @@
+import type { Hooks } from "@opencode-ai/plugin";
 import type { Event, Part, UserMessage } from "@opencode-ai/sdk";
 import type { PermissionRequest } from "@opencode-ai/sdk/v2";
 import type {
@@ -7,7 +8,10 @@ import type {
   ToolReference,
 } from "../../contract/observer.js";
 import { errorDetails } from "../shared/error.js";
+import { createGuard } from "../shared/guard.js";
+import type { createModelMessageCapture } from "../model/ai-sdk.js";
 import { parseErrorResponseHeaders } from "../model/headers.js";
+import { userTraceState } from "../model/trace-state.js";
 import { createInteractionTracker, type InteractionOwner } from "../trackers/interaction.js";
 import { createLlmTracker } from "../trackers/llm.js";
 import type { LlmRequest } from "../model/request.js";
@@ -32,8 +36,10 @@ export type OpenCodeEvent =
 export type CoordinatorOptions = {
   observer: Observer;
   captureContent?: boolean;
+  userIdentity?: { enabled: boolean; id?: string };
   userID?: () => string | undefined;
   now?: () => number;
+  log?: (error: unknown) => unknown;
 };
 
 type SessionState = {
@@ -49,11 +55,108 @@ type SessionState = {
 };
 
 export function createCoordinator(options: CoordinatorOptions) {
+  const log = options.log ?? (() => {});
+  const guard = createGuard(log);
+  const userIdentity = options.userIdentity ? { ...options.userIdentity } : undefined;
   const runs = createRunTracker(options);
   const sessions = new Map<string, SessionState>();
   const registry = createSessionRegistry();
-  const state = { closed: false };
+  const state = {
+    closed: false,
+    shutdown: undefined as Promise<void> | undefined,
+    messageCapture: undefined as ReturnType<typeof createModelMessageCapture> | undefined,
+    messageCaptureSetup: undefined as Promise<void> | undefined,
+  };
   const now = options.now ?? Date.now;
+  const hooks = {
+    dispose() {
+      state.shutdown ??= guard(() => {
+        state.closed = true;
+        void guard(() => state.messageCapture?.close());
+        void guard(() => {
+          sessions.forEach((session) => {
+            session.llms.clear();
+            session.tools.clear();
+            session.compactions.clear();
+            session.permissions.clear();
+          });
+          sessions.clear();
+          registry.clear();
+          runs.close();
+        });
+        return options.observer.shutdown();
+      });
+      return state.shutdown;
+    },
+    "chat.message": (_input, output) =>
+      guard(() => {
+        if (!state.closed) {
+          userMessage(output.message, output.parts);
+        }
+      }),
+    "chat.params": (input, output) => guard(() => request(input, output)),
+    "chat.headers": (input, output) =>
+      guard(() => {
+        if (state.closed) {
+          return;
+        }
+
+        const headers = prepareModel(input);
+        Object.assign(
+          output.headers,
+          headers && userIdentity?.enabled
+            ? { ...headers, tracestate: userTraceState(headers.tracestate, userIdentity.id) }
+            : headers,
+        );
+        state.messageCapture?.attachCorrelationHeader(input, output);
+      }),
+    event: (input: { event: OpenCodeEvent }) =>
+      guard(() => {
+        const observedAt = now();
+        const source = input.event;
+
+        if (state.closed) {
+          return;
+        }
+
+        event(source, observedAt);
+
+        if (
+          source.type === "session.idle" ||
+          source.type === "session.error" ||
+          source.type === "session.deleted" ||
+          (source.type === "session.status" && source.properties.status.type === "idle")
+        ) {
+          void guard(() => options.observer.flush());
+        }
+      }),
+  } satisfies Hooks;
+
+  async function installModelMessageCapture() {
+    const { createModelMessageCapture } = await import("../model/ai-sdk.js");
+
+    if (!state.closed) {
+      state.messageCapture = createModelMessageCapture({
+        bind: bindModel,
+        captureContent: options.captureContent ?? false,
+        log,
+      });
+    }
+  }
+
+  function bindModel(input: LlmRequest[0]) {
+    return state.closed ? undefined : sessions.get(input.sessionID)?.llms.bind(input);
+  }
+
+  function prepareModel(input: LlmRequest[0]) {
+    return state.closed ? undefined : sessions.get(input.sessionID)?.llms.prepare(input, now());
+  }
+
+  function request(input: LlmRequest[0], output: LlmRequest[1]) {
+    if (!state.closed) {
+      sessions.get(input.sessionID)?.llms.request(input, output);
+    }
+  }
 
   function userMessage(info: UserMessage, parts: Part[]) {
     if (state.closed) {
@@ -373,30 +476,19 @@ export function createCoordinator(options: CoordinatorOptions) {
   }
 
   return {
-    userMessage,
-    event,
-    bindModel(input: LlmRequest[0]) {
-      return state.closed ? undefined : sessions.get(input.sessionID)?.llms.bind(input);
-    },
-    prepareModel(input: LlmRequest[0]) {
-      return state.closed ? undefined : sessions.get(input.sessionID)?.llms.prepare(input, now());
-    },
-    request(input: LlmRequest[0], output: LlmRequest[1]) {
-      if (!state.closed) {
-        sessions.get(input.sessionID)?.llms.request(input, output);
+    hooks,
+    startModelMessageCapture() {
+      // Native runtime bypasses AI SDK callbacks, so it cannot consume a correlation header.
+      const native = ["1", "true", "yes", "on"].includes(
+        (process.env.OPENCODE_EXPERIMENTAL_NATIVE_LLM ?? "").toLowerCase(),
+      );
+
+      if (state.closed || native) {
+        return Promise.resolve();
       }
-    },
-    close() {
-      state.closed = true;
-      sessions.forEach((session) => {
-        session.llms.clear();
-        session.tools.clear();
-        session.compactions.clear();
-        session.permissions.clear();
-      });
-      sessions.clear();
-      registry.clear();
-      runs.close();
+
+      state.messageCaptureSetup ??= installModelMessageCapture();
+      return state.messageCaptureSetup;
     },
   };
 }
