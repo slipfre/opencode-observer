@@ -47,9 +47,5 @@ export function createSessionRegistry() {
       parents.delete(sessionID);
       tasks.delete(sessionID);
     },
-    clear() {
-      parents.clear();
-      tasks.clear();
-    },
   };
 }

@@ -124,8 +124,6 @@ export function createInteractionSpans(
           error: { type: "_OTHER", message: "plugin disposed before interaction completed" },
         }),
       );
-      finished.clear();
-      contexts.clear();
     },
   };
 }

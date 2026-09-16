@@ -283,6 +283,47 @@ test("AI SDK removes headers synchronously despite input recording and diagnosti
   expect(h.errors).toEqual([failure]);
 });
 
+test.each(["throw", "reject"])(
+  "failed model settings preserve other fields when logging %s",
+  async (mode) => {
+    const failure = new Error("schema unavailable");
+    const log = mock(() => {
+      if (mode === "throw") {
+        throw new Error("logging failed");
+      }
+
+      return Promise.reject(new Error("logging failed"));
+    });
+    const h = await setup(true, log);
+    const metadata = {};
+
+    await integration().onStepStart?.({
+      ...inputEvent(metadata, await h.headers()),
+      output: Output.json(),
+      tools: {
+        broken: tool({ inputSchema: jsonSchema(() => Promise.reject(failure)) }),
+        working: tool({ inputSchema: jsonSchema({ type: "object" }) }),
+      },
+    });
+    await Bun.sleep(0);
+
+    expect(h.errors).toEqual([failure]);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(failure);
+    expect(h.updates.at(-1)?.request?.outputType).toBe("json");
+    expect(h.updates.at(-1)?.request?.toolDefinitions).toEqual([
+      { type: "function", name: "broken", parameters: undefined },
+      { type: "function", name: "working", parameters: { type: "object" } },
+    ]);
+
+    await integration().onStepFinish?.(outputEvent(metadata));
+    await h.step("step-finish");
+
+    expect(h.finishes).toHaveLength(1);
+    expect(h.errors).toEqual([failure]);
+  },
+);
+
 test.each(["onStart", "onStepStart"] as const)(
   "AI SDK %s contains header cleanup failures and only logs to active instances",
   async (callback) => {
@@ -326,7 +367,9 @@ test("dispose continues observer shutdown when capture cleanup fails", async () 
   });
 
   try {
-    await expect(h.adapter.hooks.dispose()).resolves.toBeUndefined();
+    const disposal = h.adapter.hooks.dispose();
+    expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
+    await expect(disposal).resolves.toBeUndefined();
     await h.adapter.hooks.dispose();
   } finally {
     cleanup.mockRestore();
@@ -338,24 +381,40 @@ test("dispose continues observer shutdown when capture cleanup fails", async () 
 
 test("closing during SDK setup prevents late listener registration and restart", async () => {
   const active = await setup();
+  const shutdown = Promise.withResolvers<void>();
   const errors: unknown[] = [];
   const closing = createCoordinator({
-    observer: active.observer,
+    observer: { ...active.observer, shutdown: () => shutdown.promise },
     log: (error) => errors.push(error),
   });
   adapters.push(closing);
 
   const installation = closing.startModelMessageCapture();
-  await closing.hooks.dispose();
-  await installation;
+  const disposal = closing.hooks.dispose();
+
+  try {
+    await installation;
+    await closing.startModelMessageCapture();
+    await integration().onStart?.(
+      inputEvent({}, Object.freeze({ "x-opencode-observer-request": "unbound" })) as OnStartEvent &
+        OnStepStartEvent,
+    );
+
+    expect(active.errors).toHaveLength(1);
+    expect(active.errors[0]).toBeInstanceOf(TypeError);
+    expect(errors).toEqual([]);
+  } finally {
+    shutdown.resolve();
+    await disposal;
+  }
+
   await closing.startModelMessageCapture();
   await integration().onStart?.(
     inputEvent({}, Object.freeze({ "x-opencode-observer-request": "unbound" })) as OnStartEvent &
       OnStepStartEvent,
   );
 
-  expect(active.errors).toHaveLength(1);
-  expect(active.errors[0]).toBeInstanceOf(TypeError);
+  expect(active.errors).toHaveLength(2);
   expect(errors).toEqual([]);
 });
 
@@ -433,6 +492,32 @@ test("late async settings cannot replace a retry's request snapshot", async () =
   await integration().onStepFinish?.(outputEvent(retry.metadata!, "retry response"));
   await h.step("step-finish");
   expect(h.finishes).toHaveLength(1);
+  expect(h.errors).toEqual([]);
+});
+
+test.each(["session end", "dispose"])("%s invalidates pending async settings", async (boundary) => {
+  const h = await setup();
+  const format = Promise.withResolvers<{ type: "json" }>();
+  await integration().onStepStart?.({
+    ...inputEvent({}, await h.headers()),
+    output: { ...Output.text(), responseFormat: format.promise },
+  });
+  await h.step("step-start");
+  expect(h.updates).toHaveLength(1);
+
+  await (boundary === "dispose"
+    ? h.adapter.hooks.dispose()
+    : h.adapter.hooks.event({
+        event: { type: "session.idle", properties: { sessionID: "s1" } },
+      }));
+  const updates = structuredClone(h.updates);
+  const finishes = structuredClone(h.finishes);
+
+  format.resolve({ type: "json" });
+  await Bun.sleep(0);
+
+  expect(h.updates).toEqual(updates);
+  expect(h.finishes).toEqual(finishes);
   expect(h.errors).toEqual([]);
 });
 

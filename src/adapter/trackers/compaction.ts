@@ -155,13 +155,6 @@ export function createCompactionTracker(options: {
         observedAt,
         error ?? { type: "_OTHER", message: "session ended before compaction completed" },
       );
-      records.clear();
-      users.clear();
-    },
-    clear() {
-      state.active = undefined;
-      records.clear();
-      users.clear();
     },
   };
 }

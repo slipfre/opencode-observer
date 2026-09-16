@@ -8,7 +8,7 @@ import {
 import type { LlmUpdate } from "../../contract/observer.js";
 import type { LlmRequest } from "./request.js";
 import { parseModelInput, parseModelOutput } from "./messages.js";
-import { createGuard } from "../shared/guard.js";
+import { createGuard, reportError } from "../shared/guard.js";
 import { parseModelHeaders } from "./headers.js";
 import { parseModelSettings } from "./settings.js";
 
@@ -83,11 +83,9 @@ export function createModelMessageCapture(options: {
           // Schema promises must never hold up the host or hide an observed response.
           // Only enrich the request while this step is still awaiting its response.
           void listener.guard(async () => {
-            const settings = await parseModelSettings(event, options.captureContent, (error) => {
-              void listener.guard(() => {
-                throw error;
-              });
-            });
+            const settings = await parseModelSettings(event, options.captureContent, (error) =>
+              reportError(error, options.log),
+            );
 
             if (binding.capture.active() && binding.step === step && !binding.responded) {
               binding.capture.input({ ...snapshot, request: { ...snapshot.request, ...settings } });
@@ -146,7 +144,6 @@ export function createModelMessageCapture(options: {
     },
     close() {
       broker.listeners.delete(listener);
-      pending.clear();
     },
   };
 }
@@ -192,9 +189,7 @@ function modelCaptureBroker() {
       });
     },
     onStepFinish(event) {
-      return guard(() => {
-        broker.listeners.forEach((listener) => void listener.guard(() => listener.output(event)));
-      });
+      broker.listeners.forEach((listener) => void listener.guard(() => listener.output(event)));
     },
   };
   registerTelemetryIntegration(integration);

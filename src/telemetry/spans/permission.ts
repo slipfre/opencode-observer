@@ -105,7 +105,6 @@ export function createPermissionSpans(
           error: { type: "_OTHER", message: "plugin disposed before permission replied" },
         }),
       );
-      finished.clear();
     },
   };
 }

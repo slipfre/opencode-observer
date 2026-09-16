@@ -609,7 +609,7 @@ test("hooks record synchronously with the coordinator clock before asynchronous 
   await coordinator.hooks.dispose();
 });
 
-test("dispose stops observation immediately and waits for one shared shutdown", async () => {
+test("dispose releases recording state and waits for one shared shutdown", async () => {
   const h = recording();
   const shutdown = Promise.withResolvers<void>();
   const settled = { value: false };
@@ -645,7 +645,6 @@ test("dispose stops observation immediately and waits for one shared shutdown", 
   expect(h.llms).toHaveLength(0);
   expect(h.llmUpdates).toHaveLength(0);
   expect(h.finishes).toHaveLength(0);
-  expect(h.observer.flush).not.toHaveBeenCalled();
   expect(h.observer.llmTraceHeaders).not.toHaveBeenCalled();
   expect(output.headers).toEqual({ "X-Test": "kept" });
   expect(h.observer.shutdown).toHaveBeenCalledTimes(1);

@@ -114,7 +114,6 @@ export function createRunSpans(
           error: { type: "_OTHER", message: "plugin disposed before run completed" },
         }),
       );
-      finished.clear();
     },
   };
 }

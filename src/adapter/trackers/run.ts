@@ -58,8 +58,6 @@ export function createRunTracker(options: RunOptions) {
     },
     close() {
       state.closed = true;
-      runs.clear();
-      seen.clear();
     },
   };
 }

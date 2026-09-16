@@ -281,7 +281,6 @@ export function createLlmSpans(
           error: { type: "_OTHER", message: "plugin disposed before message completed" },
         }),
       );
-      finished.clear();
     },
   };
 }

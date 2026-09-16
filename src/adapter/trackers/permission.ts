@@ -99,11 +99,6 @@ export function createPermissionTracker(options: {
           error: error ?? { type: "_OTHER", message: "session ended before permission replied" },
         }),
       );
-      seen.clear();
-    },
-    clear() {
-      pending.clear();
-      seen.clear();
     },
   };
 }

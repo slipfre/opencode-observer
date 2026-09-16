@@ -65,6 +65,8 @@ function pluginInput(server: Server<undefined>): PluginInput {
 test("tool, permission and compaction with summary LLM export through plugin events as one trace", async () => {
   const payloads: ExportPayload[] = [];
   const paths: string[] = [];
+  const exporting = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -76,6 +78,8 @@ test("tool, permission and compaction with summary LLM export through plugin eve
       }
 
       payloads.push((await request.json()) as ExportPayload);
+      exporting.resolve();
+      await release.promise;
       return Response.json({});
     },
   });
@@ -253,7 +257,61 @@ test("tool, permission and compaction with summary LLM export through plugin eve
     await hook.event?.({ event: event as Parameters<NonNullable<Hooks["event"]>>[0]["event"] });
   }
 
-  await hook.dispose?.();
+  async function lateInputs() {
+    const info = {
+      id: "s1",
+      projectID: "project",
+      directory: "/test",
+      title: "late session",
+      version: "1",
+      parentID: "late-parent",
+      time: { created: 900, updated: 3000 },
+    };
+
+    for (const type of ["session.created", "session.updated"] as const) {
+      await hook.event?.({ event: { type, properties: { info } } });
+    }
+
+    await hook["chat.message"]?.(
+      { sessionID: "s1" },
+      {
+        message: { ...user, id: "late-user", time: { created: 3000 } },
+        parts: [
+          { id: "late-text", messageID: "late-user", sessionID: "s1", type: "text", text: "late" },
+        ],
+      },
+    );
+
+    for (const event of events) {
+      await hook.event?.({ event: event as Parameters<NonNullable<Hooks["event"]>>[0]["event"] });
+    }
+
+    await hook.event?.({
+      event: {
+        type: "session.error",
+        properties: {
+          sessionID: "s1",
+          error: { name: "UnknownError", data: { message: "late error" } },
+        },
+      },
+    });
+    await hook.event?.({ event: { type: "session.deleted", properties: { info } } });
+  }
+
+  await exporting.promise;
+  const exported = structuredClone(payloads);
+  const disposal = hook.dispose?.();
+
+  try {
+    await lateInputs();
+  } finally {
+    release.resolve();
+  }
+
+  await disposal;
+  await lateInputs();
+
+  expect(payloads).toEqual(exported);
   const spans = payloads.flatMap((payload) =>
     payload.resourceSpans.flatMap((resource) =>
       resource.scopeSpans.flatMap((scope) => scope.spans),

@@ -151,15 +151,13 @@ export function createLlmTracker(options: {
     });
   }
 
-  function clear() {
+  function invalidate() {
+    // Pending SDK callbacks retain bindings after their session or instance ends.
     calls.clear();
-    requests.clear();
-    finished.clear();
-    closedCompactions.clear();
   }
 
   return {
-    clear,
+    invalidate,
     refresh() {
       calls.forEach((_call, id) => record(id));
     },
@@ -368,7 +366,7 @@ export function createLlmTracker(options: {
     fail,
     close(endedAt: number, error?: ObservationError) {
       fail(endedAt, error ?? { type: "_OTHER", message: "session ended before message completed" });
-      clear();
+      invalidate();
     },
   };
 }

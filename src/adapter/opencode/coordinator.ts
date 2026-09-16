@@ -14,7 +14,6 @@ import { parseErrorResponseHeaders } from "../model/headers.js";
 import { userTraceState } from "../model/trace-state.js";
 import { createInteractionTracker, type InteractionOwner } from "../trackers/interaction.js";
 import { createLlmTracker } from "../trackers/llm.js";
-import type { LlmRequest } from "../model/request.js";
 import { createRunTracker } from "../trackers/run.js";
 import { createToolTracker } from "../trackers/tool.js";
 import { createCompactionTracker } from "../trackers/compaction.js";
@@ -62,7 +61,6 @@ export function createCoordinator(options: CoordinatorOptions) {
   const sessions = new Map<string, SessionState>();
   const registry = createSessionRegistry();
   const state = {
-    closed: false,
     shutdown: undefined as Promise<void> | undefined,
     messageCapture: undefined as ReturnType<typeof createModelMessageCapture> | undefined,
     messageCaptureSetup: undefined as Promise<void> | undefined,
@@ -71,37 +69,22 @@ export function createCoordinator(options: CoordinatorOptions) {
   const hooks = {
     dispose() {
       state.shutdown ??= guard(() => {
-        state.closed = true;
-        void guard(() => state.messageCapture?.close());
         void guard(() => {
-          sessions.forEach((session) => {
-            session.llms.clear();
-            session.tools.clear();
-            session.compactions.clear();
-            session.permissions.clear();
-          });
+          state.messageCapture?.close();
+          sessions.forEach((session) => session.llms.invalidate());
           sessions.clear();
-          registry.clear();
           runs.close();
         });
         return options.observer.shutdown();
       });
       return state.shutdown;
     },
-    "chat.message": (_input, output) =>
-      guard(() => {
-        if (!state.closed) {
-          userMessage(output.message, output.parts);
-        }
-      }),
-    "chat.params": (input, output) => guard(() => request(input, output)),
+    "chat.message": (_input, output) => guard(() => userMessage(output.message, output.parts)),
+    "chat.params": (input, output) =>
+      guard(() => sessions.get(input.sessionID)?.llms.request(input, output)),
     "chat.headers": (input, output) =>
       guard(() => {
-        if (state.closed) {
-          return;
-        }
-
-        const headers = prepareModel(input);
+        const headers = sessions.get(input.sessionID)?.llms.prepare(input, now());
         Object.assign(
           output.headers,
           headers && userIdentity?.enabled
@@ -114,10 +97,6 @@ export function createCoordinator(options: CoordinatorOptions) {
       guard(() => {
         const observedAt = now();
         const source = input.event;
-
-        if (state.closed) {
-          return;
-        }
 
         event(source, observedAt);
 
@@ -135,34 +114,16 @@ export function createCoordinator(options: CoordinatorOptions) {
   async function installModelMessageCapture() {
     const { createModelMessageCapture } = await import("../model/ai-sdk.js");
 
-    if (!state.closed) {
+    if (!state.shutdown) {
       state.messageCapture = createModelMessageCapture({
-        bind: bindModel,
+        bind: (input) => sessions.get(input.sessionID)?.llms.bind(input),
         captureContent: options.captureContent ?? false,
         log,
       });
     }
   }
 
-  function bindModel(input: LlmRequest[0]) {
-    return state.closed ? undefined : sessions.get(input.sessionID)?.llms.bind(input);
-  }
-
-  function prepareModel(input: LlmRequest[0]) {
-    return state.closed ? undefined : sessions.get(input.sessionID)?.llms.prepare(input, now());
-  }
-
-  function request(input: LlmRequest[0], output: LlmRequest[1]) {
-    if (!state.closed) {
-      sessions.get(input.sessionID)?.llms.request(input, output);
-    }
-  }
-
   function userMessage(info: UserMessage, parts: Part[]) {
-    if (state.closed) {
-      return;
-    }
-
     const texts = parts
       .filter((part) => part.type === "text")
       .filter((part) => !part.synthetic && !part.ignored);
@@ -291,10 +252,6 @@ export function createCoordinator(options: CoordinatorOptions) {
   }
 
   function event(event: OpenCodeEvent, time = now()) {
-    if (state.closed) {
-      return;
-    }
-
     switch (event.type) {
       case "session.created":
       case "session.updated": {
@@ -483,7 +440,7 @@ export function createCoordinator(options: CoordinatorOptions) {
         (process.env.OPENCODE_EXPERIMENTAL_NATIVE_LLM ?? "").toLowerCase(),
       );
 
-      if (state.closed || native) {
+      if (state.shutdown || native) {
         return Promise.resolve();
       }
 

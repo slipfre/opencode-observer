@@ -115,8 +115,6 @@ export function createCompactionSpans(
           error: { type: "_OTHER", message: "plugin disposed before compaction completed" },
         }),
       );
-      contexts.clear();
-      finished.clear();
     },
   };
 }

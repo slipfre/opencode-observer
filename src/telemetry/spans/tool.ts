@@ -105,7 +105,6 @@ export function createToolSpans(
           error: { type: "_OTHER", message: "plugin disposed before tool completed" },
         }),
       );
-      finished.clear();
     },
   };
 }

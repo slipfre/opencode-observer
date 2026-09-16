@@ -189,12 +189,6 @@ export function createToolTracker(options: {
           endedAt,
         ),
       );
-      calls.clear();
-      finished.clear();
-    },
-    clear() {
-      calls.clear();
-      finished.clear();
     },
   };
 }
