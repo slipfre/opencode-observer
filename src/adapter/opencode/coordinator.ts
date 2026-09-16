@@ -93,22 +93,7 @@ export function createCoordinator(options: CoordinatorOptions) {
         );
         state.messageCapture?.attachCorrelationHeader(input, output);
       }),
-    event: (input: { event: OpenCodeEvent }) =>
-      guard(() => {
-        const observedAt = now();
-        const source = input.event;
-
-        event(source, observedAt);
-
-        if (
-          source.type === "session.idle" ||
-          source.type === "session.error" ||
-          source.type === "session.deleted" ||
-          (source.type === "session.status" && source.properties.status.type === "idle")
-        ) {
-          void guard(() => options.observer.flush());
-        }
-      }),
+    event: (input: { event: OpenCodeEvent }) => guard(() => event(input.event)),
   } satisfies Hooks;
 
   async function installModelMessageCapture() {
@@ -294,6 +279,7 @@ export function createCoordinator(options: CoordinatorOptions) {
           time,
           sessions.get(event.properties.sessionID)?.overflow,
         );
+        void guard(() => options.observer.flush());
         return;
       }
 
@@ -302,6 +288,7 @@ export function createCoordinator(options: CoordinatorOptions) {
         const session = id ? sessions.get(id) : undefined;
 
         if (!id || !session) {
+          void guard(() => options.observer.flush());
           return;
         }
 
@@ -332,10 +319,12 @@ export function createCoordinator(options: CoordinatorOptions) {
           !session.overflow
         ) {
           session.overflow = error;
+          void guard(() => options.observer.flush());
           return;
         }
 
         endSession(id, time, error);
+        void guard(() => options.observer.flush());
         return;
       }
 
@@ -355,6 +344,7 @@ export function createCoordinator(options: CoordinatorOptions) {
           message: "session deleted before run completed",
         });
         registry.remove(event.properties.info.id);
+        void guard(() => options.observer.flush());
         return;
       }
 
