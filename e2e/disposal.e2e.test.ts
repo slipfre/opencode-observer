@@ -31,3 +31,19 @@ test("OpenCode dispose releases observer subscriptions without process exit list
       expect(disposal.repeated).toEqual(disposal.after);
     },
   ));
+
+test("OpenCode dispose waits for a slow collector before exiting", () =>
+  withE2EFixture(
+    {
+      otlpDelayMs: 250,
+      replies: [{ type: "text", text: "ready for disposal" }],
+    },
+    async (fixture) => {
+      const result = await fixture.run("answer before disposing the instance");
+      const spans = requireSpans(fixture, result, 3);
+
+      expect(result.stdout).toContain("ready for disposal");
+      expect(fixture.otlp.pending()).toBe(0);
+      spans.forEach(expectUnset);
+    },
+  ));

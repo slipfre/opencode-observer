@@ -9,6 +9,7 @@ type FixtureOptions = {
   replies: LlmReply[];
   pluginEntry?: string;
   pluginOptions?: Record<string, unknown>;
+  otlpDelayMs?: number;
   autoCompact?: boolean;
   permission?: Record<string, "ask" | "allow" | "deny">;
   env?: Record<string, string>;
@@ -57,7 +58,7 @@ export async function withE2EFixture(
   };
   const directory = workspace.directory;
   using llm = startFakeLlm(options.replies);
-  using otlp = startOtlpReceiver();
+  using otlp = startOtlpReceiver(options.otlpDelayMs);
   const processes = new Set<Bun.Subprocess>();
   const results: RunResult[] = [];
 

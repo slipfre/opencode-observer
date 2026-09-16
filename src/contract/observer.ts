@@ -205,7 +205,7 @@ export type Observer = {
   finishCompaction(input: CompactionFinish): void;
   startPermission(input: PermissionStart): void;
   finishPermission(input: PermissionFinish): void;
-  /** Export ended operations without ending active operations; failures reject. */
+  /** Flush buffered ended operations without ending active operations; failures reject. */
   flush(): Promise<void>;
   /** End unfinished descendants before parents, then drain and close once. */
   shutdown(): Promise<void>;

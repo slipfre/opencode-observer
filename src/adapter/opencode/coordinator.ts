@@ -93,7 +93,195 @@ export function createCoordinator(options: CoordinatorOptions) {
         );
         state.messageCapture?.attachCorrelationHeader(input, output);
       }),
-    event: (input: { event: OpenCodeEvent }) => guard(() => event(input.event)),
+    event: (input: { event: OpenCodeEvent }) =>
+      guard(async () => {
+        const event = input.event;
+        const time = now();
+
+        switch (event.type) {
+          case "session.created":
+          case "session.updated": {
+            registry.observe(event.properties.info);
+            return;
+          }
+
+          case "permission.asked": {
+            sessions.get(event.properties.sessionID)?.permissions.asked(event.properties, time);
+            return;
+          }
+
+          case "permission.replied": {
+            const session = sessions.get(event.properties.sessionID);
+            const requestID =
+              "requestID" in event.properties
+                ? event.properties.requestID
+                : event.properties.permissionID;
+            const reply =
+              "reply" in event.properties ? event.properties.reply : event.properties.response;
+
+            if (session && (reply === "once" || reply === "always" || reply === "reject")) {
+              const rejected = session.permissions.replied(requestID, reply, time);
+
+              if (rejected) {
+                session.tools.reject(rejected);
+              }
+            }
+            return;
+          }
+
+          case "session.status":
+          case "session.idle": {
+            if (event.type === "session.status" && event.properties.status.type !== "idle") {
+              return;
+            }
+
+            endSession(
+              event.properties.sessionID,
+              time,
+              sessions.get(event.properties.sessionID)?.overflow,
+            );
+            await options.observer.flush();
+            return;
+          }
+
+          case "session.error": {
+            const id = event.properties.sessionID;
+            const session = id ? sessions.get(id) : undefined;
+
+            if (!id || !session) {
+              await options.observer.flush();
+              return;
+            }
+
+            const error = errorDetails(event.properties.error);
+            const activeRequest = session.llms.activeRequest();
+
+            if (error.type === "ContextOverflowError" && activeRequest) {
+              session.trigger = {
+                messageID: activeRequest.messageID,
+                owner: session.interactions.resolve(activeRequest.ownerMessageID),
+              };
+            }
+
+            session.llms.fail(
+              time,
+              error,
+              options.captureContent && activeRequest
+                ? {
+                    messageID: activeRequest.messageID,
+                    headers: parseErrorResponseHeaders(event.properties.error),
+                  }
+                : undefined,
+            );
+
+            if (
+              error.type === "ContextOverflowError" &&
+              !session.compactions.active() &&
+              !session.overflow
+            ) {
+              session.overflow = error;
+              await options.observer.flush();
+              return;
+            }
+
+            endSession(id, time, error);
+            await options.observer.flush();
+            return;
+          }
+
+          case "session.compacted": {
+            const session = sessions.get(event.properties.sessionID);
+
+            if (session?.compactions.completed(time)) {
+              delete session.overflow;
+              delete session.trigger;
+            }
+            return;
+          }
+
+          case "session.deleted": {
+            endSession(event.properties.info.id, time, {
+              type: "_OTHER",
+              message: "session deleted before run completed",
+            });
+            registry.remove(event.properties.info.id);
+            await options.observer.flush();
+            return;
+          }
+
+          case "message.updated": {
+            const info = event.properties.info;
+            const session = sessions.get(info.sessionID);
+
+            if (!session) {
+              return;
+            }
+
+            session.interactions.message(info);
+
+            if (
+              info.role === "assistant" &&
+              !info.summary &&
+              info.error &&
+              errorDetails(info.error).type === "ContextOverflowError"
+            ) {
+              session.trigger = {
+                messageID: info.id,
+                owner: session.interactions.resolve(info.parentID),
+              };
+            }
+
+            session.llms.message(info, time);
+            session.tools.refresh();
+            const error = session.compactions.message(info, time);
+            session.llms.refresh();
+
+            if (error) {
+              endSession(info.sessionID, time, error);
+            }
+            return;
+          }
+
+          case "message.part.updated": {
+            const part = event.properties.part;
+            const session = sessions.get(part.sessionID);
+
+            if (!session) {
+              return;
+            }
+
+            switch (part.type) {
+              case "compaction": {
+                session.compactions.part(part, time, session.trigger);
+                session.llms.refresh();
+                return;
+              }
+
+              case "tool": {
+                session.tools.part(part, time);
+                return;
+              }
+
+              default: {
+                session.interactions.part(part);
+                session.llms.part(part, time);
+                return;
+              }
+            }
+          }
+
+          case "message.part.removed":
+          case "message.removed": {
+            const session = sessions.get(event.properties.sessionID);
+            const partID = "partID" in event.properties ? event.properties.partID : undefined;
+            session?.llms.remove(event.properties.messageID, time, partID);
+            session?.tools.remove(event.properties.messageID, time, partID);
+            session?.compactions.remove(event.properties.messageID, time, partID);
+            session?.interactions.remove(event.properties.messageID, partID);
+            return;
+          }
+        }
+      }),
   } satisfies Hooks;
 
   async function installModelMessageCapture() {
@@ -234,192 +422,6 @@ export function createCoordinator(options: CoordinatorOptions) {
     session.tools.close(time, error);
     const output = session.interactions.finish(time, error);
     runs.finish({ ...session.reference, endedAt: time, output, error });
-  }
-
-  function event(event: OpenCodeEvent, time = now()) {
-    switch (event.type) {
-      case "session.created":
-      case "session.updated": {
-        registry.observe(event.properties.info);
-        return;
-      }
-
-      case "permission.asked": {
-        sessions.get(event.properties.sessionID)?.permissions.asked(event.properties, time);
-        return;
-      }
-
-      case "permission.replied": {
-        const session = sessions.get(event.properties.sessionID);
-        const requestID =
-          "requestID" in event.properties
-            ? event.properties.requestID
-            : event.properties.permissionID;
-        const reply =
-          "reply" in event.properties ? event.properties.reply : event.properties.response;
-
-        if (session && (reply === "once" || reply === "always" || reply === "reject")) {
-          const rejected = session.permissions.replied(requestID, reply, time);
-
-          if (rejected) {
-            session.tools.reject(rejected);
-          }
-        }
-        return;
-      }
-
-      case "session.status":
-      case "session.idle": {
-        if (event.type === "session.status" && event.properties.status.type !== "idle") {
-          return;
-        }
-
-        endSession(
-          event.properties.sessionID,
-          time,
-          sessions.get(event.properties.sessionID)?.overflow,
-        );
-        void guard(() => options.observer.flush());
-        return;
-      }
-
-      case "session.error": {
-        const id = event.properties.sessionID;
-        const session = id ? sessions.get(id) : undefined;
-
-        if (!id || !session) {
-          void guard(() => options.observer.flush());
-          return;
-        }
-
-        const error = errorDetails(event.properties.error);
-        const activeRequest = session.llms.activeRequest();
-
-        if (error.type === "ContextOverflowError" && activeRequest) {
-          session.trigger = {
-            messageID: activeRequest.messageID,
-            owner: session.interactions.resolve(activeRequest.ownerMessageID),
-          };
-        }
-
-        session.llms.fail(
-          time,
-          error,
-          options.captureContent && activeRequest
-            ? {
-                messageID: activeRequest.messageID,
-                headers: parseErrorResponseHeaders(event.properties.error),
-              }
-            : undefined,
-        );
-
-        if (
-          error.type === "ContextOverflowError" &&
-          !session.compactions.active() &&
-          !session.overflow
-        ) {
-          session.overflow = error;
-          void guard(() => options.observer.flush());
-          return;
-        }
-
-        endSession(id, time, error);
-        void guard(() => options.observer.flush());
-        return;
-      }
-
-      case "session.compacted": {
-        const session = sessions.get(event.properties.sessionID);
-
-        if (session?.compactions.completed(time)) {
-          delete session.overflow;
-          delete session.trigger;
-        }
-        return;
-      }
-
-      case "session.deleted": {
-        endSession(event.properties.info.id, time, {
-          type: "_OTHER",
-          message: "session deleted before run completed",
-        });
-        registry.remove(event.properties.info.id);
-        void guard(() => options.observer.flush());
-        return;
-      }
-
-      case "message.updated": {
-        const info = event.properties.info;
-        const session = sessions.get(info.sessionID);
-
-        if (!session) {
-          return;
-        }
-
-        session.interactions.message(info);
-
-        if (
-          info.role === "assistant" &&
-          !info.summary &&
-          info.error &&
-          errorDetails(info.error).type === "ContextOverflowError"
-        ) {
-          session.trigger = {
-            messageID: info.id,
-            owner: session.interactions.resolve(info.parentID),
-          };
-        }
-
-        session.llms.message(info, time);
-        session.tools.refresh();
-        const error = session.compactions.message(info, time);
-        session.llms.refresh();
-
-        if (error) {
-          endSession(info.sessionID, time, error);
-        }
-        return;
-      }
-
-      case "message.part.updated": {
-        const part = event.properties.part;
-        const session = sessions.get(part.sessionID);
-
-        if (!session) {
-          return;
-        }
-
-        switch (part.type) {
-          case "compaction": {
-            session.compactions.part(part, time, session.trigger);
-            session.llms.refresh();
-            return;
-          }
-
-          case "tool": {
-            session.tools.part(part, time);
-            return;
-          }
-
-          default: {
-            session.interactions.part(part);
-            session.llms.part(part, time);
-            return;
-          }
-        }
-      }
-
-      case "message.part.removed":
-      case "message.removed": {
-        const session = sessions.get(event.properties.sessionID);
-        const partID = "partID" in event.properties ? event.properties.partID : undefined;
-        session?.llms.remove(event.properties.messageID, time, partID);
-        session?.tools.remove(event.properties.messageID, time, partID);
-        session?.compactions.remove(event.properties.messageID, time, partID);
-        session?.interactions.remove(event.properties.messageID, partID);
-        return;
-      }
-    }
   }
 
   return {

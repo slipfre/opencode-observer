@@ -47,10 +47,11 @@ function attributes(values: OtlpAttribute[] = []): Record<string, unknown> {
   return Object.fromEntries(values.map((attribute) => [attribute.key, decode(attribute.value)]));
 }
 
-export function startOtlpReceiver() {
+export function startOtlpReceiver(delayMs = 0) {
   const payloads: OtlpExport[] = [];
   const headers: Headers[] = [];
   const errors: string[] = [];
+  const state = { pending: 0 };
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -70,6 +71,13 @@ export function startOtlpReceiver() {
         }
 
         payloads.push(payload);
+
+        if (delayMs > 0) {
+          state.pending++;
+          await Bun.sleep(delayMs);
+          state.pending--;
+        }
+
         return Response.json({});
       } catch (error) {
         errors.push(String(error));
@@ -83,6 +91,7 @@ export function startOtlpReceiver() {
     payloads,
     headers,
     errors,
+    pending: () => state.pending,
     spans: () =>
       payloads.flatMap((payload) =>
         payload.resourceSpans.flatMap((resource) =>

@@ -578,10 +578,11 @@ test("recoverable overflow is interpreted before submitting a terminal failure",
   });
 });
 
-test("hooks record synchronously with the coordinator clock before asynchronous export", async () => {
+test("event hooks record synchronously with the coordinator clock and wait for flush", async () => {
   const h = recording();
   const clock = { time: 1000 };
   const flushing = Promise.withResolvers<void>();
+  const settled = { idle: false };
   h.observer.flush = mock(() => flushing.promise);
   const coordinator = createCoordinator({ observer: h.observer, now: () => clock.time });
 
@@ -594,9 +595,11 @@ test("hooks record synchronously with the coordinator clock before asynchronous 
   expect(h.interactions).toHaveLength(1);
 
   clock.time = 2000;
-  const idle = coordinator.hooks.event?.({
-    event: { type: "session.idle", properties: { sessionID: "s1" } },
-  });
+  const idle = coordinator.hooks
+    .event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
+    .then(() => {
+      settled.idle = true;
+    });
   clock.time = 3000;
 
   expect(h.finishes).toHaveLength(1);
@@ -604,8 +607,13 @@ test("hooks record synchronously with the coordinator clock before asynchronous 
   expect(h.completed[0]?.endedAt).toBe(2000);
   expect(h.observer.flush).toHaveBeenCalledTimes(1);
   await message;
-  await idle;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  expect(settled.idle).toBe(false);
   flushing.resolve();
+  await idle;
+
+  expect(settled.idle).toBe(true);
   await coordinator.hooks.dispose();
 });
 
@@ -659,7 +667,7 @@ test("dispose releases recording state and waits for one shared shutdown", async
   expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
 });
 
-test("hooks isolate recording and export failures and return before flush settles", async () => {
+test("the outer hook guard isolates recording failures and awaited export failures", async () => {
   const h = recording();
   const error = new Error("recording failed");
   const flushing = Promise.withResolvers<void>();
@@ -686,9 +694,11 @@ test("hooks isolate recording and export failures and return before flush settle
   expect(failures).toEqual([error]);
   expect(output).toEqual({ message: user(), parts: [text()] });
 
-  await adapter.hooks.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+  const idle = adapter.hooks.event({
+    event: { type: "session.idle", properties: { sessionID: "s1" } },
+  });
   flushing.reject(new Error("export failed"));
-  await flushing.promise.catch(() => undefined);
+  await expect(idle).resolves.toBeUndefined();
 
   expect(failures).toHaveLength(2);
   expect(failures[1]).toEqual(new Error("export failed"));

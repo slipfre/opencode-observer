@@ -81,7 +81,6 @@ export function createObserver(options: ObserverOptions): Observer {
   const activeRuns = new Map<string, { reference: RunReference; parent: RunStart["parent"] }>();
   const state = {
     closed: false,
-    flushing: Promise.resolve(),
     shutdown: undefined as Promise<void> | undefined,
   };
 
@@ -243,10 +242,7 @@ export function createObserver(options: ObserverOptions): Observer {
         return state.shutdown ?? Promise.resolve();
       }
 
-      const flushing = state.flushing.then(() => options.provider.forceFlush());
-      // Keep the queue usable after a failure; the returned promise still rejects.
-      state.flushing = flushing.catch(() => undefined);
-      return flushing;
+      return options.provider.forceFlush();
     },
     shutdown() {
       if (state.shutdown) {
@@ -272,8 +268,7 @@ export function createObserver(options: ObserverOptions): Observer {
       tools.close(endedAt);
       interactions.close(endedAt);
       runs.close(endedAt);
-      state.shutdown = state.flushing.then(() => options.provider.shutdown());
-
+      state.shutdown = options.provider.shutdown();
       return state.shutdown;
     },
   };

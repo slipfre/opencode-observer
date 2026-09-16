@@ -406,9 +406,43 @@ test("shutdown ends unfinished runs once and rejects all later recording", async
   expect(h.shutdown).toHaveBeenCalledTimes(1);
 });
 
-test("shutdown waits for an in-flight flush without changing observed end times", async () => {
+test("overlapping flushes export new spans without waiting for an earlier export", async () => {
   const exporting = Promise.withResolvers<Parameters<SpanExporter["export"]>[1]>();
+  const h = setup({}, (batch, callback) => {
+    if (batch[0]?.attributes["opencode.run.id"] === "u1") {
+      exporting.resolve(callback);
+      return;
+    }
+
+    callback({ code: ExportResultCode.SUCCESS });
+  });
+
+  h.observer.startRun(start());
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
+  const flushing = h.observer.flush();
+  const complete = await exporting.promise;
+
+  try {
+    h.observer.startRun(start("u2"));
+    h.observer.finishRun({ ...start("u2"), endedAt: 2500, output: undefined });
+    await h.observer.flush();
+
+    expect(h.spans.map((span) => span.attributes["opencode.run.id"])).toEqual(["u1", "u2"]);
+  } finally {
+    complete({ code: ExportResultCode.SUCCESS });
+    await flushing;
+  }
+});
+
+test("shutdown delegates in-flight exports to the SDK without changing observed end times", async () => {
+  const exporting = Promise.withResolvers<Parameters<SpanExporter["export"]>[1]>();
+  const shuttingDown = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
   const h = setup({}, (_batch, callback) => exporting.resolve(callback));
+  h.shutdown.mockImplementation(() => {
+    shuttingDown.resolve();
+    return released.promise;
+  });
 
   h.observer.startRun(start());
   h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
@@ -416,11 +450,18 @@ test("shutdown waits for an in-flight flush without changing observed end times"
   const complete = await exporting.promise;
   const closing = h.observer.shutdown();
 
-  expect(h.shutdown).not.toHaveBeenCalled();
-  expect(h.spans[0]?.endTime).toEqual([2, 0]);
+  try {
+    await shuttingDown.promise;
 
-  complete({ code: ExportResultCode.SUCCESS });
-  await Promise.all([flushing, closing]);
+    expect(h.observer.shutdown()).toBe(closing);
+    expect(h.observer.flush()).toBe(closing);
+    expect(h.spans[0]?.endTime).toEqual([2, 0]);
+    expect(h.shutdown).toHaveBeenCalledTimes(1);
+  } finally {
+    complete({ code: ExportResultCode.SUCCESS });
+    released.resolve();
+    await Promise.all([flushing, closing]);
+  }
 
   expect(h.shutdown).toHaveBeenCalledTimes(1);
 });

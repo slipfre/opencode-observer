@@ -249,7 +249,6 @@ test("tool, permission and compaction with summary LLM export through plugin eve
         },
       },
     },
-    { type: "session.idle", properties: { sessionID: "s1" } },
   ];
 
   for (const event of events) {
@@ -298,17 +297,13 @@ test("tool, permission and compaction with summary LLM export through plugin eve
     await hook.event?.({ event: { type: "session.deleted", properties: { info } } });
   }
 
+  const idle = hook.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
   await exporting.promise;
   const exported = structuredClone(payloads);
   const disposal = hook.dispose?.();
-
-  try {
-    await lateInputs();
-  } finally {
-    release.resolve();
-  }
-
-  await disposal;
+  const late = lateInputs();
+  release.resolve();
+  await Promise.all([idle, disposal, late]);
   await lateInputs();
 
   expect(payloads).toEqual(exported);
@@ -776,7 +771,7 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
   ).toBe(7);
 });
 
-test("a slow collector does not block chat hooks and dispose waits for export", async () => {
+test("idle and disposal await a slow collector while chat hooks remain independent", async () => {
   const payloads: ExportPayload[] = [];
   const exporting = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
@@ -821,30 +816,37 @@ test("a slow collector does not block chat hooks and dispose waits for export", 
     );
 
   await message("u1");
-  const idle = hook.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+  const settled = { idle: false, late: false, complete: false, repeated: false };
+  const idle = hook
+    .event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
+    .then(() => {
+      settled.idle = true;
+    });
   await exporting.promise;
 
   const timeout = setTimeout(() => release.resolve(), 500);
   const before = performance.now();
-  await idle;
   await message("u2");
   const elapsed = performance.now() - before;
 
   expect(hook.dispose).toBeFunction();
-  const disposed = { complete: false, repeated: false };
   const disposal = hook.dispose?.().then(() => {
-    disposed.complete = true;
+    settled.complete = true;
   });
   const repeated = hook.dispose?.().then(() => {
-    disposed.repeated = true;
+    settled.repeated = true;
   });
   await message("ignored");
-  await hook.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+  const late = hook
+    .event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
+    .then(() => {
+      settled.late = true;
+    });
 
-  expect(disposed).toEqual({ complete: false, repeated: false });
+  expect(settled).toEqual({ idle: false, late: false, complete: false, repeated: false });
   clearTimeout(timeout);
   release.resolve();
-  await Promise.all([idle, disposal, repeated]);
+  await Promise.all([idle, disposal, repeated, late]);
 
   const spans = payloads.flatMap((payload) =>
     payload.resourceSpans.flatMap((resource) =>
@@ -852,7 +854,7 @@ test("a slow collector does not block chat hooks and dispose waits for export", 
     ),
   );
 
-  expect(disposed).toEqual({ complete: true, repeated: true });
+  expect(settled).toEqual({ idle: true, late: true, complete: true, repeated: true });
   expect(elapsed).toBeLessThan(400);
   expect(spans.map((span) => [span.name, span.status.code ?? 0])).toEqual([
     ["opencode.interaction", 2],
