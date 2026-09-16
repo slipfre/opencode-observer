@@ -1,12 +1,6 @@
 import { ROOT_CONTEXT } from "@opentelemetry/api";
 import type { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
-import type {
-  Observer,
-  RunFinish,
-  RunReference,
-  RunStart,
-  ToolFinish,
-} from "../contract/observer.js";
+import type { Observer, RunFinish, RunReference, RunStart } from "../contract/observer.js";
 import { createRunSpans } from "./spans/run.js";
 import { createInteractionSpans } from "./spans/interaction.js";
 import { createLlmSpans } from "./spans/llm.js";
@@ -80,7 +74,6 @@ export function createObserver(options: ObserverOptions): Observer {
   });
   const activeRuns = new Map<string, { reference: RunReference; parent: RunStart["parent"] }>();
   const state = {
-    closed: false,
     shutdown: undefined as Promise<void> | undefined,
   };
 
@@ -125,124 +118,62 @@ export function createObserver(options: ObserverOptions): Observer {
     runs.finish(input);
   }
 
-  function finishTool(input: ToolFinish) {
-    if (state.closed) {
-      return;
-    }
-
-    activeRuns.forEach((run) => {
-      if (run.parent && operationKey(run.parent) === operationKey(input)) {
-        endRun({
-          ...run.reference,
-          endedAt: input.endedAt,
-          output: undefined,
-          error: input.error ?? {
-            type: "_OTHER",
-            message: "task tool ended before subagent completed",
-          },
-        });
-      }
-    });
-    permissions.closeTool(input, input.endedAt, input.error);
-    tools.finish(input);
-  }
-
   return {
     startRun(input) {
-      if (!state.closed) {
-        if (runs.start(input)) {
-          activeRuns.set(JSON.stringify([input.sessionID, input.id]), {
-            reference: { sessionID: input.sessionID, id: input.id },
-            parent: input.parent
-              ? {
-                  callID: input.parent.callID,
-                  messageID: input.parent.messageID,
-                  interaction: {
-                    id: input.parent.interaction.id,
-                    run: { ...input.parent.interaction.run },
-                  },
-                }
-              : undefined,
-          });
-        }
-      }
-    },
-    updateRun(input) {
-      if (!state.closed) {
-        runs.update(input);
-      }
-    },
-    finishRun(input) {
-      if (!state.closed) {
-        endRun(input);
-      }
-    },
-    finishTool,
-    startTool(input) {
-      if (!state.closed) {
-        tools.start(input);
-      }
-    },
-    updateTool(input) {
-      if (!state.closed) {
-        tools.update(input);
-      }
-    },
-    startCompaction(input) {
-      if (!state.closed) {
-        compactions.start(input);
-      }
-    },
-    finishCompaction(input) {
-      if (!state.closed) {
-        llms.closeCompaction(input.interaction, input.id, input.endedAt, input.error);
-        compactions.finish(input);
-      }
-    },
-    startPermission(input) {
-      if (!state.closed) {
-        permissions.start(input);
-      }
-    },
-    finishPermission(input) {
-      if (!state.closed) {
-        permissions.finish(input);
-      }
-    },
-    startInteraction(input) {
-      if (!state.closed) {
-        interactions.start(input);
-      }
-    },
-    finishInteraction(input) {
-      if (!state.closed) {
-        interactions.finish(input);
-      }
-    },
-    startLlm(input) {
-      if (!state.closed) {
-        llms.start(input);
-      }
-    },
-    llmTraceHeaders(input) {
-      return state.closed ? undefined : llms.traceHeaders(input);
-    },
-    updateLlm(input) {
-      if (!state.closed) {
-        llms.update(input);
-      }
-    },
-    finishLlm(input) {
-      if (!state.closed) {
-        llms.finish(input);
-      }
-    },
-    flush() {
-      if (state.closed) {
-        return state.shutdown ?? Promise.resolve();
+      if (!runs.start(input)) {
+        return;
       }
 
-      return options.provider.forceFlush();
+      activeRuns.set(JSON.stringify([input.sessionID, input.id]), {
+        reference: { sessionID: input.sessionID, id: input.id },
+        parent: input.parent
+          ? {
+              callID: input.parent.callID,
+              messageID: input.parent.messageID,
+              interaction: {
+                id: input.parent.interaction.id,
+                run: { ...input.parent.interaction.run },
+              },
+            }
+          : undefined,
+      });
+    },
+    updateRun: runs.update,
+    finishRun: endRun,
+    finishTool(input) {
+      activeRuns.forEach((run) => {
+        if (run.parent && operationKey(run.parent) === operationKey(input)) {
+          endRun({
+            ...run.reference,
+            endedAt: input.endedAt,
+            output: undefined,
+            error: input.error ?? {
+              type: "_OTHER",
+              message: "task tool ended before subagent completed",
+            },
+          });
+        }
+      });
+      permissions.closeTool(input, input.endedAt, input.error);
+      tools.finish(input);
+    },
+    startTool: tools.start,
+    updateTool: tools.update,
+    startCompaction: compactions.start,
+    finishCompaction(input) {
+      llms.closeCompaction(input.interaction, input.id, input.endedAt, input.error);
+      compactions.finish(input);
+    },
+    startPermission: permissions.start,
+    finishPermission: permissions.finish,
+    startInteraction: interactions.start,
+    finishInteraction: interactions.finish,
+    startLlm: llms.start,
+    llmTraceHeaders: llms.traceHeaders,
+    updateLlm: llms.update,
+    finishLlm: llms.finish,
+    flush() {
+      return state.shutdown ?? options.provider.forceFlush();
     },
     shutdown() {
       if (state.shutdown) {
@@ -250,7 +181,6 @@ export function createObserver(options: ObserverOptions): Observer {
       }
 
       const endedAt = (options.now ?? Date.now)();
-      state.closed = true;
       activeRuns.forEach((run) =>
         endRun(
           {

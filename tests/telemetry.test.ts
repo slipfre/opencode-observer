@@ -380,7 +380,7 @@ test("implementation enforces content capture even when a caller supplies conten
   expect(h.spans[0]?.attributes["error.type"]).toBeUndefined();
 });
 
-test("shutdown ends unfinished runs once and rejects all later recording", async () => {
+test("shutdown ends unfinished runs once and late observations do not alter exported spans", async () => {
   const h = setup();
 
   h.observer.startRun(start());
@@ -389,9 +389,13 @@ test("shutdown ends unfinished runs once and rejects all later recording", async
 
   expect(h.observer.shutdown()).toBe(closing);
 
-  h.observer.startRun(start("ignored"));
+  const late = interaction("late", start("late"));
+  h.observer.startRun(start("late"));
+  h.observer.startInteraction(late);
+  h.observer.startLlm(llm("late", late));
   h.observer.updateRun({ ...start(), input: { id: "u2", text: "late" } });
   h.observer.finishRun({ ...start(), endedAt: 9000, output: "late" });
+  h.observer.finishRun({ ...late.run, endedAt: 9000, output: "late" });
   await closing;
   await h.observer.flush();
 
