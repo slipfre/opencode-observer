@@ -1,0 +1,47 @@
+e2e/disposal.e2e.test.ts
+  s_7dc8bd93c62b6a::t_1cd420d1513461 34-48
+  s_7dc8bd93c62b6a::t_f8e50506eaa046 49
+tests/telemetry.test.ts
+  s_7dc8bd93c62b6a::t_072969031cb435 409,411-440,442-445,453-464
+e2e/support/fixture.ts
+  s_7dc8bd93c62b6a::t_6aef9da5837721 12,61
+tests/adapter.test.ts
+  s_7dc8bd93c62b6a::t_cb386a71ec1b24 581,585,598-602,610-612,614-616,670,697-699,701
+docs/architecture.md
+  s_7dc8bd93c62b6a::t_cb386a71ec1b24 120,122
+  s_7dc8bd93c62b6a::t_549a6c373df898 130
+  s_7dc8bd93c62b6a::t_072969031cb435 131
+  s_7dc8bd93c62b6a::t_b34710a310e7fc 128-129
+src/adapter/opencode/coordinator.ts
+  s_7dc8bd93c62b6a::t_61301956f3d991 96-284
+e2e/support/otlp-receiver.ts
+  s_7dc8bd93c62b6a::t_6aef9da5837721 50,54,74-80,94
+tests/plugin.test.ts
+  s_7dc8bd93c62b6a::t_549a6c373df898 820-821,840-841
+  s_7dc8bd93c62b6a::t_cb386a71ec1b24 300,304-306,774,819,822-824,834,837,842-844,846,849,857
+src/contract/observer.ts
+  s_7dc8bd93c62b6a::t_072969031cb435 208
+src/telemetry/observer.ts
+  s_7dc8bd93c62b6a::t_072969031cb435 245,271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8102c4b8215baa547521f886bd50abf3ca7662ea",
+  "prompts": {},
+  "humans": {
+    "h_076b07aabc3f4d": {
+      "author": "happy <sxh139726845@163.com>"
+    }
+  },
+  "sessions": {
+    "s_7dc8bd93c62b6a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0a8f4-23ff-7fb2-ab61-bc467723ee1c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
