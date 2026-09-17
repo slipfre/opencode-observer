@@ -1,0 +1,26 @@
+src/index.ts
+  s_04ee8417f74f8a::t_4517294f1503c2 25
+e2e/user-id.e2e.test.ts
+  s_04ee8417f74f8a::t_323dab9f78b567 191
+  s_04ee8417f74f8a::t_3d966feb9850a5 44,190,192-195,206,212-218,223-224
+docs/schemas/trace.md
+  s_04ee8417f74f8a::t_3d966feb9850a5 60,65
+README.md
+  s_04ee8417f74f8a::t_3d966feb9850a5 65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6a483432e5002c4964fca6b6a19d442451bb590d",
+  "prompts": {},
+  "sessions": {
+    "s_04ee8417f74f8a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09a0f-8975-7213-921b-82f15888e2a2",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
