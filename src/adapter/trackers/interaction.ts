@@ -9,82 +9,54 @@ import type {
 import { createRunStore } from "../shared/runs.js";
 import { errorDetails } from "../shared/error.js";
 
-type AssistantState = { info?: AssistantMessage; texts: Map<string, string> };
+type AssistantMessageState = { info?: AssistantMessage; texts: Map<string, string> };
+
+type Interaction = {
+  userMessageID: string;
+  startedAt: number;
+  /** Captured user text; undefined when capture is disabled or the message has no text. */
+  userInputText: string | undefined;
+  agentName: string;
+};
 
 export type InteractionOwner = AgentIdentity & {
   reference: InteractionReference;
-  input: string | undefined;
+  userInputText: string | undefined;
 };
 
 export function createInteractionTracker(options: {
   observer: Observer;
   captureContent?: boolean;
 }) {
-  const states = createRunStore(() => ({
-    inputs: [] as {
-      id: string;
-      created: number;
-      input: string | undefined;
-      agentName: string;
-    }[],
-    owners: new Map<string, string>(),
-    assistants: new Map<string, AssistantState>(),
+  const runStates = createRunStore(() => ({
+    interactions: [] as Interaction[],
+    userMessageOwners: new Map<string, Interaction>(),
+    assistantMessages: new Map<string, AssistantMessageState>(),
   }));
 
-  function continuation(run: RunReference, info: UserMessage) {
-    const state = states.get(run);
-
-    if (!state) {
-      return;
-    }
-
-    // A late synthetic continuation belongs to the input active at its creation time.
-    const owner = state.inputs.findLast((input) => input.created <= info.time.created);
-
-    if (owner && !state.owners.has(info.id)) {
-      state.owners.set(info.id, owner.id);
-    }
-  }
-
   function resolve(run: RunReference, userMessageID: string): InteractionOwner | undefined {
-    const state = states.get(run);
-
-    if (!state) {
-      return;
-    }
-
-    const owner = state.inputs.find((input) => input.id === state.owners.get(userMessageID));
-    return owner
+    const interaction = runStates.get(run)?.userMessageOwners.get(userMessageID);
+    return interaction
       ? {
-          reference: { run, id: owner.id },
-          input: owner.input,
-          agentName: owner.agentName,
+          reference: { run, id: interaction.userMessageID },
+          userInputText: interaction.userInputText,
+          agentName: interaction.agentName,
         }
       : undefined;
   }
 
   return {
-    open: states.open,
-    release: states.release,
+    open: runStates.open,
+    release: runStates.release,
     resolve,
     at(run: RunReference, time: number) {
-      const state = states.get(run);
-
-      if (!state) {
-        return;
-      }
-
-      const owner = state.inputs.findLast((input) => input.created <= time);
-      return owner ? resolve(run, owner.id) : undefined;
+      const interaction = runStates
+        .get(run)
+        ?.interactions.findLast((interaction) => interaction.startedAt <= time);
+      return interaction ? resolve(run, interaction.userMessageID) : undefined;
     },
     resolveAssistant(run: RunReference, messageID: string) {
-      const state = states.get(run);
-
-      if (!state) {
-        return;
-      }
-
-      const info = state.assistants.get(messageID)?.info;
+      const info = runStates.get(run)?.assistantMessages.get(messageID)?.info;
       const owner = info ? resolve(run, info.parentID) : undefined;
       return owner && info
         ? {
@@ -96,132 +68,150 @@ export function createInteractionTracker(options: {
     start(
       run: RunReference,
       info: UserMessage,
-      input: string | undefined,
+      userInputText: string | undefined,
       identity: AgentIdentity,
     ) {
-      const state = states.get(run);
+      const state = runStates.get(run);
 
       if (!state) {
         return;
       }
 
-      const previous = state.inputs.at(-1);
+      const previous = state.interactions.at(-1);
 
       if (previous) {
         options.observer.finishInteraction({
           run,
-          id: previous.id,
+          id: previous.userMessageID,
           endedAt: info.time.created,
           status: "superseded",
         });
       }
 
-      state.inputs.push({
-        id: info.id,
-        created: info.time.created,
-        input,
+      const interaction = {
+        userMessageID: info.id,
+        startedAt: info.time.created,
+        userInputText,
         agentName: info.agent,
-      });
-      state.owners.set(info.id, info.id);
+      };
+      state.interactions.push(interaction);
+      state.userMessageOwners.set(info.id, interaction);
       options.observer.startInteraction({
         run,
         id: info.id,
         startedAt: info.time.created,
-        input,
+        input: userInputText,
         agentName: info.agent,
         agentType: identity.agentType,
         parentSessionID: identity.parentSessionID,
       });
     },
     message(run: RunReference, info: UserMessage | AssistantMessage) {
-      const state = states.get(run);
+      const state = runStates.get(run);
 
       if (!state) {
         return;
       }
 
       if (info.role === "user") {
-        continuation(run, info);
+        // A late synthetic continuation belongs to the interaction active at its creation time.
+        const interaction = state.interactions.findLast(
+          (interaction) => interaction.startedAt <= info.time.created,
+        );
+
+        if (interaction && !state.userMessageOwners.has(info.id)) {
+          state.userMessageOwners.set(info.id, interaction);
+        }
         return;
       }
 
-      const assistant = state.assistants.get(info.id) ?? { texts: new Map<string, string>() };
-      state.assistants.set(info.id, { ...assistant, info });
+      const message = state.assistantMessages.get(info.id) ?? { texts: new Map<string, string>() };
+      state.assistantMessages.set(info.id, { ...message, info });
     },
     part(run: RunReference, part: Part) {
-      const state = states.get(run);
+      const state = runStates.get(run);
 
       if (!state) {
         return;
       }
 
-      if (part.type !== "text" || !options.captureContent || state.owners.has(part.messageID)) {
+      if (
+        part.type !== "text" ||
+        !options.captureContent ||
+        state.userMessageOwners.has(part.messageID)
+      ) {
         return;
       }
 
-      const assistant = state.assistants.get(part.messageID) ?? {
+      const message = state.assistantMessages.get(part.messageID) ?? {
         texts: new Map<string, string>(),
       };
 
       if (!part.synthetic && !part.ignored) {
-        assistant.texts.set(part.id, part.text);
+        message.texts.set(part.id, part.text);
       }
 
       if (part.synthetic || part.ignored) {
-        assistant.texts.delete(part.id);
+        message.texts.delete(part.id);
       }
 
-      state.assistants.set(part.messageID, assistant);
+      state.assistantMessages.set(part.messageID, message);
     },
     remove(run: RunReference, messageID: string, partID?: string) {
-      const state = states.get(run);
+      const state = runStates.get(run);
 
       if (!state) {
         return;
       }
 
       if (partID !== undefined) {
-        state.assistants.get(messageID)?.texts.delete(partID);
+        state.assistantMessages.get(messageID)?.texts.delete(partID);
         return;
       }
 
-      state.assistants.delete(messageID);
+      state.assistantMessages.delete(messageID);
     },
     finish(run: RunReference, time: number, error?: ObservationError) {
-      const state = states.get(run);
+      const state = runStates.get(run);
 
       if (!state) {
         return;
       }
 
-      const owner = state.inputs.at(-1);
+      const interaction = state.interactions.at(-1);
 
-      if (!owner) {
+      if (!interaction) {
         return;
       }
 
-      const assistant = Array.from(state.assistants.values())
+      const latestMessage = Array.from(state.assistantMessages.values())
         .filter(
-          (item) =>
-            item.info && !item.info.summary && state.owners.get(item.info.parentID) === owner.id,
+          (message) =>
+            message.info &&
+            !message.info.summary &&
+            state.userMessageOwners.get(message.info.parentID)?.userMessageID ===
+              interaction.userMessageID,
         )
         .sort((a, b) => (b.info?.time.created ?? 0) - (a.info?.time.created ?? 0))[0];
 
-      if (error || assistant?.info?.error) {
+      if (error || latestMessage?.info?.error) {
         options.observer.finishInteraction({
           run,
-          id: owner.id,
+          id: interaction.userMessageID,
           endedAt: time,
           status: "failed",
-          error: error ?? errorDetails(assistant?.info?.error),
+          error: error ?? errorDetails(latestMessage?.info?.error),
         });
         return;
       }
 
-      if (assistant?.info?.time.completed === undefined || assistant.info.finish === "tool-calls") {
+      if (
+        latestMessage?.info?.time.completed === undefined ||
+        latestMessage.info.finish === "tool-calls"
+      ) {
         options.observer.finishInteraction({
           run,
-          id: owner.id,
+          id: interaction.userMessageID,
           endedAt: time,
           status: "failed",
           error: { type: "_OTHER", message: "session ended before interaction completed" },
@@ -230,13 +220,13 @@ export function createInteractionTracker(options: {
       }
 
       const output =
-        options.captureContent && assistant.texts.size > 0
-          ? Array.from(assistant.texts.values()).join("\n")
+        options.captureContent && latestMessage.texts.size > 0
+          ? Array.from(latestMessage.texts.values()).join("\n")
           : undefined;
       options.observer.finishInteraction({
         run,
-        id: owner.id,
-        endedAt: assistant.info.time.completed,
+        id: interaction.userMessageID,
+        endedAt: latestMessage.info.time.completed,
         status: "completed",
         output,
       });

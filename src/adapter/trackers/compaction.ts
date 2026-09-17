@@ -183,7 +183,7 @@ export function createCompactionTracker(options: {
 
       const compaction = state.records.get(id);
       return compaction?.reference && compaction.owner
-        ? { ...compaction.owner, input: undefined }
+        ? { ...compaction.owner, userInputText: undefined }
         : undefined;
     },
     remove(run: RunReference, id: string, observedAt: number, partID?: string) {

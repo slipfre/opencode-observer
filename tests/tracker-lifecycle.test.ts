@@ -1,10 +1,11 @@
 import { expect, mock, test } from "bun:test";
-import type { AssistantMessage, ToolPart } from "@opencode-ai/sdk";
+import type { AssistantMessage, ToolPart, UserMessage } from "@opencode-ai/sdk";
 import type { Observer, RunReference } from "../src/contract/observer.js";
 import type { LlmRequest } from "../src/adapter/model/request.js";
 import { createLlmTracker } from "../src/adapter/trackers/llm.js";
 import { createToolTracker } from "../src/adapter/trackers/tool.js";
 import { createCompactionTracker } from "../src/adapter/trackers/compaction.js";
+import { createInteractionTracker } from "../src/adapter/trackers/interaction.js";
 
 function recording() {
   return {
@@ -29,6 +30,75 @@ function recording() {
   } satisfies Observer;
 }
 
+test("interaction ownership survives steer and late messages until its run is released", () => {
+  const observer = recording();
+  const tracker = createInteractionTracker({ observer, captureContent: true });
+  const first = { sessionID: "s1", id: "r1" };
+  const next = { sessionID: "s1", id: "r2" };
+  const other = { sessionID: "s2", id: "r1" };
+  const user: UserMessage = {
+    id: "input",
+    sessionID: "s1",
+    role: "user",
+    agent: "build",
+    model: { providerID: "test", modelID: "test" },
+    time: { created: 1000 },
+  };
+  [first, next, other].forEach((run) => {
+    tracker.open(run);
+    tracker.start(run, { ...user, sessionID: run.sessionID }, "question", {});
+  });
+
+  tracker.open(first);
+  tracker.start(first, { ...user, id: "steer", time: { created: 2000 } }, "follow-up", {});
+  tracker.message(first, { ...user, id: "continuation", time: { created: 1500 } });
+  tracker.message(first, { ...user, id: "continuation", time: { created: 2500 } });
+
+  expect(tracker.resolve(first, "continuation")).toEqual({
+    reference: { run: first, id: "input" },
+    userInputText: "question",
+    agentName: "build",
+  });
+  expect(tracker.resolve(first, "input")).toEqual(tracker.resolve(first, "continuation"));
+  expect(tracker.at(first, 999)).toBeUndefined();
+  expect(tracker.at(first, 1000)).toEqual(tracker.resolve(first, "input"));
+  expect(tracker.at(first, 1999)).toEqual(tracker.resolve(first, "input"));
+  expect(tracker.at(first, 2000)).toEqual(tracker.resolve(first, "steer"));
+  expect(tracker.at(first, 2500)?.userInputText).toBe("follow-up");
+  expect(tracker.resolve(next, "continuation")).toBeUndefined();
+  expect(tracker.resolve(other, "continuation")).toBeUndefined();
+  expect(observer.finishInteraction).toHaveBeenCalledTimes(1);
+  expect(observer.finishInteraction).toHaveBeenCalledWith({
+    run: first,
+    id: "input",
+    endedAt: 2000,
+    status: "superseded",
+  });
+
+  tracker.release(first);
+  tracker.release(first);
+  tracker.start(first, user, "stale", {});
+  tracker.message(first, { ...user, id: "late", time: { created: 3000 } });
+
+  expect(tracker.resolve(first, "input")).toBeUndefined();
+  expect(tracker.resolve(first, "continuation")).toBeUndefined();
+  expect(tracker.resolve(first, "late")).toBeUndefined();
+  expect(tracker.at(first, 3000)).toBeUndefined();
+  expect(observer.startInteraction).toHaveBeenCalledTimes(4);
+  [next, other].forEach((run) => {
+    expect(tracker.resolve(run, "input")).toEqual({
+      reference: { run, id: "input" },
+      userInputText: "question",
+      agentName: "build",
+    });
+  });
+
+  tracker.open(first);
+  expect(tracker.resolve(first, "input")).toBeUndefined();
+  expect(tracker.resolve(first, "continuation")).toBeUndefined();
+  expect(tracker.at(first, 3000)).toBeUndefined();
+});
+
 test("tool partitions isolate full run identities and release parts waiting for ownership", () => {
   const observer = recording();
   const tracker = createToolTracker({
@@ -41,7 +111,7 @@ test("tool partitions isolate full run identities and release parts waiting for 
     tracker.unresolved(run).forEach((call) => {
       tracker.associate(run, call.messageID, call.callID, {
         reference: { run, id: "input" },
-        input: undefined,
+        userInputText: undefined,
       });
     });
   }
@@ -145,11 +215,11 @@ test("LLM bindings expire on release even when the same run and message are regi
     );
     tracker.associate(run, "assistant", {
       reference: { run, id: "input" },
-      input: undefined,
+      userInputText: undefined,
     });
     tracker.associate(run, "assistant", {
       reference: { run, id: "different" },
-      input: "must not replace the established owner",
+      userInputText: "must not replace the established owner",
     });
     expect(observer.startLlm).toHaveBeenCalledTimes(starts + 1);
     expect(observer.startLlm).toHaveBeenLastCalledWith(
@@ -192,7 +262,7 @@ test("compaction waits for resolved ownership and retains it for summary queries
   const onFinish = mock(() => {});
   const tracker = createCompactionTracker({ observer, onFinish });
   const run = { sessionID: "s1", id: "u1" };
-  const owner = { reference: { run, id: "u1" }, input: "private", agentName: "build" };
+  const owner = { reference: { run, id: "u1" }, userInputText: "private", agentName: "build" };
   tracker.open(run);
   tracker.part(
     run,
@@ -212,7 +282,7 @@ test("compaction waits for resolved ownership and retains it for summary queries
   expect(observer.finishCompaction).toHaveBeenCalledTimes(1);
   expect(onFinish).toHaveBeenCalledTimes(1);
   expect(tracker.unresolved(run)).toEqual([]);
-  expect(tracker.resolve(run, "marker")).toEqual({ ...owner, input: undefined });
+  expect(tracker.resolve(run, "marker")).toEqual({ ...owner, userInputText: undefined });
 
   tracker.release(run);
   tracker.associate(run, "marker", owner);
