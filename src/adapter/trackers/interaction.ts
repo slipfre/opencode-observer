@@ -54,7 +54,6 @@ export function createInteractionTracker(options: {
   }
 
   return {
-    continuation,
     resolve,
     at(time: number) {
       const owner = inputs.findLast((input) => input.created <= time);

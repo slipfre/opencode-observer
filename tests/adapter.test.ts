@@ -890,16 +890,52 @@ test("steer supersedes the old interaction exactly at the next input and ignores
   expect(h.finishes[0]?.output).toBe("final");
 });
 
-test("synthetic and compaction messages retain the interaction through successful recovery", async () => {
+test.each(["synthetic", "ignored"] as const)(
+  "%s prompt hooks and message events keep the original interaction",
+  async (flag) => {
+    const h = recording();
+    const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
+    const info = user("continue", 1400);
+    const part = { ...text("continue", "internal input"), [flag]: true };
+    await coordinator.message(user(), [text()]);
+
+    await coordinator.message(info, [part]);
+
+    expect(h.interactions).toHaveLength(1);
+    expect(h.completed).toHaveLength(0);
+
+    await coordinator.event({ type: "message.updated", properties: { info } });
+    await coordinator.event({ type: "message.part.updated", properties: { part } });
+    await coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ parentID: info.id, time: { created: 1500 } }) },
+    });
+    await modelPart(coordinator, "step-start", 1500);
+    await modelPart(coordinator, "step-finish", 1600);
+    await reply(coordinator, "continued answer", {
+      parentID: info.id,
+      time: { created: 1500, completed: 1600 },
+    });
+    await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+
+    expect(h.starts).toHaveLength(1);
+    expect(h.interactions).toHaveLength(1);
+    expect(h.interactions[0]?.input).toBe("question");
+    expect(h.llms).toHaveLength(1);
+    expect(h.llms[0]).toMatchObject({ interaction: { id: "u1" }, input: "question" });
+    expect(h.completed).toHaveLength(1);
+    expect(h.completed[0]).toMatchObject({
+      id: "u1",
+      status: "completed",
+      output: "continued answer",
+    });
+    expect(h.finishes[0]?.output).toBe("continued answer");
+  },
+);
+
+test("compaction and continuation events retain the interaction through successful recovery", async () => {
   const h = recording();
   const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
-
-  await coordinator.message(user(), [{ ...text(), synthetic: true }]);
-  await coordinator.message(user(), [
-    { id: "c", sessionID: "s1", messageID: "u1", type: "compaction", auto: true },
-  ]);
-
-  expect(h.interactions).toHaveLength(0);
 
   await coordinator.message(user(), [
     { ...text(), ignored: true },
@@ -926,9 +962,14 @@ test("synthetic and compaction messages retain the interaction through successfu
     time: { created: 1300, completed: 1350 },
   });
   await coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } });
-  await coordinator.message(user("continue", 1400), [
-    { ...text("continue", "continue"), synthetic: true },
-  ]);
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: user("continue", 1400) },
+  });
+  await coordinator.event({
+    type: "message.part.updated",
+    properties: { part: { ...text("continue", "continue"), synthetic: true } },
+  });
 
   expect(h.completed).toHaveLength(0);
 

@@ -302,16 +302,8 @@ export function createCoordinator(options: CoordinatorOptions) {
       .filter((part) => !part.synthetic && !part.ignored);
     const hasUserInput =
       texts.length > 0 || parts.some((part) => part.type === "file" || part.type === "subtask");
-    const activeSession = sessions.get(info.sessionID);
 
     if (!hasUserInput) {
-      activeSession?.interactions.continuation(info);
-      activeSession?.compactions.message(info, now());
-      parts
-        .filter((part) => part.type === "compaction")
-        .forEach((part) => activeSession?.compactions.part(part, now(), activeSession.trigger));
-      activeSession?.llms.message(info, now());
-      activeSession?.tools.refresh();
       return;
     }
 
@@ -331,7 +323,7 @@ export function createCoordinator(options: CoordinatorOptions) {
       return;
     }
 
-    const session = activeSession ?? startSession(input.reference);
+    const session = sessions.get(info.sessionID) ?? startSession(input.reference);
     session.interactions.start(info, input.text, input.userID);
     session.compactions.message(info, now());
     session.llms.message(info, now());
