@@ -9,7 +9,6 @@ export type RunOptions = {
 export function createRunTracker(options: RunOptions) {
   const runs = new Map<string, RunReference>();
   const seen = new Set<string>();
-  const state = { closed: false };
 
   return {
     userInput(input: {
@@ -22,7 +21,7 @@ export function createRunTracker(options: RunOptions) {
     }) {
       const key = JSON.stringify([input.sessionID, input.id]);
 
-      if (state.closed || seen.has(key)) {
+      if (seen.has(key)) {
         return;
       }
 
@@ -46,7 +45,7 @@ export function createRunTracker(options: RunOptions) {
       return { reference, text, userID };
     },
     finish(input: RunFinish) {
-      if (state.closed || runs.get(input.sessionID)?.id !== input.id) {
+      if (runs.get(input.sessionID)?.id !== input.id) {
         return;
       }
 
@@ -55,9 +54,6 @@ export function createRunTracker(options: RunOptions) {
         ...input,
         output: options.captureContent ? input.output : undefined,
       });
-    },
-    close() {
-      state.closed = true;
     },
   };
 }

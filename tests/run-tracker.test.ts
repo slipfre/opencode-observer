@@ -36,7 +36,7 @@ test("run tracker accepts recognized inputs, deduplicates them and preserves ses
   expect(h.updates.map((value) => value.input.text)).toEqual(["question", "steer", "question"]);
 });
 
-test("run tracker rejects stale finishes and replays across consecutive runs and closes silently", () => {
+test("run tracker rejects stale finishes and replays across consecutive runs", () => {
   const h = setup();
   const input = { sessionID: "s1", id: "u1", createdAt: 1000, text: "question" };
   const finish = { sessionID: "s1", id: "u1", endedAt: 2000, output: "answer" };
@@ -51,14 +51,6 @@ test("run tracker rejects stale finishes and replays across consecutive runs and
 
   expect(h.starts.map((value) => value.id)).toEqual(["u1", "u2"]);
   expect(h.finishes.map((value) => value.endedAt)).toEqual([2000, 4000]);
-  h.tracker.userInput({ ...input, id: "u3", createdAt: 5000 });
-  h.tracker.close();
-  h.tracker.close();
-  h.tracker.finish({ ...finish, id: "u3" });
-
-  expect(h.tracker.userInput({ ...input, id: "u4" })).toBeUndefined();
-  expect(h.finishes).toHaveLength(2);
-  expect(h.starts).toHaveLength(3);
 });
 
 test("run tracker enforces capture policy on recognized input and completion", () => {

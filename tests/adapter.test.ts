@@ -617,7 +617,7 @@ test("event hooks record synchronously with the coordinator clock and wait for f
   await coordinator.hooks.dispose();
 });
 
-test("dispose releases recording state and waits for one shared shutdown", async () => {
+test("dispose clears existing session state and waits for one shared shutdown", async () => {
   const h = recording();
   const shutdown = Promise.withResolvers<void>();
   const settled = { value: false };
@@ -649,10 +649,11 @@ test("dispose releases recording state and waits for one shared shutdown", async
   });
 
   expect(h.starts).toHaveLength(1);
-  expect(h.interactions).toHaveLength(1);
+  expect(h.interactions.map((input) => input.id)).toEqual(["u1", "u2"]);
   expect(h.llms).toHaveLength(0);
   expect(h.llmUpdates).toHaveLength(0);
-  expect(h.finishes).toHaveLength(0);
+  expect(h.finishes).toHaveLength(1);
+  expect(h.finishes[0]).toMatchObject({ sessionID: "s1", id: "u1" });
   expect(h.observer.llmTraceHeaders).not.toHaveBeenCalled();
   expect(output.headers).toEqual({ "X-Test": "kept" });
   expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
@@ -748,7 +749,8 @@ test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async
   await adapter.hooks.dispose();
 
   expect(failures).toEqual([exportError, disposeError]);
-  expect(h.starts).toHaveLength(0);
+  expect(h.starts).toHaveLength(1);
+  expect(h.interactions).toHaveLength(1);
   expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
 });
 

@@ -73,7 +73,6 @@ export function createCoordinator(options: CoordinatorOptions) {
           state.messageCapture?.close();
           sessions.forEach((session) => session.llms.invalidate());
           sessions.clear();
-          runs.close();
         });
         return options.observer.shutdown();
       });
