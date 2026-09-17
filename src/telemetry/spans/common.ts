@@ -1,6 +1,6 @@
 import { SpanStatusCode, type Context, type Span, type Tracer } from "@opentelemetry/api";
 import type {
-  AgentIdentity,
+  AgentContext,
   CompactionReference,
   ObservationError,
   RunReference,
@@ -64,13 +64,13 @@ export function createSpanHistory() {
   };
 }
 
-export function identityAttributes(run: RunReference, identity: AgentIdentity) {
+export function agentContextAttributes(run: RunReference, agentContext: AgentContext) {
   return {
     "session.id": run.sessionID,
     "gen_ai.conversation.id": run.sessionID,
-    "gen_ai.agent.name": identity.agentName,
-    "opencode.agent.type": identity.agentType,
-    "opencode.session.parent_id": identity.parentSessionID,
+    "gen_ai.agent.name": agentContext.agentName,
+    "opencode.agent.type": agentContext.agentType,
+    "opencode.session.parent_id": agentContext.parentSessionID,
   };
 }
 

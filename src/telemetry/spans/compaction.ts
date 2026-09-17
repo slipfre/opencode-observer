@@ -7,7 +7,13 @@ import type {
   ObservationError,
   RunReference,
 } from "../../contract/observer.js";
-import { endSpan, identityAttributes, operationKey, sameRun, type SpanOptions } from "./common.js";
+import {
+  endSpan,
+  agentContextAttributes,
+  operationKey,
+  sameRun,
+  type SpanOptions,
+} from "./common.js";
 
 export function createCompactionSpans(
   options: SpanOptions & {
@@ -73,7 +79,7 @@ export function createCompactionSpans(
             startTime: new Date(input.startedAt),
             attributes: {
               ...options.spanAttributes,
-              ...identityAttributes(input.interaction.run, input),
+              ...agentContextAttributes(input.interaction.run, input),
               "opencode.compaction.id": input.id,
               "opencode.compaction.auto": input.auto,
               "opencode.compaction.overflow": input.overflow,

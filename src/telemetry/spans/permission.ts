@@ -7,7 +7,13 @@ import type {
   RunReference,
   ToolReference,
 } from "../../contract/observer.js";
-import { endSpan, identityAttributes, operationKey, sameRun, type SpanOptions } from "./common.js";
+import {
+  endSpan,
+  agentContextAttributes,
+  operationKey,
+  sameRun,
+  type SpanOptions,
+} from "./common.js";
 
 export function createPermissionSpans(
   options: SpanOptions & {
@@ -67,7 +73,7 @@ export function createPermissionSpans(
             startTime: new Date(input.startedAt),
             attributes: {
               ...options.spanAttributes,
-              ...identityAttributes(input.tool.interaction.run, input),
+              ...agentContextAttributes(input.tool.interaction.run, input),
               "gen_ai.tool.call.id": input.tool.callID,
               "gen_ai.tool.name": input.toolName,
               "opencode.permission.name": input.name,

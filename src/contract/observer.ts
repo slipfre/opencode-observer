@@ -1,6 +1,6 @@
 import type { JsonValue, ModelInput, ModelMessage } from "./messages.js";
 
-export type AgentIdentity = {
+export type AgentContext = {
   agentName?: string;
   agentType?: "primary" | "subagent";
   parentSessionID?: string;
@@ -38,7 +38,7 @@ export type InteractionStart = InteractionReference & {
   startedAt: number;
   input: string | undefined;
   agentName: string;
-  agentType: AgentIdentity["agentType"];
+  agentType: AgentContext["agentType"];
   parentSessionID: string | undefined;
 };
 
@@ -92,7 +92,7 @@ export type LlmStart = LlmReference & {
   /** Owner text fallback; this is not the full model request. */
   input: string | undefined;
   parameters?: LlmParameters;
-  agentType: AgentIdentity["agentType"];
+  agentType: AgentContext["agentType"];
   parentSessionID: string | undefined;
   compactionID: string | undefined;
 };
@@ -132,7 +132,7 @@ export type ToolReference = {
 };
 
 export type ToolStart = ToolReference &
-  AgentIdentity & {
+  AgentContext & {
     name: string;
     startedAt: number;
     arguments?: { [key: string]: JsonValue };
@@ -149,7 +149,7 @@ export type ToolFinish = ToolReference & {
 export type CompactionReference = { interaction: InteractionReference; id: string };
 
 export type CompactionStart = CompactionReference &
-  AgentIdentity & {
+  AgentContext & {
     startedAt: number;
     auto: boolean;
     overflow: boolean;
@@ -168,7 +168,7 @@ export type CompactionFinish = CompactionReference & {
 export type PermissionReference = { tool: ToolReference; requestID: string };
 
 export type PermissionStart = PermissionReference &
-  AgentIdentity & {
+  AgentContext & {
     startedAt: number;
     toolName: string;
     name: string;

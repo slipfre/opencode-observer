@@ -8,132 +8,128 @@ import type {
   ObservationError,
   RunReference,
 } from "../../contract/observer.js";
-import { createRunStore } from "../shared/runs.js";
+import { createRunScopedStore } from "../shared/runs.js";
 import { errorDetails } from "../shared/error.js";
 import { nonNegativeNumber } from "../shared/number.js";
 import type { ModelCapture } from "../model/ai-sdk.js";
 import { parseModelRequest, providerName, type LlmRequest } from "../model/request.js";
 import { parseModelUsage } from "../model/usage.js";
 import { parseErrorResponseHeaders } from "../model/headers.js";
-import type { InteractionOwner } from "./interaction.js";
+import type { InteractionContext } from "./interaction.js";
 
-type LlmCallState = {
-  info?: {
-    parentID: string;
+type LlmCall = {
+  messageID: string;
+  assistantMessage?: {
+    parentMessageID: string;
     modelID: string;
     providerID: string;
     agentName?: string;
-    completed?: number;
+    completedAt?: number;
     summary?: boolean;
   };
-  owner?: InteractionOwner;
+  interactionContext?: InteractionContext;
   startedAt?: number;
   reference?: LlmReference;
-  result?: Omit<LlmFinish, "interaction" | "id" | "output">;
-  stepIDs?: Set<string>;
-  previousTextIDs?: Set<string>;
-  texts: Map<string, string>;
-  capturePending?: boolean;
-  binding?: symbol;
-  messages?: Omit<LlmUpdate, "interaction" | "id">;
+  finishSnapshot?: Omit<LlmFinish, "interaction" | "id" | "output">;
+  startedStepIDs?: Set<string>;
+  previousStepTextPartIDs?: Set<string>;
+  textParts: Map<string, string>;
+  awaitingSdkOutput?: boolean;
+  captureBinding?: symbol;
+  pendingUpdate?: Omit<LlmUpdate, "interaction" | "id">;
 };
 
 export function createLlmTracker(options: { observer: Observer; captureContent?: boolean }) {
-  const states = createRunStore(() => ({
-    calls: new Map<string, LlmCallState>(),
-    finished: new Set<string>(),
-    closedCompactions: new Set<string>(),
-    requests: new Map<string, ReturnType<typeof parseModelRequest>>(),
+  const store = createRunScopedStore(() => ({
+    llmCalls: new Map<string, LlmCall>(),
+    finishedMessageIDs: new Set<string>(),
+    closedCompactionIDs: new Set<string>(),
+    requestSettings: new Map<string, ReturnType<typeof parseModelRequest>>(),
   }));
 
-  function record(run: RunReference, id: string) {
-    const state = states.get(run);
+  function record(run: RunReference, messageID: string) {
+    const state = store.get(run);
 
     if (!state) {
       return;
     }
 
-    const call = state.calls.get(id);
+    const call = state.llmCalls.get(messageID);
 
-    if (!call?.info || call.startedAt === undefined) {
+    if (!call?.assistantMessage || call.startedAt === undefined) {
       return;
     }
 
-    const parent = call.owner;
+    const context = call.interactionContext;
 
-    if (!parent) {
+    if (!context) {
       return;
     }
 
     if (!call.reference) {
+      const message = call.assistantMessage;
       // Escape free-form names; a missing agent uses an unescaped separator.
-      const key =
-        `${call.info.parentID}:${encodeURIComponent(call.info.providerID)}:` +
-        `${encodeURIComponent(call.info.modelID)}:` +
-        (call.info.agentName === undefined ? ":" : encodeURIComponent(call.info.agentName));
-      const request = state.requests.get(key);
-      const provider = request?.providerName ?? providerName(call.info.providerID);
-      call.reference = { interaction: parent.reference, id };
-      state.requests.delete(key);
+      const requestKey =
+        `${message.parentMessageID}:${encodeURIComponent(message.providerID)}:` +
+        `${encodeURIComponent(message.modelID)}:` +
+        (message.agentName === undefined ? ":" : encodeURIComponent(message.agentName));
+      const request = state.requestSettings.get(requestKey);
+      const provider = request?.providerName ?? providerName(message.providerID);
+      call.reference = { interaction: context.reference, id: messageID };
+      state.requestSettings.delete(requestKey);
       options.observer.startLlm({
         ...call.reference,
         startedAt: call.startedAt,
-        providerID: call.info.providerID,
+        providerID: message.providerID,
         providerName: provider,
-        model: request?.model ?? call.info.modelID,
+        model: request?.model ?? message.modelID,
         operation:
           request?.operation ??
           (provider === "gcp.gemini" || provider === "gcp.vertex_ai" ? "generate_content" : "chat"),
         stream: true,
-        agentName: call.info.agentName,
-        input: options.captureContent ? parent.userInputText : undefined,
+        agentName: message.agentName,
+        input: options.captureContent ? context.userInputText : undefined,
         parameters: request?.parameters,
-        agentType: parent.agentType,
-        parentSessionID: parent.parentSessionID,
-        compactionID: call.info.summary ? call.info.parentID : undefined,
+        agentType: context.agentType,
+        parentSessionID: context.parentSessionID,
+        compactionID: message.summary ? message.parentMessageID : undefined,
       });
     }
 
-    if (call.messages) {
-      options.observer.updateLlm({ ...call.reference, ...call.messages });
-      delete call.messages;
+    if (call.pendingUpdate) {
+      options.observer.updateLlm({ ...call.reference, ...call.pendingUpdate });
+      delete call.pendingUpdate;
     }
 
-    if (call.result) {
-      if (call.capturePending && !call.result.error) {
+    if (call.finishSnapshot) {
+      if (call.awaitingSdkOutput && !call.finishSnapshot.error) {
         return;
       }
 
-      state.finished.add(id);
-      state.calls.delete(id);
+      state.finishedMessageIDs.add(messageID);
+      state.llmCalls.delete(messageID);
       options.observer.finishLlm({
         ...call.reference,
-        ...call.result,
+        ...call.finishSnapshot,
         output:
-          options.captureContent && call.texts.size > 0
-            ? Array.from(call.texts.values()).join("\n")
+          options.captureContent && call.textParts.size > 0
+            ? Array.from(call.textParts.values()).join("\n")
             : undefined,
       });
     }
   }
 
   function resolveRequest(run: RunReference, input: LlmRequest[0]) {
-    const state = states.get(run);
-
-    if (!state) {
-      return;
-    }
-
-    const candidates = Array.from(state.calls.entries()).filter(
-      ([_id, call]) =>
-        !call.result &&
-        call.info &&
-        call.info.parentID === input.message.id &&
-        call.info.agentName === input.agent &&
-        call.info.providerID === input.model.providerID &&
-        call.info.modelID === input.model.id &&
-        call.info.completed === undefined &&
-        call.owner,
+    const candidates = Array.from(store.get(run)?.llmCalls.values() ?? []).filter(
+      (call) =>
+        !call.finishSnapshot &&
+        call.assistantMessage &&
+        call.assistantMessage.parentMessageID === input.message.id &&
+        call.assistantMessage.agentName === input.agent &&
+        call.assistantMessage.providerID === input.model.providerID &&
+        call.assistantMessage.modelID === input.model.id &&
+        call.assistantMessage.completedAt === undefined &&
+        call.interactionContext,
     );
     return candidates.length === 1 ? candidates[0] : undefined;
   }
@@ -144,89 +140,93 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
     error: ObservationError,
     response?: { messageID: string; headers: ModelHeaders | undefined },
   ) {
-    const state = states.get(run);
+    const state = store.get(run);
 
     if (!state) {
       return;
     }
 
-    state.calls.forEach((call, id) => {
+    state.llmCalls.forEach((call) => {
       if (call.startedAt === undefined) {
         return;
       }
 
-      call.result ??= { endedAt, error };
-      if (options.captureContent && response?.messageID === id) {
-        call.result.responseHeaders = response.headers;
+      call.finishSnapshot ??= { endedAt, error };
+      if (options.captureContent && response?.messageID === call.messageID) {
+        call.finishSnapshot.responseHeaders = response.headers;
       }
-      call.capturePending = false;
-      record(run, id);
+      call.awaitingSdkOutput = false;
+      record(run, call.messageID);
     });
   }
 
   // SDK callbacks retain only identity, never a call record or its content snapshots.
-  function capture(run: RunReference, id: string, binding: symbol): ModelCapture {
-    function current() {
-      const call = states.get(run)?.calls.get(id);
-      return call?.binding === binding ? call : undefined;
+  function capture(run: RunReference, messageID: string, captureBinding: symbol): ModelCapture {
+    function currentCall() {
+      const call = store.get(run)?.llmCalls.get(messageID);
+      return call?.captureBinding === captureBinding ? call : undefined;
     }
 
     return {
-      active: () => current() !== undefined,
+      active: () => currentCall() !== undefined,
       input(value) {
-        const call = current();
+        const call = currentCall();
 
         if (call) {
-          call.messages = value;
-          call.capturePending = true;
-          record(run, id);
+          call.pendingUpdate = value;
+          call.awaitingSdkOutput = true;
+          record(run, messageID);
         }
       },
       output(value) {
-        const call = current();
+        const call = currentCall();
 
         if (call) {
-          call.messages = { ...call.messages, ...value };
-          call.capturePending = false;
-          record(run, id);
+          call.pendingUpdate = { ...call.pendingUpdate, ...value };
+          call.awaitingSdkOutput = false;
+          record(run, messageID);
         }
       },
     };
   }
 
   return {
-    open: states.open,
-    release: states.release,
+    open: store.open,
+    release: store.release,
     unresolved(run: RunReference) {
-      return Array.from(states.get(run)?.calls.entries() ?? []).flatMap(([id, call]) =>
-        call.info && !call.reference
-          ? [{ id, parentID: call.info.parentID, summary: call.info.summary }]
+      return Array.from(store.get(run)?.llmCalls.values() ?? []).flatMap((call) =>
+        call.assistantMessage && !call.reference
+          ? [
+              {
+                id: call.messageID,
+                parentID: call.assistantMessage.parentMessageID,
+                summary: call.assistantMessage.summary,
+              },
+            ]
           : [],
       );
     },
-    associate(run: RunReference, id: string, owner: InteractionOwner | undefined) {
-      const call = states.get(run)?.calls.get(id);
+    associate(run: RunReference, messageID: string, context: InteractionContext | undefined) {
+      const call = store.get(run)?.llmCalls.get(messageID);
 
       if (call && !call.reference) {
-        call.owner = owner;
-        record(run, id);
+        call.interactionContext = context;
+        record(run, messageID);
       }
     },
     activeRequest(run: RunReference) {
-      const state = states.get(run);
-
-      if (!state) {
-        return;
-      }
-
-      const activeCalls = Array.from(state.calls.entries()).filter(
-        ([_id, call]) =>
-          call.info && !call.info.summary && call.startedAt !== undefined && !call.result,
+      const activeCalls = Array.from(store.get(run)?.llmCalls.values() ?? []).filter(
+        (call) =>
+          call.assistantMessage &&
+          !call.assistantMessage.summary &&
+          call.startedAt !== undefined &&
+          !call.finishSnapshot,
       );
-      return activeCalls.length === 1 && activeCalls[0]?.[1].info
+      const call = activeCalls.length === 1 ? activeCalls[0] : undefined;
+      return call?.assistantMessage
         ? {
-            messageID: activeCalls[0][0],
-            ownerMessageID: activeCalls[0][1].info.parentID,
+            messageID: call.messageID,
+            parentMessageID: call.assistantMessage.parentMessageID,
           }
         : undefined;
     },
@@ -236,70 +236,69 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       endedAt: number,
       error?: ObservationError,
     ) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
-      state.calls.forEach((call, id) => {
-        if (call.info?.summary && call.info.parentID === markerID) {
-          call.result ??= {
+      state.llmCalls.forEach((call) => {
+        if (call.assistantMessage?.summary && call.assistantMessage.parentMessageID === markerID) {
+          call.finishSnapshot ??= {
             endedAt,
             error: error ?? {
               type: "_OTHER",
               message: "compaction ended before message completed",
             },
           };
-          call.capturePending = false;
-          record(run, id);
+          call.awaitingSdkOutput = false;
+          record(run, call.messageID);
         }
       });
-      state.closedCompactions.add(markerID);
+      state.closedCompactionIDs.add(markerID);
     },
     prepare(run: RunReference, input: LlmRequest[0], observedAt: number) {
-      const candidate = resolveRequest(run, input);
+      const call = resolveRequest(run, input);
 
-      if (!candidate) {
+      if (!call) {
         return;
       }
 
       // Headers must reference a span that already exists before provider execution.
-      const call = candidate[1];
       call.startedAt ??= observedAt;
-      record(run, candidate[0]);
+      record(run, call.messageID);
       return call.reference ? options.observer.llmTraceHeaders(call.reference) : undefined;
     },
     bind(run: RunReference, input: LlmRequest[0]): ModelCapture | undefined {
-      const candidate = resolveRequest(run, input);
+      const call = resolveRequest(run, input);
 
-      if (!candidate) {
+      if (!call) {
         return;
       }
 
-      const binding = Symbol();
-      candidate[1].binding = binding;
-      return capture(run, candidate[0], binding);
+      const captureBinding = Symbol();
+      call.captureBinding = captureBinding;
+      return capture(run, call.messageID, captureBinding);
     },
     request(run: RunReference, input: LlmRequest[0], output: LlmRequest[1]) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
-      const key =
+      const requestKey =
         `${input.message.id}:${encodeURIComponent(input.model.providerID)}:` +
         `${encodeURIComponent(input.model.id)}:${encodeURIComponent(input.agent)}`;
-      state.requests.set(key, parseModelRequest(input, output));
+      state.requestSettings.set(requestKey, parseModelRequest(input, output));
     },
     message(
       run: RunReference,
       info: UserMessage | AssistantMessage,
       observedAt: number,
-      owner?: InteractionOwner,
+      context?: InteractionContext,
     ) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
@@ -309,34 +308,37 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         return;
       }
 
-      if (state.finished.has(info.id)) {
+      if (state.finishedMessageIDs.has(info.id)) {
         return;
       }
 
-      if (info.summary && state.closedCompactions.has(info.parentID)) {
-        state.calls.delete(info.id);
-        state.finished.add(info.id);
+      if (info.summary && state.closedCompactionIDs.has(info.parentID)) {
+        state.llmCalls.delete(info.id);
+        state.finishedMessageIDs.add(info.id);
         return;
       }
 
-      const call = state.calls.get(info.id) ?? { texts: new Map<string, string>() };
-      state.calls.set(info.id, call);
+      const call = state.llmCalls.get(info.id) ?? {
+        messageID: info.id,
+        textParts: new Map<string, string>(),
+      };
+      state.llmCalls.set(info.id, call);
       const agent = "agent" in info && typeof info.agent === "string" ? info.agent : info.mode;
-      call.info = {
-        parentID: info.parentID,
+      call.assistantMessage = {
+        parentMessageID: info.parentID,
         modelID: info.modelID,
         providerID: info.providerID,
         agentName: agent || undefined,
-        completed: info.time.completed,
+        completedAt: info.time.completed,
         summary: info.summary,
       };
 
       if (!call.reference) {
-        call.owner = owner;
+        call.interactionContext = context;
       }
 
       if (info.error && call.startedAt !== undefined) {
-        call.result ??= {
+        call.finishSnapshot ??= {
           endedAt: observedAt,
           error: errorDetails(info.error),
           finishReason: info.finish,
@@ -349,14 +351,14 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       record(run, info.id);
     },
     part(run: RunReference, part: Part, observedAt: number) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
       if (
-        state.finished.has(part.messageID) ||
+        state.finishedMessageIDs.has(part.messageID) ||
         !["text", "step-start", "step-finish"].includes(part.type)
       ) {
         return;
@@ -366,44 +368,47 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         return;
       }
 
-      const call = state.calls.get(part.messageID) ?? { texts: new Map<string, string>() };
-      state.calls.set(part.messageID, call);
+      const call = state.llmCalls.get(part.messageID) ?? {
+        messageID: part.messageID,
+        textParts: new Map<string, string>(),
+      };
+      state.llmCalls.set(part.messageID, call);
 
       if (part.type === "text") {
-        if (call.previousTextIDs?.has(part.id)) {
+        if (call.previousStepTextPartIDs?.has(part.id)) {
           return;
         }
 
         if (part.synthetic || part.ignored) {
-          call.texts.delete(part.id);
+          call.textParts.delete(part.id);
         }
 
         if (!part.synthetic && !part.ignored) {
-          call.texts.set(part.id, part.text);
+          call.textParts.set(part.id, part.text);
         }
       }
 
       if (part.type === "step-start") {
         // Repeated steps/retries belong to the same logical request. A step is not an exact attempt boundary.
-        if (call.stepIDs?.size && !call.stepIDs.has(part.id)) {
-          call.previousTextIDs ??= new Set();
-          call.texts.forEach((_text, id) => call.previousTextIDs?.add(id));
-          call.texts.clear();
+        if (call.startedStepIDs?.size && !call.startedStepIDs.has(part.id)) {
+          call.previousStepTextPartIDs ??= new Set();
+          call.textParts.forEach((_text, partID) => call.previousStepTextPartIDs?.add(partID));
+          call.textParts.clear();
         }
 
-        call.stepIDs ??= new Set();
-        call.stepIDs.add(part.id);
+        call.startedStepIDs ??= new Set();
+        call.startedStepIDs.add(part.id);
         call.startedAt ??= observedAt;
       }
 
       if (part.type === "step-finish") {
         if (call.startedAt === undefined) {
-          state.calls.delete(part.messageID);
-          state.finished.add(part.messageID);
+          state.llmCalls.delete(part.messageID);
+          state.finishedMessageIDs.add(part.messageID);
           return;
         }
 
-        call.result ??= {
+        call.finishSnapshot ??= {
           endedAt: observedAt,
           finishReason: part.reason || undefined,
           usage: parseModelUsage(part.tokens),
@@ -417,27 +422,27 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       record(run, part.messageID);
     },
     remove(run: RunReference, messageID: string, observedAt: number, partID?: string) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
       if (partID !== undefined) {
-        state.calls.get(messageID)?.texts.delete(partID);
+        state.llmCalls.get(messageID)?.textParts.delete(partID);
         return;
       }
 
-      const call = state.calls.get(messageID);
+      const call = state.llmCalls.get(messageID);
 
       if (call) {
-        call.result ??= {
+        call.finishSnapshot ??= {
           endedAt: observedAt,
           error: { type: "_OTHER", message: "message removed before model completed" },
         };
         record(run, messageID);
-        state.calls.delete(messageID);
-        state.finished.add(messageID);
+        state.llmCalls.delete(messageID);
+        state.finishedMessageIDs.add(messageID);
       }
     },
     fail,
@@ -447,7 +452,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         endedAt,
         error ?? { type: "_OTHER", message: "session ended before message completed" },
       );
-      states.get(run)?.calls.clear();
+      store.get(run)?.llmCalls.clear();
     },
   };
 }

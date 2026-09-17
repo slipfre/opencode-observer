@@ -6,8 +6,8 @@ export type RunOptions = {
 };
 
 export function createRunTracker(options: RunOptions) {
-  const runs = new Map<string, RunReference>();
-  const seen = new Set<string>();
+  const activeRuns = new Map<string, RunReference>();
+  const seenUserMessageKeys = new Set<string>();
 
   return {
     userInput(input: {
@@ -18,43 +18,44 @@ export function createRunTracker(options: RunOptions) {
       parent?: ToolReference;
       parentSessionID?: string;
     }) {
-      const key = `${input.sessionID}:${input.id}`;
+      const userMessageKey = `${input.sessionID}:${input.id}`;
 
-      if (seen.has(key)) {
+      if (seenUserMessageKeys.has(userMessageKey)) {
         return;
       }
 
-      const reference = runs.get(input.sessionID) ?? { sessionID: input.sessionID, id: input.id };
+      const activeRun = activeRuns.get(input.sessionID);
+      const reference = activeRun ?? { sessionID: input.sessionID, id: input.id };
 
-      if (!runs.has(input.sessionID)) {
+      if (!activeRun) {
         options.observer.startRun({
           ...reference,
           startedAt: input.createdAt,
           parent: input.parent,
           parentSessionID: input.parentSessionID,
         });
-        runs.set(input.sessionID, reference);
+        activeRuns.set(input.sessionID, reference);
       }
 
       const text = options.captureContent ? input.text : undefined;
-      seen.add(key);
+      seenUserMessageKeys.add(userMessageKey);
       options.observer.updateRun({ ...reference, input: { id: input.id, text } });
       return { reference, text };
     },
     finish(input: RunFinish) {
-      if (runs.get(input.sessionID)?.id !== input.id) {
+      if (activeRuns.get(input.sessionID)?.id !== input.id) {
         return;
       }
 
-      runs.delete(input.sessionID);
+      activeRuns.delete(input.sessionID);
       options.observer.finishRun({
         ...input,
         output: options.captureContent ? input.output : undefined,
       });
     },
     release(run: RunReference) {
-      if (runs.get(run.sessionID)?.id === run.id) {
-        runs.delete(run.sessionID);
+      if (activeRuns.get(run.sessionID)?.id === run.id) {
+        activeRuns.delete(run.sessionID);
       }
     },
   };

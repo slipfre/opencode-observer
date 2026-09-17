@@ -1,12 +1,12 @@
 import type { AssistantMessage, Part, UserMessage } from "@opencode-ai/sdk";
 import type {
-  AgentIdentity,
+  AgentContext,
   InteractionReference,
   Observer,
   ObservationError,
   RunReference,
 } from "../../contract/observer.js";
-import { createRunStore } from "../shared/runs.js";
+import { createRunScopedStore } from "../shared/runs.js";
 import { errorDetails } from "../shared/error.js";
 
 type AssistantMessageState = { info?: AssistantMessage; texts: Map<string, string> };
@@ -19,7 +19,8 @@ type Interaction = {
   agentName: string;
 };
 
-export type InteractionOwner = AgentIdentity & {
+/** Resolved interaction reference, user text, and agent context passed to other trackers. */
+export type InteractionContext = AgentContext & {
   reference: InteractionReference;
   userInputText: string | undefined;
 };
@@ -28,14 +29,14 @@ export function createInteractionTracker(options: {
   observer: Observer;
   captureContent?: boolean;
 }) {
-  const runStates = createRunStore(() => ({
+  const store = createRunScopedStore(() => ({
     interactions: [] as Interaction[],
     userMessageOwners: new Map<string, Interaction>(),
     assistantMessages: new Map<string, AssistantMessageState>(),
   }));
 
-  function resolve(run: RunReference, userMessageID: string): InteractionOwner | undefined {
-    const interaction = runStates.get(run)?.userMessageOwners.get(userMessageID);
+  function resolve(run: RunReference, userMessageID: string): InteractionContext | undefined {
+    const interaction = store.get(run)?.userMessageOwners.get(userMessageID);
     return interaction
       ? {
           reference: { run, id: interaction.userMessageID },
@@ -46,21 +47,21 @@ export function createInteractionTracker(options: {
   }
 
   return {
-    open: runStates.open,
-    release: runStates.release,
+    open: store.open,
+    release: store.release,
     resolve,
     at(run: RunReference, time: number) {
-      const interaction = runStates
+      const interaction = store
         .get(run)
         ?.interactions.findLast((interaction) => interaction.startedAt <= time);
       return interaction ? resolve(run, interaction.userMessageID) : undefined;
     },
     resolveAssistant(run: RunReference, messageID: string) {
-      const info = runStates.get(run)?.assistantMessages.get(messageID)?.info;
-      const owner = info ? resolve(run, info.parentID) : undefined;
-      return owner && info
+      const info = store.get(run)?.assistantMessages.get(messageID)?.info;
+      const context = info ? resolve(run, info.parentID) : undefined;
+      return context && info
         ? {
-            ...owner,
+            ...context,
             agentName: "agent" in info && typeof info.agent === "string" ? info.agent : info.mode,
           }
         : undefined;
@@ -69,9 +70,9 @@ export function createInteractionTracker(options: {
       run: RunReference,
       info: UserMessage,
       userInputText: string | undefined,
-      identity: AgentIdentity,
+      agentContext: AgentContext,
     ) {
-      const state = runStates.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
@@ -102,12 +103,12 @@ export function createInteractionTracker(options: {
         startedAt: info.time.created,
         input: userInputText,
         agentName: info.agent,
-        agentType: identity.agentType,
-        parentSessionID: identity.parentSessionID,
+        agentType: agentContext.agentType,
+        parentSessionID: agentContext.parentSessionID,
       });
     },
     message(run: RunReference, info: UserMessage | AssistantMessage) {
-      const state = runStates.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
@@ -129,7 +130,7 @@ export function createInteractionTracker(options: {
       state.assistantMessages.set(info.id, { ...message, info });
     },
     part(run: RunReference, part: Part) {
-      const state = runStates.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
@@ -158,7 +159,7 @@ export function createInteractionTracker(options: {
       state.assistantMessages.set(part.messageID, message);
     },
     remove(run: RunReference, messageID: string, partID?: string) {
-      const state = runStates.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
@@ -172,7 +173,7 @@ export function createInteractionTracker(options: {
       state.assistantMessages.delete(messageID);
     },
     finish(run: RunReference, time: number, error?: ObservationError) {
-      const state = runStates.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;

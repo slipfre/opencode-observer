@@ -1,4 +1,4 @@
-import type { AgentIdentity, RunReference, ToolReference } from "../../contract/observer.js";
+import type { AgentContext, RunReference, ToolReference } from "../../contract/observer.js";
 
 export function createSessionRegistry() {
   const parents = new Map<string, string | undefined>();
@@ -8,7 +8,7 @@ export function createSessionRegistry() {
     observe(info: { id: string; parentID?: string }) {
       parents.set(info.id, info.parentID);
     },
-    identity(sessionID: string): AgentIdentity {
+    agentContext(sessionID: string): AgentContext {
       const parentSessionID =
         tasks.get(sessionID)?.interaction.run.sessionID ?? parents.get(sessionID);
       return {

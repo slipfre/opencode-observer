@@ -8,7 +8,13 @@ import type {
   ToolStart,
   ToolUpdate,
 } from "../../contract/observer.js";
-import { endSpan, identityAttributes, operationKey, sameRun, type SpanOptions } from "./common.js";
+import {
+  endSpan,
+  agentContextAttributes,
+  operationKey,
+  sameRun,
+  type SpanOptions,
+} from "./common.js";
 
 export function createToolSpans(
   options: SpanOptions & {
@@ -59,7 +65,7 @@ export function createToolSpans(
             startTime: new Date(input.startedAt),
             attributes: {
               ...options.spanAttributes,
-              ...identityAttributes(input.interaction.run, input),
+              ...agentContextAttributes(input.interaction.run, input),
               "gen_ai.operation.name": "execute_tool",
               "gen_ai.tool.call.id": input.callID,
               "gen_ai.tool.name": input.name,

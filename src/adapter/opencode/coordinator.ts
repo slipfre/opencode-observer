@@ -12,7 +12,7 @@ import { createGuard } from "../shared/guard.js";
 import type { createModelMessageCapture } from "../model/ai-sdk.js";
 import { parseErrorResponseHeaders } from "../model/headers.js";
 import { userTraceState } from "../model/trace-state.js";
-import { createInteractionTracker, type InteractionOwner } from "../trackers/interaction.js";
+import { createInteractionTracker, type InteractionContext } from "../trackers/interaction.js";
 import { createLlmTracker } from "../trackers/llm.js";
 import { createRunTracker } from "../trackers/run.js";
 import { createToolTracker } from "../trackers/tool.js";
@@ -44,7 +44,7 @@ type SessionState = {
   reference: RunReference;
   parent?: ToolReference;
   overflow?: ObservationError;
-  trigger?: { messageID: string; owner?: InteractionOwner };
+  trigger?: { messageID: string; interactionContext?: InteractionContext };
 };
 
 export function createCoordinator(options: CoordinatorOptions) {
@@ -221,8 +221,8 @@ export function createCoordinator(options: CoordinatorOptions) {
             if (error.type === "ContextOverflowError" && activeRequest) {
               session.trigger = {
                 messageID: activeRequest.messageID,
-                owner: identify(
-                  interactions.resolve(session.reference, activeRequest.ownerMessageID),
+                interactionContext: withAgentContext(
+                  interactions.resolve(session.reference, activeRequest.parentMessageID),
                 ),
               };
             }
@@ -292,7 +292,9 @@ export function createCoordinator(options: CoordinatorOptions) {
             ) {
               session.trigger = {
                 messageID: info.id,
-                owner: identify(interactions.resolve(session.reference, info.parentID)),
+                interactionContext: withAgentContext(
+                  interactions.resolve(session.reference, info.parentID),
+                ),
               };
             }
 
@@ -300,7 +302,7 @@ export function createCoordinator(options: CoordinatorOptions) {
               session.reference,
               info,
               time,
-              info.role === "assistant" ? modelOwner(session.reference, info) : undefined,
+              info.role === "assistant" ? resolveModelContext(session.reference, info) : undefined,
             );
             resolveTools(session.reference);
             const error = compactions.message(session.reference, info, time);
@@ -334,7 +336,9 @@ export function createCoordinator(options: CoordinatorOptions) {
                   session.reference,
                   part,
                   time,
-                  identify(interactions.resolveAssistant(session.reference, part.messageID)),
+                  withAgentContext(
+                    interactions.resolveAssistant(session.reference, part.messageID),
+                  ),
                 );
                 return;
               }
@@ -408,7 +412,7 @@ export function createCoordinator(options: CoordinatorOptions) {
       id: info.id,
       createdAt: info.time.created,
       parent: registry.parent(info.sessionID),
-      parentSessionID: registry.identity(info.sessionID).parentSessionID,
+      parentSessionID: registry.agentContext(info.sessionID).parentSessionID,
       text:
         options.captureContent && texts.length > 0
           ? texts.map((part) => part.text).join("\n")
@@ -420,47 +424,49 @@ export function createCoordinator(options: CoordinatorOptions) {
     }
 
     const session = sessions.get(info.sessionID) ?? startSession(input.reference);
-    interactions.start(session.reference, info, input.text, registry.identity(info.sessionID));
+    interactions.start(session.reference, info, input.text, registry.agentContext(info.sessionID));
     compactions.message(session.reference, info, now());
     resolveCompactions(session.reference);
     resolveLlms(session.reference);
     resolveTools(session.reference);
   }
 
-  function identify(owner: InteractionOwner | undefined) {
-    return owner ? { ...owner, ...registry.identity(owner.reference.run.sessionID) } : undefined;
+  function withAgentContext(context: InteractionContext | undefined) {
+    return context
+      ? { ...context, ...registry.agentContext(context.reference.run.sessionID) }
+      : undefined;
   }
 
-  function modelOwner(run: RunReference, info: { parentID: string; summary?: boolean }) {
+  function resolveModelContext(run: RunReference, info: { parentID: string; summary?: boolean }) {
     return info.summary
       ? compactions.resolve(run, info.parentID)
-      : identify(interactions.resolve(run, info.parentID));
+      : withAgentContext(interactions.resolve(run, info.parentID));
   }
 
   function resolveLlms(run: RunReference) {
     llms.unresolved(run).forEach((call) => {
-      llms.associate(run, call.id, modelOwner(run, call));
+      llms.associate(run, call.id, resolveModelContext(run, call));
     });
   }
 
   function resolveTools(run: RunReference) {
     tools.unresolved(run).forEach((call) => {
-      const owner = identify(interactions.resolveAssistant(run, call.messageID));
+      const context = withAgentContext(interactions.resolveAssistant(run, call.messageID));
 
-      if (owner) {
-        tools.associate(run, call.messageID, call.callID, owner);
+      if (context) {
+        tools.associate(run, call.messageID, call.callID, context);
       }
     });
   }
 
   function resolveCompactions(run: RunReference) {
     compactions.unresolved(run).forEach((compaction) => {
-      const owner = identify(
+      const context = withAgentContext(
         interactions.resolve(run, compaction.id) ?? interactions.at(run, compaction.startedAt),
       );
 
-      if (owner) {
-        compactions.associate(run, compaction.id, owner);
+      if (context) {
+        compactions.associate(run, compaction.id, context);
       }
     });
   }

@@ -7,20 +7,20 @@ import type {
   ToolStart,
   RunReference,
 } from "../../contract/observer.js";
-import type { InteractionOwner } from "./interaction.js";
-import { createRunStore } from "../shared/runs.js";
+import type { InteractionContext } from "./interaction.js";
+import { createRunScopedStore } from "../shared/runs.js";
 import { jsonObject } from "../shared/json.js";
 
-type ToolCallState = {
+type ToolCall = {
   partID: string;
   messageID: string;
   callID: string;
-  name: string;
+  toolName: string;
   startedAt: number;
   arguments?: ToolStart["arguments"];
-  start?: ToolStart;
-  result?: { endedAt: number; observedAt: number; output?: string; error?: string };
-  rejected?: boolean;
+  startSnapshot?: ToolStart;
+  completion?: { endedAt: number; observedAt: number; output?: string; error?: string };
+  permissionRejected?: boolean;
   childSessionID?: string;
 };
 
@@ -30,99 +30,97 @@ export function createToolTracker(options: {
   onFinish(reference: ToolReference, observedAt: number, error?: ObservationError): void;
   onTask(sessionID: string, reference: ToolReference): void;
 }) {
-  const states = createRunStore(() => ({
-    calls: new Map<string, ToolCallState>(),
-    finished: new Set<string>(),
+  const store = createRunScopedStore(() => ({
+    toolCalls: new Map<string, ToolCall>(),
+    finishedCallKeys: new Set<string>(),
   }));
 
   function finish(
     run: RunReference,
-    call: ToolCallState,
-    result: Omit<ToolFinish, keyof ToolReference>,
+    call: ToolCall,
+    completion: Omit<ToolFinish, keyof ToolReference>,
     observedAt: number,
   ) {
-    const state = states.get(run);
+    const state = store.get(run);
 
-    if (!state || !call.start) {
+    if (!state || !call.startSnapshot) {
       return;
     }
 
-    state.calls.delete(`${call.messageID}:${call.callID}`);
-    state.finished.add(`${call.messageID}:${call.callID}`);
+    const callKey = `${call.messageID}:${call.callID}`;
+    state.toolCalls.delete(callKey);
+    state.finishedCallKeys.add(callKey);
     const reference = {
-      interaction: call.start.interaction,
+      interaction: call.startSnapshot.interaction,
       callID: call.callID,
       messageID: call.messageID,
     };
-    options.onFinish(reference, observedAt, result.error);
-    options.observer.finishTool({ ...reference, ...result });
+    options.onFinish(reference, observedAt, completion.error);
+    options.observer.finishTool({ ...reference, ...completion });
   }
 
-  function record(run: RunReference, call: ToolCallState, owner?: InteractionOwner) {
-    if (!call.start && !owner) {
-      return;
-    }
-
-    if (!call.start && owner) {
-      call.start = {
-        interaction: owner.reference,
+  function record(run: RunReference, call: ToolCall, context?: InteractionContext) {
+    if (!call.startSnapshot && context) {
+      call.startSnapshot = {
+        interaction: context.reference,
         messageID: call.messageID,
         callID: call.callID,
-        name: call.name,
+        name: call.toolName,
         startedAt: call.startedAt,
         arguments: call.arguments,
-        agentName: owner.agentName,
-        agentType: owner.agentType,
-        parentSessionID: owner.parentSessionID,
+        agentName: context.agentName,
+        agentType: context.agentType,
+        parentSessionID: context.parentSessionID,
       };
-      options.observer.startTool(call.start);
+      options.observer.startTool(call.startSnapshot);
     }
 
-    if (!call.start) {
+    if (!call.startSnapshot) {
       return;
     }
 
-    options.observer.updateTool({ ...call.start, arguments: call.arguments });
+    options.observer.updateTool({ ...call.startSnapshot, arguments: call.arguments });
 
-    if (!call.result && call.name === "task" && call.childSessionID) {
-      options.onTask(call.childSessionID, call.start);
+    if (!call.completion && call.toolName === "task" && call.childSessionID) {
+      options.onTask(call.childSessionID, call.startSnapshot);
     }
 
-    if (call.result) {
+    if (call.completion) {
       finish(
         run,
         call,
         {
-          endedAt: call.result.endedAt,
-          output: call.result.output,
+          endedAt: call.completion.endedAt,
+          output: call.completion.output,
           error:
-            call.result.error === undefined
+            call.completion.error === undefined
               ? undefined
               : {
-                  type: call.rejected ? "PermissionRejectedError" : "ExecutionError",
-                  message: call.result.error,
+                  type: call.permissionRejected ? "PermissionRejectedError" : "ExecutionError",
+                  message: call.completion.error,
                 },
         },
-        call.result.observedAt,
+        call.completion.observedAt,
       );
     }
   }
 
   return {
-    open: states.open,
-    release: states.release,
-    part(run: RunReference, part: ToolPart, observedAt: number, owner?: InteractionOwner) {
-      const state = states.get(run);
+    open: store.open,
+    release: store.release,
+    part(run: RunReference, part: ToolPart, observedAt: number, context?: InteractionContext) {
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
-      const key = `${part.messageID}:${part.callID}`;
+      const callKey = `${part.messageID}:${part.callID}`;
+      const existingCall = state.toolCalls.get(callKey);
 
       if (
-        state.finished.has(key) ||
-        state.calls.get(key)?.result ||
+        state.finishedCallKeys.has(callKey) ||
+        existingCall?.completion ||
         part.state.status === "pending"
       ) {
         return;
@@ -134,14 +132,14 @@ export function createToolTracker(options: {
         return;
       }
 
-      const call = state.calls.get(key) ?? {
+      const call = existingCall ?? {
         partID: part.id,
         messageID: part.messageID,
         callID: part.callID,
-        name: part.tool,
+        toolName: part.tool,
         startedAt,
       };
-      state.calls.set(key, call);
+      state.toolCalls.set(callKey, call);
       call.arguments = options.captureContent ? jsonObject(part.state.input) : undefined;
       call.childSessionID =
         part.state.status === "running" &&
@@ -155,7 +153,7 @@ export function createToolTracker(options: {
         Number.isFinite(part.state.time.end) &&
         part.state.time.end >= call.startedAt
       ) {
-        call.result ??= {
+        call.completion ??= {
           endedAt: part.state.time.end,
           observedAt,
           output:
@@ -166,50 +164,40 @@ export function createToolTracker(options: {
         };
       }
 
-      record(run, call, owner);
+      record(run, call, context);
     },
     unresolved(run: RunReference) {
-      return Array.from(states.get(run)?.calls.values() ?? [])
-        .filter((call) => !call.start)
+      return Array.from(store.get(run)?.toolCalls.values() ?? [])
+        .filter((call) => !call.startSnapshot)
         .map((call) => ({ messageID: call.messageID, callID: call.callID }));
     },
-    associate(run: RunReference, messageID: string, callID: string, owner: InteractionOwner) {
-      const call = states.get(run)?.calls.get(`${messageID}:${callID}`);
+    associate(run: RunReference, messageID: string, callID: string, context: InteractionContext) {
+      const call = store.get(run)?.toolCalls.get(`${messageID}:${callID}`);
 
-      if (call && !call.start) {
-        record(run, call, owner);
+      if (call && !call.startSnapshot) {
+        record(run, call, context);
       }
     },
     active(run: RunReference, messageID: string, callID: string) {
-      const state = states.get(run);
-
-      if (!state) {
-        return;
-      }
-
-      return state.calls.get(`${messageID}:${callID}`)?.start;
+      return store.get(run)?.toolCalls.get(`${messageID}:${callID}`)?.startSnapshot;
     },
     reject(reference: ToolReference) {
-      const state = states.get(reference.interaction.run);
+      const call = store
+        .get(reference.interaction.run)
+        ?.toolCalls.get(`${reference.messageID}:${reference.callID}`);
 
-      if (!state) {
-        return;
-      }
-
-      const call = state.calls.get(`${reference.messageID}:${reference.callID}`);
-
-      if (call?.start?.interaction.id === reference.interaction.id) {
-        call.rejected = true;
+      if (call?.startSnapshot?.interaction.id === reference.interaction.id) {
+        call.permissionRejected = true;
       }
     },
     remove(run: RunReference, messageID: string, time: number, partID?: string) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
-      state.calls.forEach((call, key) => {
+      state.toolCalls.forEach((call, key) => {
         if (call.messageID === messageID && (partID === undefined || call.partID === partID)) {
           finish(
             run,
@@ -217,19 +205,19 @@ export function createToolTracker(options: {
             { endedAt: time, error: { type: "_OTHER", message: "tool removed before completion" } },
             time,
           );
-          state.calls.delete(key);
-          state.finished.add(key);
+          state.toolCalls.delete(key);
+          state.finishedCallKeys.add(key);
         }
       });
     },
     close(run: RunReference, endedAt: number, error?: ObservationError) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
-      state.calls.forEach((call) =>
+      state.toolCalls.forEach((call) =>
         finish(
           run,
           call,

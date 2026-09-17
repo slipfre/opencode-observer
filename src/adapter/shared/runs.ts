@@ -1,7 +1,7 @@
 import type { RunReference } from "../../contract/observer.js";
 
 // Each tracker owns its store. Only explicit run registration allocates state.
-export function createRunStore<T>(create: () => T) {
+export function createRunScopedStore<T>(create: () => T) {
   const records = new Map<string, T>();
 
   return {

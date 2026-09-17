@@ -8,48 +8,44 @@ import type {
   ToolStart,
   RunReference,
 } from "../../contract/observer.js";
-import { createRunStore } from "../shared/runs.js";
+import { createRunScopedStore } from "../shared/runs.js";
+
+const MAX_PENDING_REQUESTS = 1024;
 
 export function createPermissionTracker(options: { observer: Observer }) {
-  const states = createRunStore(() => ({
-    pending: new Map<string, PermissionReference>(),
-    seen: new Set<string>(),
+  const store = createRunScopedStore(() => ({
+    pendingRequests: new Map<string, PermissionReference>(),
+    seenRequestIDs: new Set<string>(),
   }));
 
-  function finish(input: PermissionFinish) {
-    const state = states.get(input.tool.interaction.run);
-
-    if (!state) {
+  function finish(completion: PermissionFinish) {
+    if (!store.get(completion.tool.interaction.run)?.pendingRequests.delete(completion.requestID)) {
       return;
     }
 
-    if (!state.pending.delete(input.requestID)) {
-      return;
-    }
-
-    options.observer.finishPermission(input);
+    options.observer.finishPermission(completion);
   }
 
   return {
-    open: states.open,
-    release: states.release,
+    open: store.open,
+    release: store.release,
     asked(
       run: RunReference,
       request: PermissionRequest,
       observedAt: number,
       tool: ToolStart | undefined,
     ) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
-      if (state.seen.has(request.id) || !request.tool) {
+      if (state.seenRequestIDs.has(request.id) || !request.tool) {
         return;
       }
 
-      state.seen.add(request.id);
+      state.seenRequestIDs.add(request.id);
 
       if (!tool) {
         return;
@@ -63,7 +59,7 @@ export function createPermissionTracker(options: { observer: Observer }) {
         },
         requestID: request.id,
       };
-      state.pending.set(request.id, reference);
+      state.pendingRequests.set(request.id, reference);
       options.observer.startPermission({
         ...reference,
         startedAt: observedAt,
@@ -75,8 +71,8 @@ export function createPermissionTracker(options: { observer: Observer }) {
         parentSessionID: tool.parentSessionID,
       });
 
-      if (state.pending.size > 1024) {
-        const oldest = state.pending.values().next().value;
+      if (state.pendingRequests.size > MAX_PENDING_REQUESTS) {
+        const oldest = state.pendingRequests.values().next().value;
 
         if (oldest) {
           finish({
@@ -93,16 +89,16 @@ export function createPermissionTracker(options: { observer: Observer }) {
       reply: "once" | "always" | "reject",
       observedAt: number,
     ) {
-      const state = states.get(run);
+      const state = store.get(run);
 
       if (!state) {
         return;
       }
 
-      const reference = state.pending.get(requestID);
+      const reference = state.pendingRequests.get(requestID);
 
       if (!reference) {
-        state.seen.add(requestID);
+        state.seenRequestIDs.add(requestID);
         return;
       }
 
@@ -110,13 +106,7 @@ export function createPermissionTracker(options: { observer: Observer }) {
       return reply === "reject" ? reference.tool : undefined;
     },
     closeTool(tool: ToolReference, observedAt: number, error?: ObservationError) {
-      const state = states.get(tool.interaction.run);
-
-      if (!state) {
-        return;
-      }
-
-      state.pending.forEach((reference) => {
+      store.get(tool.interaction.run)?.pendingRequests.forEach((reference) => {
         if (reference.tool.callID === tool.callID && reference.tool.messageID === tool.messageID) {
           finish({
             ...reference,
@@ -127,13 +117,7 @@ export function createPermissionTracker(options: { observer: Observer }) {
       });
     },
     close(run: RunReference, observedAt: number, error?: ObservationError) {
-      const state = states.get(run);
-
-      if (!state) {
-        return;
-      }
-
-      state.pending.forEach((reference) =>
+      store.get(run)?.pendingRequests.forEach((reference) =>
         finish({
           ...reference,
           endedAt: observedAt,

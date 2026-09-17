@@ -6,6 +6,7 @@ import { createLlmTracker } from "../src/adapter/trackers/llm.js";
 import { createToolTracker } from "../src/adapter/trackers/tool.js";
 import { createCompactionTracker } from "../src/adapter/trackers/compaction.js";
 import { createInteractionTracker } from "../src/adapter/trackers/interaction.js";
+import { createPermissionTracker } from "../src/adapter/trackers/permission.js";
 
 function recording() {
   return {
@@ -203,6 +204,7 @@ test("LLM bindings expire on release even when the same run and message are regi
     tracker.message(run, { ...message, sessionID: run.sessionID }, 1000);
     tracker.prepare(run, request, 1050);
     expect(tracker.bind(run, request)).toBeUndefined();
+    expect(tracker.activeRequest(run)).toBeUndefined();
     expect(observer.startLlm).toHaveBeenCalledTimes(starts);
     expect(tracker.unresolved(run)).toEqual([
       { id: "assistant", parentID: "input", summary: undefined },
@@ -222,6 +224,10 @@ test("LLM bindings expire on release even when the same run and message are regi
       userInputText: "must not replace the established owner",
     });
     expect(observer.startLlm).toHaveBeenCalledTimes(starts + 1);
+    expect(tracker.activeRequest(run)).toEqual({
+      messageID: "assistant",
+      parentMessageID: "input",
+    });
     expect(observer.startLlm).toHaveBeenLastCalledWith(
       expect.objectContaining({
         interaction: { run, id: "input" },
@@ -237,6 +243,7 @@ test("LLM bindings expire on release even when the same run and message are regi
   const concurrent = bind(other);
 
   tracker.release(first);
+  expect(tracker.activeRequest(first)).toBeUndefined();
   const replacement = bind(first);
   old.input({ input: { messages: [{ role: "user", parts: [{ type: "text", text: "stale" }] }] } });
   old.output({ output: [{ role: "assistant", parts: [{ type: "text", text: "stale" }] }] });
@@ -252,6 +259,11 @@ test("LLM bindings expire on release even when the same run and message are regi
   expect(second.active()).toBe(false);
   expect(concurrent.active()).toBe(true);
   expect(observer.finishLlm).toHaveBeenCalledTimes(1);
+  expect(tracker.activeRequest(next)).toBeUndefined();
+  expect(tracker.activeRequest(other)).toEqual({
+    messageID: "assistant",
+    parentMessageID: "input",
+  });
   expect(observer.finishLlm).toHaveBeenCalledWith(
     expect.objectContaining({ interaction: { run: next, id: "input" } }),
   );
@@ -262,7 +274,7 @@ test("compaction waits for resolved ownership and retains it for summary queries
   const onFinish = mock(() => {});
   const tracker = createCompactionTracker({ observer, onFinish });
   const run = { sessionID: "s1", id: "u1" };
-  const owner = { reference: { run, id: "u1" }, userInputText: "private", agentName: "build" };
+  const context = { reference: { run, id: "u1" }, userInputText: "private", agentName: "build" };
   tracker.open(run);
   tracker.part(
     run,
@@ -271,21 +283,136 @@ test("compaction waits for resolved ownership and retains it for summary queries
   );
 
   expect(observer.startCompaction).not.toHaveBeenCalled();
+  expect(tracker.active(run)).toBe("marker");
   expect(tracker.resolve(run, "marker")).toBeUndefined();
   expect(tracker.unresolved(run)).toEqual([{ id: "marker", startedAt: 1200 }]);
 
-  tracker.associate(run, "marker", owner);
-  tracker.associate(run, "marker", { ...owner, reference: { run, id: "u2" } });
+  tracker.associate(run, "marker", context);
+  tracker.associate(run, "marker", { ...context, reference: { run, id: "u2" } });
   tracker.completed(run, 1500);
   tracker.completed(run, 1600);
+  expect(tracker.active(run)).toBeUndefined();
   expect(observer.startCompaction).toHaveBeenCalledTimes(1);
   expect(observer.finishCompaction).toHaveBeenCalledTimes(1);
   expect(onFinish).toHaveBeenCalledTimes(1);
   expect(tracker.unresolved(run)).toEqual([]);
-  expect(tracker.resolve(run, "marker")).toEqual({ ...owner, userInputText: undefined });
+  expect(tracker.resolve(run, "marker")).toEqual({ ...context, userInputText: undefined });
 
   tracker.release(run);
-  tracker.associate(run, "marker", owner);
+  tracker.associate(run, "marker", context);
   expect(tracker.resolve(run, "marker")).toBeUndefined();
   expect(observer.startCompaction).toHaveBeenCalledTimes(1);
+});
+
+test("compaction replacement ignores old markers and removals while retaining their context", () => {
+  const observer = recording();
+  const onFinish = mock(() => {});
+  const tracker = createCompactionTracker({ observer, onFinish });
+  const run = { sessionID: "s1", id: "run" };
+  const context = { reference: { run, id: "input" }, userInputText: undefined };
+  const marker = {
+    type: "compaction" as const,
+    id: "part1",
+    messageID: "marker1",
+    sessionID: "s1",
+    auto: true,
+  };
+  tracker.open(run);
+  tracker.part(run, marker, 1000);
+  tracker.associate(run, "marker1", context);
+
+  tracker.part(run, { ...marker, id: "part2", messageID: "marker2" }, 1200);
+  tracker.associate(run, "marker2", context);
+  tracker.part(run, marker, 1300);
+  tracker.remove(run, "marker1", 1400);
+  tracker.remove(run, "marker2", 1400, "part1");
+
+  expect(tracker.active(run)).toBe("marker2");
+  expect(tracker.resolve(run, "marker1")).toEqual(context);
+  expect(observer.startCompaction).toHaveBeenCalledTimes(2);
+  expect(observer.finishCompaction).toHaveBeenCalledTimes(1);
+  expect(onFinish).toHaveBeenCalledWith(
+    run,
+    "marker1",
+    1200,
+    expect.objectContaining({
+      message: "a new compaction started before the previous compaction completed",
+    }),
+  );
+
+  tracker.remove(run, "marker2", 1500, "part2");
+  tracker.completed(run, 1600);
+  expect(tracker.active(run)).toBeUndefined();
+  expect(tracker.resolve(run, "marker2")).toEqual(context);
+  expect(observer.finishCompaction).toHaveBeenCalledTimes(2);
+  expect(onFinish).toHaveBeenCalledTimes(2);
+
+  tracker.release(run);
+  tracker.open(run);
+  expect(tracker.active(run)).toBeUndefined();
+  expect(tracker.resolve(run, "marker1")).toBeUndefined();
+  expect(tracker.resolve(run, "marker2")).toBeUndefined();
+});
+
+test("permission requests and deduplication remain isolated across run release and cleanup", () => {
+  const observer = recording();
+  const tracker = createPermissionTracker({ observer });
+  const first = { sessionID: "s1", id: "r1" };
+  const next = { sessionID: "s1", id: "r2" };
+  const other = { sessionID: "s2", id: "r1" };
+  function tool(run: RunReference) {
+    return {
+      interaction: { run, id: "input" },
+      messageID: "assistant",
+      callID: "call",
+      name: "read",
+      startedAt: 1000,
+    };
+  }
+  function ask(run: RunReference) {
+    tracker.asked(
+      run,
+      {
+        id: "permission",
+        sessionID: run.sessionID,
+        permission: "read",
+        patterns: ["src/*"],
+        metadata: {},
+        always: [],
+        tool: { messageID: "assistant", callID: "call" },
+      },
+      1100,
+      tool(run),
+    );
+  }
+  [first, next, other].forEach((run) => {
+    tracker.open(run);
+    ask(run);
+    ask(run);
+  });
+  expect(observer.startPermission).toHaveBeenCalledTimes(3);
+
+  tracker.closeTool(tool(first), 1200);
+  tracker.release(first);
+  ask(first);
+  expect(tracker.replied(first, "permission", "reject", 1300)).toBeUndefined();
+  tracker.close(next, 1400);
+  tracker.close(next, 1500);
+  ask(next);
+  expect(observer.startPermission).toHaveBeenCalledTimes(3);
+  expect(observer.finishPermission).toHaveBeenCalledTimes(2);
+
+  expect(tracker.replied(other, "permission", "reject", 1600)).toEqual({
+    interaction: { run: other, id: "input" },
+    messageID: "assistant",
+    callID: "call",
+  });
+  expect(observer.finishPermission).toHaveBeenCalledTimes(3);
+  expect(tracker.replied(other, "permission", "reject", 1700)).toBeUndefined();
+
+  tracker.open(first);
+  ask(first);
+  expect(observer.startPermission).toHaveBeenCalledTimes(4);
+  tracker.replied(first, "permission", "once", 1800);
+  expect(observer.finishPermission).toHaveBeenCalledTimes(4);
 });
