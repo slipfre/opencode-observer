@@ -235,6 +235,65 @@ test("run cleanup preserves child deduplication in live runs and rejects closed-
   expect(new Set(h.spans.map((span) => span.spanContext().traceId)).size).toBe(3);
 });
 
+test("permission keys keep provider tool call separators distinct from request IDs", async () => {
+  const h = setup();
+  const permissions = [
+    { callID: "call:per_a", requestID: "per_b" },
+    { callID: "call", requestID: "per_a:per_b" },
+    { callID: "call%3Aper_a", requestID: "per_b" },
+  ].map((ids) => ({
+    tool: {
+      interaction: interaction(),
+      messageID: "a1",
+      callID: ids.callID,
+      name: "read",
+      startedAt: 1100,
+    },
+    requestID: ids.requestID,
+    startedAt: 1200,
+    toolName: "read",
+    name: "read",
+    patterns: [],
+  }));
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  permissions.forEach((permission) => {
+    h.observer.startTool(permission.tool);
+    h.observer.startPermission(permission);
+  });
+
+  permissions.forEach((permission, index) => {
+    h.observer.finishPermission({
+      ...permission,
+      endedAt: 1300,
+      reply: index === 1 ? "reject" : "once",
+    });
+    h.observer.startPermission(permission);
+    h.observer.finishTool({ ...permission.tool, endedAt: 1400 });
+  });
+  h.observer.finishRun({ ...start(), endedAt: 1500, output: undefined });
+  await h.observer.flush();
+
+  const checks = h.spans.filter((span) => span.name === "opencode.permission.check");
+  expect(checks).toHaveLength(3);
+  expect(checks.map((span) => span.attributes["opencode.permission.reply"])).toEqual([
+    "once",
+    "reject",
+    "once",
+  ]);
+  expect(checks.map((span) => span.attributes["gen_ai.tool.call.id"])).toEqual(
+    permissions.map((permission) => permission.tool.callID),
+  );
+  checks.forEach((check) => {
+    const tool = h.spans.find(
+      (span) =>
+        span.name === "opencode.tool.read" &&
+        span.attributes["gen_ai.tool.call.id"] === check.attributes["gen_ai.tool.call.id"],
+    );
+    expect(check.parentSpanContext?.spanId).toBe(tool?.spanContext().spanId);
+  });
+});
+
 test.each([
   { state: undefined, decision: SamplingDecision.RECORD_AND_SAMPLED, flags: "01" },
   { state: "vendor=one,other=two", decision: SamplingDecision.RECORD_AND_SAMPLED, flags: "01" },

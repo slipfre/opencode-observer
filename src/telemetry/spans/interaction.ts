@@ -16,7 +16,7 @@ export function createInteractionSpans(
   const interactions = new Map<string, { reference: InteractionReference; span: Span }>();
 
   function finish(input: InteractionFinish) {
-    const key = JSON.stringify([input.run.sessionID, input.run.id, input.id]);
+    const key = `${input.run.sessionID}:${input.run.id}:${input.id}`;
     const interaction = interactions.get(key);
 
     if (!interaction) {
@@ -54,7 +54,7 @@ export function createInteractionSpans(
   return {
     finish,
     start(input: InteractionStart) {
-      const key = JSON.stringify([input.run.sessionID, input.run.id, input.id]);
+      const key = `${input.run.sessionID}:${input.run.id}:${input.id}`;
       const parent = options.parentContext(input.run);
 
       if (!parent || interactions.has(key) || options.history.has(input.run, "interaction", key)) {
@@ -88,7 +88,7 @@ export function createInteractionSpans(
       });
     },
     context(reference: InteractionReference) {
-      const key = JSON.stringify([reference.run.sessionID, reference.run.id, reference.id]);
+      const key = `${reference.run.sessionID}:${reference.run.id}:${reference.id}`;
       const interaction = interactions.get(key);
       return interaction
         ? trace.setSpan(options.rootContext, interaction.span)

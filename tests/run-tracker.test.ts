@@ -67,3 +67,18 @@ test("run tracker enforces capture policy on recognized input and completion", (
   expect(h.updates[0]?.input.text).toBeUndefined();
   expect(h.finishes[0]?.output).toBeUndefined();
 });
+
+test("run release preserves input deduplication without affecting the next run", () => {
+  const h = setup();
+  const first = { sessionID: "s1", id: "u1", createdAt: 1000, text: "first" };
+  const next = { ...first, id: "u2", createdAt: 2000 };
+  h.tracker.userInput(first);
+
+  h.tracker.release(first);
+  expect(h.tracker.userInput(first)).toBeUndefined();
+  h.tracker.userInput(next);
+  h.tracker.release(first);
+  h.tracker.finish({ ...next, endedAt: 3000, output: undefined });
+  expect(h.starts).toHaveLength(2);
+  expect(h.finishes).toHaveLength(1);
+});

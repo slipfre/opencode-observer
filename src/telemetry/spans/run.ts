@@ -22,7 +22,7 @@ export function createRunSpans(
   const runs = new Map<string, Run>();
 
   function finish(input: RunFinish) {
-    const key = JSON.stringify([input.sessionID, input.id]);
+    const key = `${input.sessionID}:${input.id}`;
     const run = runs.get(key);
 
     if (!run) {
@@ -59,7 +59,7 @@ export function createRunSpans(
   return {
     finish,
     start(input: RunStart) {
-      const key = JSON.stringify([input.sessionID, input.id]);
+      const key = `${input.sessionID}:${input.id}`;
       const parent = input.parent ? options.parentContext?.(input.parent) : options.rootContext;
 
       if (!parent || runs.has(key)) {
@@ -90,7 +90,7 @@ export function createRunSpans(
       return true;
     },
     update(input: RunUpdate) {
-      const run = runs.get(JSON.stringify([input.sessionID, input.id]));
+      const run = runs.get(`${input.sessionID}:${input.id}`);
 
       if (!run || run.inputs.has(input.input.id)) {
         return;
@@ -99,7 +99,7 @@ export function createRunSpans(
       run.inputs.set(input.input.id, options.captureContent ? input.input.text : undefined);
     },
     context(reference: RunReference) {
-      const run = runs.get(JSON.stringify([reference.sessionID, reference.id]));
+      const run = runs.get(`${reference.sessionID}:${reference.id}`);
       return run ? trace.setSpan(options.rootContext, run.span) : undefined;
     },
     close(endedAt: number) {

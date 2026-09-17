@@ -1,4 +1,4 @@
-import type { AgentIdentity, ToolReference } from "../../contract/observer.js";
+import type { AgentIdentity, RunReference, ToolReference } from "../../contract/observer.js";
 
 export function createSessionRegistry() {
   const parents = new Map<string, string | undefined>();
@@ -46,6 +46,16 @@ export function createSessionRegistry() {
     remove(sessionID: string) {
       parents.delete(sessionID);
       tasks.delete(sessionID);
+    },
+    releaseRun(run: RunReference) {
+      tasks.forEach((tool, sessionID) => {
+        if (
+          tool.interaction.run.sessionID === run.sessionID &&
+          tool.interaction.run.id === run.id
+        ) {
+          tasks.delete(sessionID);
+        }
+      });
     },
   };
 }

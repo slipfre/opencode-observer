@@ -190,6 +190,48 @@ async function marker(h: ReturnType<typeof setup>, id = "c1", time = 1400, overf
   );
 }
 
+test("coordinator trackers isolate identical object IDs in concurrent sessions during cleanup", async () => {
+  const h = setup();
+  for (const sessionID of ["s1", "s2"]) {
+    await h.session(sessionID);
+    await h.user(user("u1", sessionID));
+    await h.message(assistant({ sessionID }));
+    await h.part(step("a1", "step-start", sessionID));
+    await h.part(tool(undefined, { sessionID }));
+    await h.ask("p1", "a1", "call1", sessionID);
+    await h.message(user("c1", sessionID, 1400));
+    await h.part({ type: "compaction", id: "marker", messageID: "c1", sessionID, auto: true });
+    await h.message(assistant({ id: "summary", parentID: "c1", sessionID, summary: true }));
+    await h.part(step("summary", "step-start", sessionID));
+  }
+
+  await h.reply("reject", "p1", "s1");
+  await h.idle("s1");
+
+  expect(h.spans).toHaveLength(7);
+  expect(h.spans.every((span) => span.attributes["session.id"] === "s1")).toBe(true);
+
+  await h.reply("once", "p1", "s2");
+  await h.part(tool(completed(), { sessionID: "s2" }));
+  await h.part(step("summary", "step-finish", "s2"));
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s2" } }, 1800);
+  await h.part(step("a1", "step-finish", "s2"));
+  await h.message(
+    assistant({ sessionID: "s2", time: { created: 1100, completed: 1900 }, finish: "stop" }),
+  );
+  await h.idle("s2");
+
+  const spans = h.spans.filter((span) => span.attributes["session.id"] === "s2");
+  expect(spans).toHaveLength(7);
+  expect(spans.every((span) => span.status.code === SpanStatusCode.UNSET)).toBe(true);
+  expect(
+    spans.find((span) => span.name.endsWith(".permission.check"))?.attributes[
+      "opencode.permission.granted"
+    ],
+  ).toBe(true);
+  expect(new Set(h.spans.map((span) => span.spanContext().traceId)).size).toBe(2);
+});
+
 test("tool keeps its original interaction across steer and uses source times", async () => {
   const h = setup();
   await h.session();
@@ -373,6 +415,32 @@ test("compaction owns its summary LLM and only completed summary usage is mirror
   expect(compaction?.status.code).toBe(SpanStatusCode.UNSET);
   expect(String(run?.attributes["gen_ai.output.messages"])).toContain("answer");
   expect(String(run?.attributes["gen_ai.output.messages"])).not.toContain("summary");
+});
+
+test("coordinator resolves a completed summary after delayed compaction evidence", async () => {
+  const h = setup();
+  await h.user();
+  await h.message(assistant({ id: "summary", parentID: "c1", summary: true }), 1500);
+  await h.part(step("summary", "step-start"), 1500);
+  await h.part(step("summary", "step-finish"), 1700);
+  expect(h.spans).toHaveLength(0);
+
+  await h.message(user("c1", "s1", 1400), 1800);
+  await h.part(
+    { type: "compaction", id: "marker", messageID: "c1", sessionID: "s1", auto: true },
+    1810,
+  );
+  expect(h.spans).toHaveLength(1);
+  const summary = h.spans[0];
+  expect(summary?.name).toBe("opencode.llm");
+  expect(summary?.startTime).toEqual([1, 500_000_000]);
+  expect(summary?.endTime).toEqual([1, 700_000_000]);
+
+  await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1900);
+  await h.idle();
+  const compaction = h.spans.find((span) => span.name === "opencode.compaction");
+  expect(summary?.parentSpanContext?.spanId).toBe(compaction?.spanContext().spanId);
+  expect(h.spans.filter((span) => span.name === "opencode.llm")).toHaveLength(1);
 });
 
 test.each([

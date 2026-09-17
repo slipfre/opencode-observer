@@ -6,7 +6,9 @@ import type {
   ModelHeaders,
   Observer,
   ObservationError,
+  RunReference,
 } from "../../contract/observer.js";
+import { createRunStore } from "../shared/runs.js";
 import { errorDetails } from "../shared/error.js";
 import { nonNegativeNumber } from "../shared/number.js";
 import type { ModelCapture } from "../model/ai-sdk.js";
@@ -24,6 +26,7 @@ type LlmCallState = {
     completed?: number;
     summary?: boolean;
   };
+  owner?: InteractionOwner;
   startedAt?: number;
   reference?: LlmReference;
   result?: Omit<LlmFinish, "interaction" | "id" | "output">;
@@ -31,45 +34,47 @@ type LlmCallState = {
   previousTextIDs?: Set<string>;
   texts: Map<string, string>;
   capturePending?: boolean;
-  generation?: number;
+  binding?: symbol;
   messages?: Omit<LlmUpdate, "interaction" | "id">;
 };
 
-export function createLlmTracker(options: {
-  observer: Observer;
-  captureContent?: boolean;
-  parent: (userMessageID: string) => InteractionOwner | undefined;
-  compaction?: (markerID: string) => InteractionOwner | undefined;
-}) {
-  const calls = new Map<string, LlmCallState>();
-  const finished = new Set<string>();
-  const closedCompactions = new Set<string>();
-  const requests = new Map<string, ReturnType<typeof parseModelRequest>>();
+export function createLlmTracker(options: { observer: Observer; captureContent?: boolean }) {
+  const states = createRunStore(() => ({
+    calls: new Map<string, LlmCallState>(),
+    finished: new Set<string>(),
+    closedCompactions: new Set<string>(),
+    requests: new Map<string, ReturnType<typeof parseModelRequest>>(),
+  }));
 
-  function record(id: string) {
-    const call = calls.get(id);
+  function record(run: RunReference, id: string) {
+    const state = states.get(run);
+
+    if (!state) {
+      return;
+    }
+
+    const call = state.calls.get(id);
 
     if (!call?.info || call.startedAt === undefined) {
       return;
     }
 
-    const parent = resolveParent(call.info);
+    const parent = call.owner;
 
     if (!parent) {
       return;
     }
 
     if (!call.reference) {
-      const key = JSON.stringify([
-        call.info.parentID,
-        call.info.providerID,
-        call.info.modelID,
-        call.info.agentName,
-      ]);
-      const request = requests.get(key);
+      // Escape free-form names; a missing agent uses an unescaped separator.
+      const key =
+        `${call.info.parentID}:${encodeURIComponent(call.info.providerID)}:` +
+        `${encodeURIComponent(call.info.modelID)}:` +
+        (call.info.agentName === undefined ? ":" : encodeURIComponent(call.info.agentName));
+      const request = state.requests.get(key);
       const provider = request?.providerName ?? providerName(call.info.providerID);
       call.reference = { interaction: parent.reference, id };
-      requests.delete(key);
+      state.requests.delete(key);
       options.observer.startLlm({
         ...call.reference,
         startedAt: call.startedAt,
@@ -100,8 +105,8 @@ export function createLlmTracker(options: {
         return;
       }
 
-      finished.add(id);
-      calls.delete(id);
+      state.finished.add(id);
+      state.calls.delete(id);
       options.observer.finishLlm({
         ...call.reference,
         ...call.result,
@@ -113,12 +118,14 @@ export function createLlmTracker(options: {
     }
   }
 
-  function resolveParent(info: NonNullable<LlmCallState["info"]>) {
-    return info.summary ? options.compaction?.(info.parentID) : options.parent(info.parentID);
-  }
+  function resolveRequest(run: RunReference, input: LlmRequest[0]) {
+    const state = states.get(run);
 
-  function resolveRequest(input: LlmRequest[0]) {
-    const candidates = Array.from(calls.entries()).filter(
+    if (!state) {
+      return;
+    }
+
+    const candidates = Array.from(state.calls.entries()).filter(
       ([_id, call]) =>
         !call.result &&
         call.info &&
@@ -127,17 +134,24 @@ export function createLlmTracker(options: {
         call.info.providerID === input.model.providerID &&
         call.info.modelID === input.model.id &&
         call.info.completed === undefined &&
-        resolveParent(call.info),
+        call.owner,
     );
     return candidates.length === 1 ? candidates[0] : undefined;
   }
 
   function fail(
+    run: RunReference,
     endedAt: number,
     error: ObservationError,
     response?: { messageID: string; headers: ModelHeaders | undefined },
   ) {
-    calls.forEach((call, id) => {
+    const state = states.get(run);
+
+    if (!state) {
+      return;
+    }
+
+    state.calls.forEach((call, id) => {
       if (call.startedAt === undefined) {
         return;
       }
@@ -147,22 +161,66 @@ export function createLlmTracker(options: {
         call.result.responseHeaders = response.headers;
       }
       call.capturePending = false;
-      record(id);
+      record(run, id);
     });
   }
 
-  function invalidate() {
-    // Pending SDK callbacks retain bindings after their session or instance ends.
-    calls.clear();
+  // SDK callbacks retain only identity, never a call record or its content snapshots.
+  function capture(run: RunReference, id: string, binding: symbol): ModelCapture {
+    function current() {
+      const call = states.get(run)?.calls.get(id);
+      return call?.binding === binding ? call : undefined;
+    }
+
+    return {
+      active: () => current() !== undefined,
+      input(value) {
+        const call = current();
+
+        if (call) {
+          call.messages = value;
+          call.capturePending = true;
+          record(run, id);
+        }
+      },
+      output(value) {
+        const call = current();
+
+        if (call) {
+          call.messages = { ...call.messages, ...value };
+          call.capturePending = false;
+          record(run, id);
+        }
+      },
+    };
   }
 
   return {
-    invalidate,
-    refresh() {
-      calls.forEach((_call, id) => record(id));
+    open: states.open,
+    release: states.release,
+    unresolved(run: RunReference) {
+      return Array.from(states.get(run)?.calls.entries() ?? []).flatMap(([id, call]) =>
+        call.info && !call.reference
+          ? [{ id, parentID: call.info.parentID, summary: call.info.summary }]
+          : [],
+      );
     },
-    activeRequest() {
-      const activeCalls = Array.from(calls.entries()).filter(
+    associate(run: RunReference, id: string, owner: InteractionOwner | undefined) {
+      const call = states.get(run)?.calls.get(id);
+
+      if (call && !call.reference) {
+        call.owner = owner;
+        record(run, id);
+      }
+    },
+    activeRequest(run: RunReference) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      const activeCalls = Array.from(state.calls.entries()).filter(
         ([_id, call]) =>
           call.info && !call.info.summary && call.startedAt !== undefined && !call.result,
       );
@@ -173,8 +231,19 @@ export function createLlmTracker(options: {
           }
         : undefined;
     },
-    closeCompaction(markerID: string, endedAt: number, error?: ObservationError) {
-      calls.forEach((call, id) => {
+    closeCompaction(
+      run: RunReference,
+      markerID: string,
+      endedAt: number,
+      error?: ObservationError,
+    ) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      state.calls.forEach((call, id) => {
         if (call.info?.summary && call.info.parentID === markerID) {
           call.result ??= {
             endedAt,
@@ -184,13 +253,13 @@ export function createLlmTracker(options: {
             },
           };
           call.capturePending = false;
-          record(id);
+          record(run, id);
         }
       });
-      closedCompactions.add(markerID);
+      state.closedCompactions.add(markerID);
     },
-    prepare(input: LlmRequest[0], observedAt: number) {
-      const candidate = resolveRequest(input);
+    prepare(run: RunReference, input: LlmRequest[0], observedAt: number) {
+      const candidate = resolveRequest(run, input);
 
       if (!candidate) {
         return;
@@ -199,67 +268,60 @@ export function createLlmTracker(options: {
       // Headers must reference a span that already exists before provider execution.
       const call = candidate[1];
       call.startedAt ??= observedAt;
-      record(candidate[0]);
+      record(run, candidate[0]);
       return call.reference ? options.observer.llmTraceHeaders(call.reference) : undefined;
     },
-    bind(input: LlmRequest[0]): ModelCapture | undefined {
-      const candidate = resolveRequest(input);
+    bind(run: RunReference, input: LlmRequest[0]): ModelCapture | undefined {
+      const candidate = resolveRequest(run, input);
 
       if (!candidate) {
         return;
       }
 
-      const call = candidate[1];
-      const id = candidate[0];
-      const generation = (call.generation ?? 0) + 1;
-      call.generation = generation;
-      const isActive = () => calls.get(id) === call && call.generation === generation;
+      const binding = Symbol();
+      candidate[1].binding = binding;
+      return capture(run, candidate[0], binding);
+    },
+    request(run: RunReference, input: LlmRequest[0], output: LlmRequest[1]) {
+      const state = states.get(run);
 
-      return {
-        active: isActive,
-        input(value) {
-          if (isActive()) {
-            call.messages = value;
-            call.capturePending = true;
-            record(id);
-          }
-        },
-        output(value) {
-          if (isActive()) {
-            call.messages = { ...call.messages, ...value };
-            call.capturePending = false;
-            record(id);
-          }
-        },
-      };
+      if (!state) {
+        return;
+      }
+
+      const key =
+        `${input.message.id}:${encodeURIComponent(input.model.providerID)}:` +
+        `${encodeURIComponent(input.model.id)}:${encodeURIComponent(input.agent)}`;
+      state.requests.set(key, parseModelRequest(input, output));
     },
-    request(input: LlmRequest[0], output: LlmRequest[1]) {
-      const key = JSON.stringify([
-        input.message.id,
-        input.model.providerID,
-        input.model.id,
-        input.agent,
-      ]);
-      requests.set(key, parseModelRequest(input, output));
-    },
-    message(info: UserMessage | AssistantMessage, observedAt: number) {
+    message(
+      run: RunReference,
+      info: UserMessage | AssistantMessage,
+      observedAt: number,
+      owner?: InteractionOwner,
+    ) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
       if (info.role === "user") {
-        calls.forEach((_call, id) => record(id));
         return;
       }
 
-      if (finished.has(info.id)) {
+      if (state.finished.has(info.id)) {
         return;
       }
 
-      if (info.summary && closedCompactions.has(info.parentID)) {
-        calls.delete(info.id);
-        finished.add(info.id);
+      if (info.summary && state.closedCompactions.has(info.parentID)) {
+        state.calls.delete(info.id);
+        state.finished.add(info.id);
         return;
       }
 
-      const call = calls.get(info.id) ?? { texts: new Map<string, string>() };
-      calls.set(info.id, call);
+      const call = state.calls.get(info.id) ?? { texts: new Map<string, string>() };
+      state.calls.set(info.id, call);
       const agent = "agent" in info && typeof info.agent === "string" ? info.agent : info.mode;
       call.info = {
         parentID: info.parentID,
@@ -269,6 +331,10 @@ export function createLlmTracker(options: {
         completed: info.time.completed,
         summary: info.summary,
       };
+
+      if (!call.reference) {
+        call.owner = owner;
+      }
 
       if (info.error && call.startedAt !== undefined) {
         call.result ??= {
@@ -281,22 +347,28 @@ export function createLlmTracker(options: {
         };
       }
 
-      record(info.id);
+      record(run, info.id);
     },
-    part(part: Part, observedAt: number) {
+    part(run: RunReference, part: Part, observedAt: number) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
       if (
-        finished.has(part.messageID) ||
+        state.finished.has(part.messageID) ||
         !["text", "step-start", "step-finish"].includes(part.type)
       ) {
         return;
       }
 
-      if (part.type === "text" && (!options.captureContent || options.parent(part.messageID))) {
+      if (part.type === "text" && !options.captureContent) {
         return;
       }
 
-      const call = calls.get(part.messageID) ?? { texts: new Map<string, string>() };
-      calls.set(part.messageID, call);
+      const call = state.calls.get(part.messageID) ?? { texts: new Map<string, string>() };
+      state.calls.set(part.messageID, call);
 
       if (part.type === "text") {
         if (call.previousTextIDs?.has(part.id)) {
@@ -327,8 +399,8 @@ export function createLlmTracker(options: {
 
       if (part.type === "step-finish") {
         if (call.startedAt === undefined) {
-          calls.delete(part.messageID);
-          finished.add(part.messageID);
+          state.calls.delete(part.messageID);
+          state.finished.add(part.messageID);
           return;
         }
 
@@ -343,30 +415,40 @@ export function createLlmTracker(options: {
         };
       }
 
-      record(part.messageID);
+      record(run, part.messageID);
     },
-    remove(messageID: string, observedAt: number, partID?: string) {
-      if (partID !== undefined) {
-        calls.get(messageID)?.texts.delete(partID);
+    remove(run: RunReference, messageID: string, observedAt: number, partID?: string) {
+      const state = states.get(run);
+
+      if (!state) {
         return;
       }
 
-      const call = calls.get(messageID);
+      if (partID !== undefined) {
+        state.calls.get(messageID)?.texts.delete(partID);
+        return;
+      }
+
+      const call = state.calls.get(messageID);
 
       if (call) {
         call.result ??= {
           endedAt: observedAt,
           error: { type: "_OTHER", message: "message removed before model completed" },
         };
-        record(messageID);
-        calls.delete(messageID);
-        finished.add(messageID);
+        record(run, messageID);
+        state.calls.delete(messageID);
+        state.finished.add(messageID);
       }
     },
     fail,
-    close(endedAt: number, error?: ObservationError) {
-      fail(endedAt, error ?? { type: "_OTHER", message: "session ended before message completed" });
-      invalidate();
+    close(run: RunReference, endedAt: number, error?: ObservationError) {
+      fail(
+        run,
+        endedAt,
+        error ?? { type: "_OTHER", message: "session ended before message completed" },
+      );
+      states.get(run)?.calls.clear();
     },
   };
 }

@@ -80,7 +80,7 @@ export function createObserver(options: ObserverOptions): Observer {
   };
 
   function endRun(input: RunFinish, disposing = false) {
-    const key = JSON.stringify([input.sessionID, input.id]);
+    const key = `${input.sessionID}:${input.id}`;
 
     if (!activeRuns.delete(key)) {
       return;
@@ -127,7 +127,7 @@ export function createObserver(options: ObserverOptions): Observer {
         return;
       }
 
-      activeRuns.set(JSON.stringify([input.sessionID, input.id]), {
+      activeRuns.set(`${input.sessionID}:${input.id}`, {
         reference: { sessionID: input.sessionID, id: input.id },
         parent: input.parent
           ? {

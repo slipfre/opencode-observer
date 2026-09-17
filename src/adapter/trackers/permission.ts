@@ -6,17 +6,24 @@ import type {
   PermissionReference,
   ToolReference,
   ToolStart,
+  RunReference,
 } from "../../contract/observer.js";
+import { createRunStore } from "../shared/runs.js";
 
-export function createPermissionTracker(options: {
-  observer: Observer;
-  tool(messageID: string, callID: string): ToolStart | undefined;
-}) {
-  const pending = new Map<string, PermissionReference>();
-  const seen = new Set<string>();
+export function createPermissionTracker(options: { observer: Observer }) {
+  const states = createRunStore(() => ({
+    pending: new Map<string, PermissionReference>(),
+    seen: new Set<string>(),
+  }));
 
   function finish(input: PermissionFinish) {
-    if (!pending.delete(input.requestID)) {
+    const state = states.get(input.tool.interaction.run);
+
+    if (!state) {
+      return;
+    }
+
+    if (!state.pending.delete(input.requestID)) {
       return;
     }
 
@@ -24,13 +31,25 @@ export function createPermissionTracker(options: {
   }
 
   return {
-    asked(request: PermissionRequest, observedAt: number) {
-      if (seen.has(request.id) || !request.tool) {
+    open: states.open,
+    release: states.release,
+    asked(
+      run: RunReference,
+      request: PermissionRequest,
+      observedAt: number,
+      tool: ToolStart | undefined,
+    ) {
+      const state = states.get(run);
+
+      if (!state) {
         return;
       }
 
-      seen.add(request.id);
-      const tool = options.tool(request.tool.messageID, request.tool.callID);
+      if (state.seen.has(request.id) || !request.tool) {
+        return;
+      }
+
+      state.seen.add(request.id);
 
       if (!tool) {
         return;
@@ -44,7 +63,7 @@ export function createPermissionTracker(options: {
         },
         requestID: request.id,
       };
-      pending.set(request.id, reference);
+      state.pending.set(request.id, reference);
       options.observer.startPermission({
         ...reference,
         startedAt: observedAt,
@@ -57,8 +76,8 @@ export function createPermissionTracker(options: {
         userID: tool.userID,
       });
 
-      if (pending.size > 1024) {
-        const oldest = pending.values().next().value;
+      if (state.pending.size > 1024) {
+        const oldest = state.pending.values().next().value;
 
         if (oldest) {
           finish({
@@ -69,11 +88,22 @@ export function createPermissionTracker(options: {
         }
       }
     },
-    replied(requestID: string, reply: "once" | "always" | "reject", observedAt: number) {
-      const reference = pending.get(requestID);
+    replied(
+      run: RunReference,
+      requestID: string,
+      reply: "once" | "always" | "reject",
+      observedAt: number,
+    ) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      const reference = state.pending.get(requestID);
 
       if (!reference) {
-        seen.add(requestID);
+        state.seen.add(requestID);
         return;
       }
 
@@ -81,7 +111,13 @@ export function createPermissionTracker(options: {
       return reply === "reject" ? reference.tool : undefined;
     },
     closeTool(tool: ToolReference, observedAt: number, error?: ObservationError) {
-      pending.forEach((reference) => {
+      const state = states.get(tool.interaction.run);
+
+      if (!state) {
+        return;
+      }
+
+      state.pending.forEach((reference) => {
         if (reference.tool.callID === tool.callID && reference.tool.messageID === tool.messageID) {
           finish({
             ...reference,
@@ -91,8 +127,14 @@ export function createPermissionTracker(options: {
         }
       });
     },
-    close(observedAt: number, error?: ObservationError) {
-      pending.forEach((reference) =>
+    close(run: RunReference, observedAt: number, error?: ObservationError) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      state.pending.forEach((reference) =>
         finish({
           ...reference,
           endedAt: observedAt,

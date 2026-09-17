@@ -444,6 +444,73 @@ test("retry bindings discard old callbacks and session end releases a missing SD
   expect(h.updates).toHaveLength(2);
 });
 
+test.each([false, true])(
+  "run cleanup invalidates SDK callbacks before the next run, observer failure=%s",
+  async (failure) => {
+    const h = await setup();
+    const old = inputEvent({}, await h.headers(), "first run");
+    await integration().onStepStart?.(old);
+    await h.step("step-start");
+    const error = new Error("finish failed");
+    if (failure) {
+      spyOn(h.observer, "finishLlm").mockImplementationOnce(() => {
+        throw error;
+      });
+    }
+
+    await h.adapter.hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    const next = { ...h.input, message: { ...h.input.message, id: "u2", time: { created: 2000 } } };
+    await h.adapter.hooks["chat.message"](
+      { sessionID: "s1" },
+      {
+        message: next.message,
+        parts: [
+          { id: "text2", sessionID: "s1", messageID: "u2", type: "text", text: "second run" },
+        ],
+      },
+    );
+    await h.adapter.hooks.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "a1",
+            sessionID: "s1",
+            parentID: "u2",
+            role: "assistant",
+            mode: "build",
+            modelID: "test",
+            providerID: "test",
+            path: { cwd: "/test", root: "/test" },
+            time: { created: 2100 },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          },
+        },
+      },
+    });
+    const output = { headers: {} };
+    await h.adapter.hooks["chat.headers"](next, output);
+    const current = inputEvent({}, { ...output.headers }, "second run");
+    await integration().onStepStart?.(current);
+    const count = h.updates.length;
+
+    await integration().onStepFinish?.(outputEvent(old.metadata!, "late first run"));
+    expect(h.updates).toHaveLength(count);
+    await integration().onStepFinish?.(outputEvent(current.metadata!, "second response"));
+    await h.step("step-finish");
+
+    expect(h.finishes.at(-1)?.interaction.run.id).toBe("u2");
+    expect(h.updates.at(-1)?.output?.[0]?.parts[0]).toEqual({
+      type: "text",
+      text: "second response",
+    });
+    expect(h.errors).toEqual(failure ? [error] : []);
+  },
+);
+
 test("unresolved settings never block callbacks or discard an observed response", async () => {
   const h = await setup();
   const format = Promise.withResolvers<{ type: "json" }>();

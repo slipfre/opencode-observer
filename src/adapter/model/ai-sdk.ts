@@ -87,7 +87,12 @@ export function createModelMessageCapture(options: {
               reportError(error, options.log),
             );
 
-            if (binding.capture.active() && binding.step === step && !binding.responded) {
+            if (
+              broker.listeners.has(listener) &&
+              binding.capture.active() &&
+              binding.step === step &&
+              !binding.responded
+            ) {
               binding.capture.input({ ...snapshot, request: { ...snapshot.request, ...settings } });
             }
           });

@@ -60,6 +60,12 @@ adapter → contract ← telemetry
 
 以上模块均属于适配层。tracker 必须将观测结果转换为 SDK 无关的契约数据，通过注入的 Observer 接口提交，不直接依赖遥测实现；对应的 span 状态和导出由遥测层管理。
 
+每个 coordinator 只创建一组 run、interaction、LLM、tool、permission 和 compaction tracker，跨 run 复用行为对象及其回调连接。各 tracker 自己持有数据；interaction、LLM、tool、permission 和 compaction 的数据按 `(sessionID, runID)` 分区，不建立集中业务状态模型。coordinator 的 `SessionState` 只保存活动 run 引用、父工具及 overflow 恢复信息。
+
+coordinator 在接受新 run 时显式调用各 tracker 的 `open(run)` 登记数据分区。事件处理、归属查询及收尾操作携带完整 run 引用，只使用已有分区。`close` / `finish` 提交观测结果，`release(run)` 释放该 run 的全部数据。tracker 不提供实例关闭时的数据清理接口。`shared/runs.ts` 仅提供各 tracker 独立使用的分区容器，不保存共享业务数据；具体数据类型和识别规则留在对应 tracker 中。
+
+跨对象归属由 coordinator 查询并解析，再作为数据传入 tracker；tracker 不接收其他 tracker 的查询、解析函数或返回归属的回调。tracker 可以暴露自身的归属查询，以及 `unresolved(run)` 所需关联线索；coordinator 在相关证据到达后调用 `associate` 补齐归属。已有归属在提交观测对象后固定。`onFinish`、`onTask` 等回调只通知生命周期变化，由 coordinator 安排清理和绑定，不用于反向获取归属。
+
 #### 契约层（`src/contract/`）
 
 由观测操作与对象引用、结构化消息与数据类型组成，只表达层间协作所需的语义。契约类型可在本层复用，不包含 tracker、SDK 接入或 span 实现；接口约束见第 4 节。
@@ -130,9 +136,9 @@ adapter → contract ← telemetry
 | `flush(): Promise<void>`    | 异步刷新 SDK 缓冲区中已结束的数据，不结束活动对象；触发刷新的事件回调等待完成 |
 | `shutdown(): Promise<void>` | 清理未完成对象，由 SDK/exporter 排空并关闭；                                  |
 
-适配层在 session idle、error 或删除后触发刷新。协调器在宿主 `dispose` hook 内统一关闭：先注销模型采集监听器、使旧绑定失效并清空当前会话状态，再调用注入的 `Observer.shutdown()`。遥测层按实际父子关系结束活动 span，再异步等待导出并关闭资源。重复调用返回同一个关闭 Promise。插件初始化模块只负责装配，不再中转关闭回调。
+适配层在 session idle、error 或删除后触发刷新。协调器在宿主 `dispose` hook 内统一关闭：先注销模型采集监听器，再调用注入的 `Observer.shutdown()`。遥测层按实际父子关系结束活动 span，再异步等待导出并关闭资源。重复调用返回同一个关闭 Promise。插件初始化模块只负责装配，不再中转关闭回调。
 
-关闭只要求完成生命周期收尾、解除外部订阅并使旧模型绑定失效，不要求逐层清空内部缓存。宿主和异步任务不再持有实例后，剩余纯数据由垃圾回收处理。正常运行期间移除已结束对象、释放父子绑定及清理所属 run 的上下文仍属于生命周期管理。
+关闭只要求完成观测收尾、解除外部订阅并停止向已关闭实例提交采集数据，不主动清空 tracker、session registry 或 SDK 请求缓存。宿主和异步任务不再持有实例后，剩余纯数据由垃圾回收处理。正常运行期间移除已结束对象、释放父子绑定及清理所属 run 的上下文仍属于生命周期管理。
 
 Observer 统一持有已结束 span 的历史记录，按 run、span 类型和完整对象引用隔离；需要保留的 interaction / compaction 上下文与去重标识使用同一条记录。span 模块只查询和登记完成状态，由 Observer 在结束 run 时先收尾后代，再统一释放子 span 记录，仅保留 run 的关闭标记至实例结束，用于拒绝旧任务重建。清理一个 run 不影响其他活动 run 的历史记录。
 

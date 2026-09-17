@@ -19,7 +19,7 @@ export function createRunTracker(options: RunOptions) {
       parent?: ToolReference;
       parentSessionID?: string;
     }) {
-      const key = JSON.stringify([input.sessionID, input.id]);
+      const key = `${input.sessionID}:${input.id}`;
 
       if (seen.has(key)) {
         return;
@@ -54,6 +54,11 @@ export function createRunTracker(options: RunOptions) {
         ...input,
         output: options.captureContent ? input.output : undefined,
       });
+    },
+    release(run: RunReference) {
+      if (runs.get(run.sessionID)?.id === run.id) {
+        runs.delete(run.sessionID);
+      }
     },
   };
 }

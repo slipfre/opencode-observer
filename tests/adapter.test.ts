@@ -224,6 +224,53 @@ test("chat.params observes compatible API settings without mutating the hook out
   await adapter.hooks.dispose();
 });
 
+test("request keys isolate separators and escapes in provider, model and agent names", async () => {
+  const h = recording();
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  const requests = [
+    { providerID: "provider:region", modelID: "model", agent: "build" },
+    { providerID: "provider", modelID: "region:model", agent: "build" },
+    { providerID: "provider", modelID: "region", agent: "model:build" },
+    { providerID: "provider%3Aregion", modelID: "model", agent: "build" },
+  ].map((names, index) => {
+    const request = modelRequest();
+    request[0].model.providerID = names.providerID;
+    request[0].model.id = names.modelID;
+    request[0].model.api.id = `resolved-model-${index}`;
+    request[0].agent = names.agent;
+    request[1].temperature = index / 10;
+    return request;
+  });
+  await coordinator.message(user(), [text()]);
+  for (const request of requests) {
+    await coordinator.params(...request);
+  }
+
+  for (const [index, request] of requests.entries()) {
+    await coordinator.event({
+      type: "message.updated",
+      properties: {
+        info: modelMessage({
+          id: `a${index}`,
+          providerID: request[0].model.providerID,
+          modelID: request[0].model.id,
+          mode: request[0].agent,
+        }),
+      },
+    });
+    await modelPart(coordinator, "step-start", 1100, `a${index}`);
+    await modelPart(coordinator, "step-finish", 1200, `a${index}`);
+  }
+
+  expect(h.llms.map((call) => call.model)).toEqual(
+    requests.map((request) => request[0].model.api.id),
+  );
+  expect(h.llms.map((call) => call.parameters?.temperature)).toEqual(
+    requests.map((request) => request[1].temperature),
+  );
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } });
+});
+
 async function modelPart(
   coordinator: ReturnType<typeof createCoordinatorHarness>,
   type: "step-start" | "step-finish",
@@ -649,11 +696,10 @@ test("dispose clears existing session state and waits for one shared shutdown", 
   });
 
   expect(h.starts).toHaveLength(1);
-  expect(h.interactions.map((input) => input.id)).toEqual(["u1", "u2"]);
+  expect(h.interactions.map((input) => input.id)).toEqual(["u1"]);
   expect(h.llms).toHaveLength(0);
   expect(h.llmUpdates).toHaveLength(0);
-  expect(h.finishes).toHaveLength(1);
-  expect(h.finishes[0]).toMatchObject({ sessionID: "s1", id: "u1" });
+  expect(h.finishes).toHaveLength(0);
   expect(h.observer.llmTraceHeaders).not.toHaveBeenCalled();
   expect(output.headers).toEqual({ "X-Test": "kept" });
   expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
@@ -749,8 +795,8 @@ test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async
   await adapter.hooks.dispose();
 
   expect(failures).toEqual([exportError, disposeError]);
-  expect(h.starts).toHaveLength(1);
-  expect(h.interactions).toHaveLength(1);
+  expect(h.starts).toHaveLength(0);
+  expect(h.interactions).toHaveLength(0);
   expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
 });
 

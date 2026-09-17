@@ -5,8 +5,10 @@ import type {
   ToolFinish,
   ToolReference,
   ToolStart,
+  RunReference,
 } from "../../contract/observer.js";
 import type { InteractionOwner } from "./interaction.js";
+import { createRunStore } from "../shared/runs.js";
 import { jsonObject } from "../shared/json.js";
 
 type ToolCallState = {
@@ -25,24 +27,28 @@ type ToolCallState = {
 export function createToolTracker(options: {
   observer: Observer;
   captureContent?: boolean;
-  parent(messageID: string): InteractionOwner | undefined;
   onFinish(reference: ToolReference, observedAt: number, error?: ObservationError): void;
   onTask(sessionID: string, reference: ToolReference): void;
 }) {
-  const calls = new Map<string, ToolCallState>();
-  const finished = new Set<string>();
+  const states = createRunStore(() => ({
+    calls: new Map<string, ToolCallState>(),
+    finished: new Set<string>(),
+  }));
 
   function finish(
+    run: RunReference,
     call: ToolCallState,
     result: Omit<ToolFinish, keyof ToolReference>,
     observedAt: number,
   ) {
-    if (!call.start) {
+    const state = states.get(run);
+
+    if (!state || !call.start) {
       return;
     }
 
-    calls.delete(JSON.stringify([call.messageID, call.callID]));
-    finished.add(JSON.stringify([call.messageID, call.callID]));
+    state.calls.delete(`${call.messageID}:${call.callID}`);
+    state.finished.add(`${call.messageID}:${call.callID}`);
     const reference = {
       interaction: call.start.interaction,
       callID: call.callID,
@@ -52,9 +58,7 @@ export function createToolTracker(options: {
     options.observer.finishTool({ ...reference, ...result });
   }
 
-  function record(call: ToolCallState) {
-    const owner = options.parent(call.messageID);
-
+  function record(run: RunReference, call: ToolCallState, owner?: InteractionOwner) {
     if (!call.start && !owner) {
       return;
     }
@@ -87,6 +91,7 @@ export function createToolTracker(options: {
 
     if (call.result) {
       finish(
+        run,
         call,
         {
           endedAt: call.result.endedAt,
@@ -105,10 +110,22 @@ export function createToolTracker(options: {
   }
 
   return {
-    part(part: ToolPart, observedAt: number) {
-      const key = JSON.stringify([part.messageID, part.callID]);
+    open: states.open,
+    release: states.release,
+    part(run: RunReference, part: ToolPart, observedAt: number, owner?: InteractionOwner) {
+      const state = states.get(run);
 
-      if (finished.has(key) || calls.get(key)?.result || part.state.status === "pending") {
+      if (!state) {
+        return;
+      }
+
+      const key = `${part.messageID}:${part.callID}`;
+
+      if (
+        state.finished.has(key) ||
+        state.calls.get(key)?.result ||
+        part.state.status === "pending"
+      ) {
         return;
       }
 
@@ -118,14 +135,14 @@ export function createToolTracker(options: {
         return;
       }
 
-      const call = calls.get(key) ?? {
+      const call = state.calls.get(key) ?? {
         partID: part.id,
         messageID: part.messageID,
         callID: part.callID,
         name: part.tool,
         startedAt,
       };
-      calls.set(key, call);
+      state.calls.set(key, call);
       call.arguments = options.captureContent ? jsonObject(part.state.input) : undefined;
       call.childSessionID =
         part.state.status === "running" &&
@@ -150,37 +167,72 @@ export function createToolTracker(options: {
         };
       }
 
-      record(call);
+      record(run, call, owner);
     },
-    refresh() {
-      calls.forEach(record);
+    unresolved(run: RunReference) {
+      return Array.from(states.get(run)?.calls.values() ?? [])
+        .filter((call) => !call.start)
+        .map((call) => ({ messageID: call.messageID, callID: call.callID }));
     },
-    active(messageID: string, callID: string) {
-      return calls.get(JSON.stringify([messageID, callID]))?.start;
+    associate(run: RunReference, messageID: string, callID: string, owner: InteractionOwner) {
+      const call = states.get(run)?.calls.get(`${messageID}:${callID}`);
+
+      if (call && !call.start) {
+        record(run, call, owner);
+      }
+    },
+    active(run: RunReference, messageID: string, callID: string) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      return state.calls.get(`${messageID}:${callID}`)?.start;
     },
     reject(reference: ToolReference) {
-      const call = calls.get(JSON.stringify([reference.messageID, reference.callID]));
+      const state = states.get(reference.interaction.run);
+
+      if (!state) {
+        return;
+      }
+
+      const call = state.calls.get(`${reference.messageID}:${reference.callID}`);
 
       if (call?.start?.interaction.id === reference.interaction.id) {
         call.rejected = true;
       }
     },
-    remove(messageID: string, time: number, partID?: string) {
-      calls.forEach((call, key) => {
+    remove(run: RunReference, messageID: string, time: number, partID?: string) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      state.calls.forEach((call, key) => {
         if (call.messageID === messageID && (partID === undefined || call.partID === partID)) {
           finish(
+            run,
             call,
             { endedAt: time, error: { type: "_OTHER", message: "tool removed before completion" } },
             time,
           );
-          calls.delete(key);
-          finished.add(key);
+          state.calls.delete(key);
+          state.finished.add(key);
         }
       });
     },
-    close(endedAt: number, error?: ObservationError) {
-      calls.forEach((call) =>
+    close(run: RunReference, endedAt: number, error?: ObservationError) {
+      const state = states.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      state.calls.forEach((call) =>
         finish(
+          run,
           call,
           {
             endedAt,

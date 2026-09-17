@@ -23,13 +23,10 @@ export function encodeTextMessage(role: "user" | "assistant", text: string) {
 }
 
 export function operationKey(reference: ToolReference | CompactionReference) {
-  return JSON.stringify([
-    reference.interaction.run.sessionID,
-    reference.interaction.run.id,
-    reference.interaction.id,
-    "messageID" in reference ? reference.messageID : undefined,
-    "callID" in reference ? reference.callID : reference.id,
-  ]);
+  const key = `${reference.interaction.run.sessionID}:${reference.interaction.run.id}:${reference.interaction.id}`;
+  return "messageID" in reference
+    ? `${key}:${reference.messageID}:${encodeURIComponent(reference.callID)}`
+    : `${key}::${reference.id}`;
 }
 
 export function sameRun(first: RunReference, second: RunReference) {
@@ -42,29 +39,27 @@ export function createSpanHistory() {
 
   return {
     add(run: RunReference, type: SpanType, key: string, context?: Context) {
-      const runKey = JSON.stringify([run.sessionID, run.id]);
+      const runKey = `${run.sessionID}:${run.id}`;
 
       if (runs.get(runKey) === null) {
         return;
       }
 
       const finished = runs.get(runKey) ?? new Map<string, Context | undefined>();
-      finished.set(JSON.stringify([type, key]), context);
+      finished.set(`${type}:${key}`, context);
       runs.set(runKey, finished);
     },
     has(run: RunReference, type: SpanType, key: string) {
-      return (
-        runs.get(JSON.stringify([run.sessionID, run.id]))?.has(JSON.stringify([type, key])) ?? false
-      );
+      return runs.get(`${run.sessionID}:${run.id}`)?.has(`${type}:${key}`) ?? false;
     },
     context(run: RunReference, type: SpanType, key: string) {
-      return runs.get(JSON.stringify([run.sessionID, run.id]))?.get(JSON.stringify([type, key]));
+      return runs.get(`${run.sessionID}:${run.id}`)?.get(`${type}:${key}`);
     },
     isRunClosed(run: RunReference) {
-      return runs.get(JSON.stringify([run.sessionID, run.id])) === null;
+      return runs.get(`${run.sessionID}:${run.id}`) === null;
     },
     closeRun(run: RunReference) {
-      runs.set(JSON.stringify([run.sessionID, run.id]), null);
+      runs.set(`${run.sessionID}:${run.id}`, null);
     },
   };
 }

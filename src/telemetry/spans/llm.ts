@@ -42,11 +42,7 @@ export function createLlmSpans(
   const propagator = new W3CTraceContextPropagator();
 
   function finish(input: LlmFinish) {
-    const key = JSON.stringify([
-      input.interaction.run.sessionID,
-      input.interaction.run.id,
-      input.id,
-    ]);
+    const key = `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`;
     const call = calls.get(key);
 
     if (!call || call.reference.interaction.id !== input.interaction.id) {
@@ -108,7 +104,7 @@ export function createLlmSpans(
     finish,
     traceHeaders(input: LlmReference): TraceHeaders | undefined {
       const call = calls.get(
-        JSON.stringify([input.interaction.run.sessionID, input.interaction.run.id, input.id]),
+        `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`,
       );
 
       if (!call || call.reference.interaction.id !== input.interaction.id) {
@@ -130,7 +126,7 @@ export function createLlmSpans(
     },
     update(input: LlmUpdate) {
       const call = calls.get(
-        JSON.stringify([input.interaction.run.sessionID, input.interaction.run.id, input.id]),
+        `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`,
       );
 
       if (!call || call.reference.interaction.id !== input.interaction.id) {
@@ -176,11 +172,7 @@ export function createLlmSpans(
       }
     },
     start(input: LlmStart) {
-      const key = JSON.stringify([
-        input.interaction.run.sessionID,
-        input.interaction.run.id,
-        input.id,
-      ]);
+      const key = `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`;
       const parent = options.parentContext(input);
 
       if (!parent || calls.has(key) || options.history.has(input.interaction.run, "llm", key)) {
