@@ -1,0 +1,44 @@
+tests/operations.test.ts
+  s_b0622bab626188::t_69ec09ad1a9a3c 194,196,199-211,219-225
+  s_b0622bab626188::t_3c2ab3ec0d696b 212
+  s_b0622bab626188::t_e8e1f28a3aafbe 20,39,195,197-198,213-218
+  s_b0622bab626188::t_0cbc7e3dda0ac7 226
+tests/user-attributes.test.ts
+  s_b0622bab626188::t_e8e1f28a3aafbe 58-60,62,69-70,85,112
+tests/run.test.ts
+  s_b0622bab626188::t_e8e1f28a3aafbe 558-560,563,571
+docs/adapter.md
+  s_b0622bab626188::t_81f5ed30900be0 86
+tests/adapter.test.ts
+  s_b0622bab626188::t_e8e1f28a3aafbe 483
+README.md
+  s_b0622bab626188::t_81f5ed30900be0 65
+src/adapter/trackers/run.ts
+  s_b0622bab626188::t_6a1f2f3a86d1ce 42
+docs/architecture.md
+  s_b0622bab626188::t_f524f23b9345f7 107-108,110
+  s_b0622bab626188::t_81f5ed30900be0 87,109
+tests/telemetry.test.ts
+  s_b0622bab626188::t_e8e1f28a3aafbe 768-769,788
+docs/schemas/trace.md
+  s_b0622bab626188::t_81f5ed30900be0 60,65
+  s_b0622bab626188::t_f524f23b9345f7 55-59,61
+src/adapter/opencode/coordinator.ts
+  s_b0622bab626188::t_3c2ab3ec0d696b 423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "82e33c0a0d06e889e6b1e2f7a3ad828e9363877e",
+  "prompts": {},
+  "sessions": {
+    "s_b0622bab626188": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ae9b-2e6d-76e2-a382-6f4a201b155f",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
