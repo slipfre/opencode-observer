@@ -1,0 +1,28 @@
+src/adapter/trackers/run.ts
+  s_a6557b87e756ab::t_592a7f117322fa 24,48
+docs/architecture.md
+  s_a6557b87e756ab::t_592a7f117322fa 133
+tests/run-tracker.test.ts
+  s_a6557b87e756ab::t_592a7f117322fa 39
+docs/adapter.md
+  s_a6557b87e756ab::t_592a7f117322fa 115
+tests/adapter.test.ts
+  s_a6557b87e756ab::t_592a7f117322fa 620,652,655-656
+  s_a6557b87e756ab::t_80a56b784c810b 752-753
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "837e9351a70543c19a91bdcad6c6afe50686a9f4",
+  "prompts": {},
+  "sessions": {
+    "s_a6557b87e756ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ad45-2a30-74c1-a232-0bdb100e8945",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}

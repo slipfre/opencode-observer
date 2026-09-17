@@ -1,0 +1,31 @@
+src/telemetry/observer.ts
+  s_bfa67a1fb06e4c::t_15c221e6a6a47f 3
+  s_bfa67a1fb06e4c::t_071870af67d72f 123,176
+  s_bfa67a1fb06e4c::t_149bc8a59f62b8 124-153,156-158,160-162,164-174
+tests/telemetry.test.ts
+  s_bfa67a1fb06e4c::t_071870af67d72f 383,392-395,398
+docs/architecture.md
+  s_bfa67a1fb06e4c::t_c8a68d40bc64e1 128-131
+  h_076b07aabc3f4d 133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5af82edade04fff29707adae5c970859cf854e50",
+  "prompts": {},
+  "humans": {
+    "h_076b07aabc3f4d": {
+      "author": "happy <sxh139726845@163.com>"
+    }
+  },
+  "sessions": {
+    "s_bfa67a1fb06e4c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0a935-32be-7df0-8dc8-1ed3e5373a64",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}

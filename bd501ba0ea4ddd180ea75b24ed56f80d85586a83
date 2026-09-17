@@ -1,0 +1,20 @@
+src/adapter/opencode/coordinator.ts
+  s_7b4110f02970c5::t_a743eed57c980d 96
+  s_7b4110f02970c5::t_7afe58ed42b8e9 282,291,322,327,347
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bd501ba0ea4ddd180ea75b24ed56f80d85586a83",
+  "prompts": {},
+  "sessions": {
+    "s_7b4110f02970c5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0a827-5a60-77c3-8143-ed45915d68fb",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}

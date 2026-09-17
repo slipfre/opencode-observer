@@ -1,0 +1,46 @@
+docs/architecture.md
+  s_02c25a0fad8565::t_8a36f51eff4ee4 135
+  s_02c25a0fad8565::t_768bf93342d7c7 134
+  s_02c25a0fad8565::t_dfc7b596edfe11 133,136
+  s_02c25a0fad8565::t_9a4025bb216fb1 137
+  s_02c25a0fad8565::t_e788f984e946fd 124-125
+tests/adapter.test.ts
+  s_02c25a0fad8565::t_768bf93342d7c7 612
+docs/adapter.md
+  s_02c25a0fad8565::t_dfc7b596edfe11 62,115
+src/adapter/model/ai-sdk.ts
+  s_02c25a0fad8565::t_e788f984e946fd 11,86-88,192
+tests/plugin.test.ts
+  s_02c25a0fad8565::t_fc44362a4a122f 68-69,81-82,260-314
+src/adapter/opencode/coordinator.ts
+  s_02c25a0fad8565::t_dfc7b596edfe11 74
+  s_02c25a0fad8565::t_8a36f51eff4ee4 117,443
+  s_02c25a0fad8565::t_e788f984e946fd 73
+  s_02c25a0fad8565::t_45e0f6659a4a28 82
+  s_02c25a0fad8565::t_768bf93342d7c7 83-84,87,119
+src/adapter/shared/guard.ts
+  s_02c25a0fad8565::t_e788f984e946fd 7,11-18
+  s_02c25a0fad8565::t_e2b04ce17be093 19
+tests/ai-sdk.test.ts
+  s_02c25a0fad8565::t_dfc7b596edfe11 498-523
+  s_02c25a0fad8565::t_e788f984e946fd 286-326,370-372
+  s_02c25a0fad8565::t_8a36f51eff4ee4 384,387,393-410,417
+src/adapter/trackers/llm.ts
+  s_02c25a0fad8565::t_dfc7b596edfe11 154-155,160,369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3c33f817af8c362eda492019f2bbddcc51c9b113",
+  "prompts": {},
+  "sessions": {
+    "s_02c25a0fad8565": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0a3df-e314-7590-9c0f-c53174d66324",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}

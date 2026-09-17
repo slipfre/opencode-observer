@@ -1,0 +1,22 @@
+tests/adapter.test.ts
+  s_8624bce45c0a2b::t_abd5ae6251c8a7 893-900,902,904-938,969-972
+  s_8624bce45c0a2b::t_7942bb7b659afa 965-968
+src/adapter/opencode/coordinator.ts
+  s_8624bce45c0a2b::t_abd5ae6251c8a7 326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5134f7b54002eb76904ff07c457e69656712935d",
+  "prompts": {},
+  "sessions": {
+    "s_8624bce45c0a2b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ad00-5784-7ab2-adce-364e2ded6035",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
