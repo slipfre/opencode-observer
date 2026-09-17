@@ -41,7 +41,7 @@ test("OpenCode sends resolved identity in tracestate without changing the export
   await withE2EFixture(
     {
       env: identity.env,
-      pluginOptions: { spanAttributes: { "user.id": "static-user", team: "identity" } },
+      pluginOptions: { spanAttributes: { team: "identity" } },
       replies: [
         {
           type: "tool",
@@ -187,10 +187,12 @@ test.each([
   );
 });
 
-test.each(["options", "environment"])(
-  "OpenCode preserves static span user.id from %s but sends unknown in tracestate when lookup fails",
-  async (source) => {
-    using identity = startIdentityServer(503);
+test.each(
+  ["options", "environment"].flatMap((source) => [200, 503].map((status) => ({ source, status }))),
+)(
+  "OpenCode prioritizes static span user.id from $source when identity lookup returns $status",
+  async (input) => {
+    using identity = startIdentityServer(input.status);
 
     await withE2EFixture(
       {
@@ -201,19 +203,25 @@ test.each(["options", "environment"])(
         // The fixture supplies spanAttributes by default; omit it for the environment case.
         pluginOptions: {
           spanAttributes:
-            source === "options" ? { "user.id": "options-user", team: "options" } : undefined,
+            input.source === "options" ? { "user.id": "options-user", team: "options" } : undefined,
         },
         replies: [{ type: "text", text: "configured identity" }],
       },
       async (fixture) => {
         const result = await fixture.run("answer the question");
-        const spans = requireSpans(fixture, result, 3);
+        const spans = requireSpans(
+          fixture,
+          result,
+          3,
+          0,
+          input.status === 200 ? "e2e-user" : "unknown",
+        );
 
         expect(identity.requests).toHaveLength(1);
         spans.forEach((span) => {
           expectUnset(span);
-          expect(span.attributes["user.id"]).toBe(`${source}-user`);
-          expect(span.attributes.team).toBe(source);
+          expect(span.attributes["user.id"]).toBe(`${input.source}-user`);
+          expect(span.attributes.team).toBe(input.source);
           expect(span.resource["user.id"]).toBeUndefined();
         });
         expect(result.stdout).toContain("configured identity");

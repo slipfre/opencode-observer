@@ -22,9 +22,8 @@ export const ObserverPlugin: Plugin = async (input, options) => {
     ...config,
     serviceVersion,
     spanAttributes: {
-      ...(user === null ? { "user.id": "unknown" } : {}),
+      ...(user === undefined ? {} : { "user.id": user?.id ?? "unknown" }),
       ...config.spanAttributes,
-      ...(user ? { "user.id": user.id } : {}),
     },
   });
 
