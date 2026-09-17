@@ -39,7 +39,6 @@ export function createLlmSpans(
       responseHeaders?: ModelHeaders;
     }
   >();
-  const finished = new Set<string>();
   const propagator = new W3CTraceContextPropagator();
 
   function finish(input: LlmFinish) {
@@ -55,7 +54,7 @@ export function createLlmSpans(
     }
 
     calls.delete(key);
-    finished.add(key);
+    options.history.add(call.reference.interaction.run, "llm", key);
     call.span.setAttributes({
       "gen_ai.output.type": call.outputType,
       "gen_ai.response.finish_reasons": input.finishReason
@@ -184,7 +183,7 @@ export function createLlmSpans(
       ]);
       const parent = options.parentContext(input);
 
-      if (!parent || calls.has(key) || finished.has(key)) {
+      if (!parent || calls.has(key) || options.history.has(input.interaction.run, "llm", key)) {
         return;
       }
 

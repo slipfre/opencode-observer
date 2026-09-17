@@ -15,8 +15,6 @@ export function createCompactionSpans(
   },
 ) {
   const compactions = new Map<string, { reference: CompactionReference; span: Span }>();
-  const finished = new Set<string>();
-  const contexts = new Map<string, { run: RunReference; context: Context }>();
 
   function finish(input: CompactionFinish) {
     const key = operationKey(input);
@@ -27,11 +25,12 @@ export function createCompactionSpans(
     }
 
     compactions.delete(key);
-    finished.add(key);
-    contexts.set(key, {
-      run: compaction.reference.interaction.run,
-      context: trace.setSpanContext(options.rootContext, compaction.span.spanContext()),
-    });
+    options.history.add(
+      compaction.reference.interaction.run,
+      "compaction",
+      key,
+      trace.setSpanContext(options.rootContext, compaction.span.spanContext()),
+    );
 
     if (!input.error) {
       compaction.span.setAttributes({
@@ -54,7 +53,11 @@ export function createCompactionSpans(
       const key = operationKey(input);
       const parent = options.parentContext(input.interaction);
 
-      if (!parent || compactions.has(key) || finished.has(key)) {
+      if (
+        !parent ||
+        compactions.has(key) ||
+        options.history.has(input.interaction.run, "compaction", key)
+      ) {
         return;
       }
 
@@ -86,7 +89,7 @@ export function createCompactionSpans(
       const compaction = compactions.get(key);
       return compaction
         ? trace.setSpan(options.rootContext, compaction.span)
-        : contexts.get(key)?.context;
+        : options.history.context(reference.interaction.run, "compaction", key);
     },
     closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
       compactions.forEach((compaction) => {
@@ -99,11 +102,6 @@ export function createCompactionSpans(
               message: "session ended before compaction completed",
             },
           });
-        }
-      });
-      contexts.forEach((value, key) => {
-        if (sameRun(value.run, run)) {
-          contexts.delete(key);
         }
       });
     },

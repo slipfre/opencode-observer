@@ -16,7 +16,6 @@ export function createToolSpans(
   },
 ) {
   const tools = new Map<string, { reference: ToolReference; name: string; span: Span }>();
-  const finished = new Set<string>();
 
   function finish(input: ToolFinish) {
     const key = operationKey(input);
@@ -27,7 +26,7 @@ export function createToolSpans(
     }
 
     tools.delete(key);
-    finished.add(key);
+    options.history.add(tool.reference.interaction.run, "tool", key);
 
     if (options.captureContent && !input.error && input.output !== undefined) {
       tool.span.setAttribute("gen_ai.tool.call.result", toolResult(input.output));
@@ -42,7 +41,7 @@ export function createToolSpans(
       const key = operationKey(input);
       const parent = options.parentContext(input.interaction);
 
-      if (!parent || tools.has(key) || finished.has(key)) {
+      if (!parent || tools.has(key) || options.history.has(input.interaction.run, "tool", key)) {
         return;
       }
 

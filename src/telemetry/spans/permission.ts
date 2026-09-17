@@ -15,7 +15,6 @@ export function createPermissionSpans(
   },
 ) {
   const permissions = new Map<string, { reference: PermissionReference; span: Span }>();
-  const finished = new Set<string>();
 
   function finish(input: PermissionFinish) {
     const key = JSON.stringify([operationKey(input.tool), input.requestID]);
@@ -26,7 +25,7 @@ export function createPermissionSpans(
     }
 
     permissions.delete(key);
-    finished.add(key);
+    options.history.add(permission.reference.tool.interaction.run, "permission", key);
 
     if (input.reply !== undefined) {
       permission.span.setAttributes({
@@ -44,7 +43,11 @@ export function createPermissionSpans(
       const key = JSON.stringify([operationKey(input.tool), input.requestID]);
       const parent = options.parentContext(input.tool);
 
-      if (!parent || permissions.has(key) || finished.has(key)) {
+      if (
+        !parent ||
+        permissions.has(key) ||
+        options.history.has(input.tool.interaction.run, "permission", key)
+      ) {
         return;
       }
 

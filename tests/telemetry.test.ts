@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, test } from "bun:test";
-import { createTraceState, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { createTraceState, ROOT_CONTEXT, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { ExportResultCode } from "@opentelemetry/core";
 import {
   BasicTracerProvider,
@@ -11,6 +11,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import type { InteractionStart, LlmStart, Observer, RunStart } from "../src/contract/observer.js";
 import { createObserver, type ObserverOptions } from "../src/telemetry/observer.js";
+import { createSpanHistory } from "../src/telemetry/spans/common.js";
 import type { ModelInput, ModelMessage } from "../src/contract/messages.js";
 
 const observers: Observer[] = [];
@@ -92,6 +93,147 @@ function llm(id = "a1", parent = interaction()): LlmStart {
     compactionID: undefined,
   };
 }
+
+test("shared span history isolates types and releases all child records when a run closes", () => {
+  const history = createSpanHistory();
+  const runs = [start(), start("u2"), start("u1", "s2")];
+  const types = ["interaction", "llm", "tool", "compaction", "permission"] as const;
+  runs.forEach((run) => {
+    history.add(run, "interaction", "same-child-id", ROOT_CONTEXT);
+    expect(history.has(run, "llm", "same-child-id")).toBe(false);
+    types.slice(1).forEach((type) => history.add(run, type, "same-child-id"));
+    expect(history.context(run, "interaction", "same-child-id")).toBe(ROOT_CONTEXT);
+    expect(history.context(run, "llm", "same-child-id")).toBeUndefined();
+  });
+
+  history.closeRun({ ...start() });
+  history.closeRun({ ...start() });
+  history.add(start(), "interaction", "late", ROOT_CONTEXT);
+
+  types.forEach((type) => {
+    expect(runs.map((run) => history.has(run, type, "same-child-id"))).toEqual([false, true, true]);
+  });
+  expect(runs.map((run) => history.context(run, "interaction", "same-child-id"))).toEqual([
+    undefined,
+    ROOT_CONTEXT,
+    ROOT_CONTEXT,
+  ]);
+  expect(runs.map((run) => history.isRunClosed(run))).toEqual([true, false, false]);
+  expect(history.has(start(), "interaction", "late")).toBe(false);
+  expect(history.context(start(), "interaction", "late")).toBeUndefined();
+
+  history.closeRun(start("u2"));
+  history.closeRun(start("u1", "s2"));
+
+  types.forEach((type) => {
+    expect(runs.some((run) => history.has(run, type, "same-child-id"))).toBe(false);
+  });
+  expect(runs.every((run) => history.isRunClosed(run))).toBe(true);
+});
+
+test("shared history keeps matching interaction and LLM IDs independent after steer", async () => {
+  const h = setup();
+  const parent = interaction("same-id");
+  const call = llm("same-id", parent);
+  h.observer.startRun(start());
+  h.observer.startInteraction(parent);
+  h.observer.finishInteraction({ ...parent, endedAt: 1100, status: "superseded" });
+
+  h.observer.startLlm(call);
+  h.observer.finishLlm({ ...call, endedAt: 1500, output: "answer" });
+  h.observer.startInteraction(parent);
+  h.observer.startLlm(call);
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
+  await h.observer.flush();
+
+  expect(h.spans.map((span) => span.name)).toEqual([
+    "opencode.interaction",
+    "opencode.llm",
+    "opencode.run",
+  ]);
+  expect(h.spans[1]?.parentSpanContext?.spanId).toBe(h.spans[0]?.spanContext().spanId);
+  expect(h.spans.every((span) => span.status.code === SpanStatusCode.UNSET)).toBe(true);
+});
+
+test("run cleanup preserves child deduplication in live runs and rejects closed-run replays", async () => {
+  const h = setup();
+  const first = interaction();
+  const other = interaction("u1", start("u1", "s2"));
+
+  function recordChildren(parent: InteractionStart) {
+    const tool = {
+      interaction: parent,
+      messageID: "a1",
+      callID: "tool1",
+      name: "read",
+      startedAt: 1200,
+    };
+    const permission = {
+      tool,
+      requestID: "permission1",
+      startedAt: 1300,
+      toolName: "read",
+      name: "read",
+      patterns: ["src/*"],
+    };
+    const compaction = {
+      interaction: parent,
+      id: "compaction1",
+      startedAt: 1500,
+      auto: true,
+      overflow: false,
+    };
+    const summary = {
+      ...llm("summary1", parent),
+      startedAt: 1600,
+      compactionID: compaction.id,
+    };
+
+    h.observer.startInteraction(parent);
+    h.observer.startLlm(llm("a1", parent));
+    h.observer.finishLlm({ ...llm("a1", parent), endedAt: 1200, output: undefined });
+    h.observer.startTool(tool);
+    h.observer.startPermission(permission);
+    h.observer.finishPermission({ ...permission, endedAt: 1400, reply: "once" });
+    h.observer.startPermission(permission);
+    h.observer.finishTool({ ...tool, endedAt: 1500 });
+    h.observer.startCompaction(compaction);
+    h.observer.startLlm(summary);
+    h.observer.finishLlm({ ...summary, endedAt: 1700, output: undefined });
+    h.observer.finishCompaction({ ...compaction, endedAt: 1800 });
+    h.observer.finishInteraction({ ...parent, endedAt: 1900, status: "superseded" });
+  }
+
+  h.observer.startRun(start());
+  h.observer.startRun(start("u1", "s2"));
+  recordChildren(first);
+  recordChildren(other);
+  h.observer.finishRun({ ...first.run, endedAt: 2000, output: undefined });
+  await h.observer.flush();
+
+  expect(h.spans).toHaveLength(13);
+  const exported = h.spans.map((span) => span.spanContext().spanId);
+
+  h.observer.startRun(start());
+  recordChildren(first);
+  recordChildren(other);
+  recordChildren(interaction("late", start()));
+  h.observer.finishRun({ ...first.run, endedAt: 9000, output: "late" });
+  await h.observer.flush();
+
+  expect(h.spans.map((span) => span.spanContext().spanId)).toEqual(exported);
+  expect(h.observer.llmTraceHeaders(llm("a1", first))).toBeUndefined();
+
+  h.observer.startRun(start("u2"));
+  recordChildren(interaction("u1", start("u2")));
+  h.observer.finishRun({ ...start("u2"), endedAt: 2000, output: undefined });
+  h.observer.finishRun({ ...other.run, endedAt: 2000, output: undefined });
+  await h.observer.flush();
+
+  expect(h.spans).toHaveLength(21);
+  expect(h.spans.every((span) => span.status.code === SpanStatusCode.UNSET)).toBe(true);
+  expect(new Set(h.spans.map((span) => span.spanContext().traceId)).size).toBe(3);
+});
 
 test.each([
   { state: undefined, decision: SamplingDecision.RECORD_AND_SAMPLED, flags: "01" },

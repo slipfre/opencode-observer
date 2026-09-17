@@ -7,7 +7,7 @@ import { createLlmSpans } from "./spans/llm.js";
 import { createToolSpans } from "./spans/tool.js";
 import { createCompactionSpans } from "./spans/compaction.js";
 import { createPermissionSpans } from "./spans/permission.js";
-import { operationKey, sameRun } from "./spans/common.js";
+import { createSpanHistory, operationKey, sameRun } from "./spans/common.js";
 
 export type ObserverOptions = {
   provider: BasicTracerProvider;
@@ -30,7 +30,9 @@ const reservedAttributes = new Set([
 ]);
 
 export function createObserver(options: ObserverOptions): Observer {
+  const history = createSpanHistory();
   const spanOptions = {
+    history,
     tracer: options.provider.getTracer(options.scope.name, options.scope.version),
     rootContext: ROOT_CONTEXT,
     tracePrefix: options.tracePrefix ?? "opencode.",
@@ -115,12 +117,13 @@ export function createObserver(options: ObserverOptions): Observer {
     compactions.closeRun(input, input.endedAt, error("compaction"));
     tools.closeRun(input, input.endedAt, error("tool"));
     interactions.closeRun(input, input.endedAt, error("interaction"));
+    history.closeRun(input);
     runs.finish(input);
   }
 
   return {
     startRun(input) {
-      if (!runs.start(input)) {
+      if (history.isRunClosed(input) || !runs.start(input)) {
         return;
       }
 

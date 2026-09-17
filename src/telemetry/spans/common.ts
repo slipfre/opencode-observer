@@ -13,7 +13,10 @@ export type SpanOptions = {
   tracePrefix: string;
   captureContent: boolean;
   spanAttributes: Record<string, string>;
+  history: Pick<ReturnType<typeof createSpanHistory>, "add" | "has" | "context">;
 };
+
+type SpanType = "interaction" | "llm" | "tool" | "compaction" | "permission";
 
 export function encodeTextMessage(role: "user" | "assistant", text: string) {
   return JSON.stringify([{ role, parts: [{ type: "text", content: text }] }]);
@@ -31,6 +34,39 @@ export function operationKey(reference: ToolReference | CompactionReference) {
 
 export function sameRun(first: RunReference, second: RunReference) {
   return first.sessionID === second.sessionID && first.id === second.id;
+}
+
+export function createSpanHistory() {
+  // A null entry retains only the closed run identity, releasing every child record.
+  const runs = new Map<string, Map<string, Context | undefined> | null>();
+
+  return {
+    add(run: RunReference, type: SpanType, key: string, context?: Context) {
+      const runKey = JSON.stringify([run.sessionID, run.id]);
+
+      if (runs.get(runKey) === null) {
+        return;
+      }
+
+      const finished = runs.get(runKey) ?? new Map<string, Context | undefined>();
+      finished.set(JSON.stringify([type, key]), context);
+      runs.set(runKey, finished);
+    },
+    has(run: RunReference, type: SpanType, key: string) {
+      return (
+        runs.get(JSON.stringify([run.sessionID, run.id]))?.has(JSON.stringify([type, key])) ?? false
+      );
+    },
+    context(run: RunReference, type: SpanType, key: string) {
+      return runs.get(JSON.stringify([run.sessionID, run.id]))?.get(JSON.stringify([type, key]));
+    },
+    isRunClosed(run: RunReference) {
+      return runs.get(JSON.stringify([run.sessionID, run.id])) === null;
+    },
+    closeRun(run: RunReference) {
+      runs.set(JSON.stringify([run.sessionID, run.id]), null);
+    },
+  };
 }
 
 export function identityAttributes(run: RunReference, identity: AgentIdentity) {

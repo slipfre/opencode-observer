@@ -14,8 +14,6 @@ export function createInteractionSpans(
   },
 ) {
   const interactions = new Map<string, { reference: InteractionReference; span: Span }>();
-  const finished = new Set<string>();
-  const contexts = new Map<string, { run: RunReference; context: Context }>();
 
   function finish(input: InteractionFinish) {
     const key = JSON.stringify([input.run.sessionID, input.run.id, input.id]);
@@ -26,12 +24,13 @@ export function createInteractionSpans(
     }
 
     interactions.delete(key);
-    finished.add(key);
     // Steer may end a parent before its model call is observed or completed.
-    contexts.set(key, {
-      run: interaction.reference.run,
-      context: trace.setSpanContext(options.rootContext, interaction.span.spanContext()),
-    });
+    options.history.add(
+      interaction.reference.run,
+      "interaction",
+      key,
+      trace.setSpanContext(options.rootContext, interaction.span.spanContext()),
+    );
 
     if (input.status === "failed") {
       interaction.span.setAttribute("error.type", input.error.type);
@@ -58,7 +57,7 @@ export function createInteractionSpans(
       const key = JSON.stringify([input.run.sessionID, input.run.id, input.id]);
       const parent = options.parentContext(input.run);
 
-      if (!parent || interactions.has(key) || finished.has(key)) {
+      if (!parent || interactions.has(key) || options.history.has(input.run, "interaction", key)) {
         return;
       }
 
@@ -93,7 +92,7 @@ export function createInteractionSpans(
       const interaction = interactions.get(key);
       return interaction
         ? trace.setSpan(options.rootContext, interaction.span)
-        : contexts.get(key)?.context;
+        : options.history.context(reference.run, "interaction", key);
     },
     closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
       interactions.forEach((interaction) => {
@@ -107,11 +106,6 @@ export function createInteractionSpans(
             status: "failed",
             error: error ?? { type: "_OTHER", message: "run ended before interaction completed" },
           });
-        }
-      });
-      contexts.forEach((value, key) => {
-        if (value.run.sessionID === run.sessionID && value.run.id === run.id) {
-          contexts.delete(key);
         }
       });
     },

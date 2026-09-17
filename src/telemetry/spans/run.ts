@@ -20,8 +20,6 @@ export function createRunSpans(
   },
 ) {
   const runs = new Map<string, Run>();
-  // Retain only identities after completion, so repeated starts cannot reopen a span.
-  const finished = new Set<string>();
 
   function finish(input: RunFinish) {
     const key = JSON.stringify([input.sessionID, input.id]);
@@ -32,7 +30,6 @@ export function createRunSpans(
     }
 
     runs.delete(key);
-    finished.add(key);
 
     if (options.captureContent && run.inputs.size > 0) {
       const texts = Array.from(run.inputs.values());
@@ -65,7 +62,7 @@ export function createRunSpans(
       const key = JSON.stringify([input.sessionID, input.id]);
       const parent = input.parent ? options.parentContext?.(input.parent) : options.rootContext;
 
-      if (!parent || runs.has(key) || finished.has(key)) {
+      if (!parent || runs.has(key)) {
         return;
       }
 
