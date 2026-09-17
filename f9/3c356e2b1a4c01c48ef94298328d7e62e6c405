@@ -1,0 +1,31 @@
+src/adapter/trackers/interaction.ts
+  s_65f44ebbfd07b6::t_e39e688843bd7f 34,59,128-129,146,158,168,172,187
+  s_65f44ebbfd07b6::t_82e8f8572a4fd1 15,17-18,24,41-42,56,71,85,92,94,103,192-193,200,214,228
+  s_65f44ebbfd07b6::t_233347ec111e17 12,151,155,189-191,197,203,208-211,223-224,229
+  s_65f44ebbfd07b6::t_11f54c7d198879 14,16,19-20,31-33,38-39,43,49-50,53-55,74,80,91,93,96-98,110,117-124,132,138-142,161,175,181,183
+  s_65f44ebbfd07b6::t_d7572fad1d4d6e 13
+src/adapter/trackers/llm.ts
+  s_65f44ebbfd07b6::t_82e8f8572a4fd1 89
+src/adapter/trackers/compaction.ts
+  s_65f44ebbfd07b6::t_82e8f8572a4fd1 186
+tests/tracker-lifecycle.test.ts
+  s_65f44ebbfd07b6::t_e8d4045dcdfac9 2,8,33-58,60-66,68-90,92-100
+  s_65f44ebbfd07b6::t_82e8f8572a4fd1 59,67,91,114,218,222,265,285
+  s_65f44ebbfd07b6::t_a2936790d127d4 101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "f93c356e2b1a4c01c48ef94298328d7e62e6c405",
+  "prompts": {},
+  "sessions": {
+    "s_65f44ebbfd07b6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0af9e-2c67-7da1-aa1e-8e799dcd98b5",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
