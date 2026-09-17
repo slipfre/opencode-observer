@@ -25,7 +25,6 @@ export function createInteractionTracker(options: {
       id: string;
       created: number;
       input: string | undefined;
-      userID?: string;
       agentName: string;
     }[],
     owners: new Map<string, string>(),
@@ -59,7 +58,6 @@ export function createInteractionTracker(options: {
       ? {
           reference: { run, id: owner.id },
           input: owner.input,
-          userID: owner.userID,
           agentName: owner.agentName,
         }
       : undefined;
@@ -100,7 +98,6 @@ export function createInteractionTracker(options: {
       info: UserMessage,
       input: string | undefined,
       identity: AgentIdentity,
-      userID?: string,
     ) {
       const state = states.get(run);
 
@@ -123,7 +120,6 @@ export function createInteractionTracker(options: {
         id: info.id,
         created: info.time.created,
         input,
-        userID,
         agentName: info.agent,
       });
       state.owners.set(info.id, info.id);
@@ -133,7 +129,6 @@ export function createInteractionTracker(options: {
         startedAt: info.time.created,
         input,
         agentName: info.agent,
-        userID,
         agentType: identity.agentType,
         parentSessionID: identity.parentSessionID,
       });

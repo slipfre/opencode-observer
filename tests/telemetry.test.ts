@@ -765,8 +765,8 @@ test("interaction starts need a live exact parent and repeated starts or ends ca
   expect(h.spans).toHaveLength(0);
 
   h.observer.startRun(start());
-  h.observer.startInteraction({ ...interaction(), userID: "alice" });
-  h.observer.startInteraction({ ...interaction(), userID: "bob", input: "replacement" });
+  h.observer.startInteraction({ ...interaction(), agentName: "build" });
+  h.observer.startInteraction({ ...interaction(), agentName: "review", input: "replacement" });
   h.observer.finishInteraction({
     ...interaction(),
     endedAt: 1500,
@@ -785,7 +785,7 @@ test("interaction starts need a live exact parent and repeated starts or ends ca
   await h.observer.flush();
 
   expect(h.spans).toHaveLength(2);
-  expect(h.spans[0]?.attributes["user.id"]).toBe("alice");
+  expect(h.spans[0]?.attributes["gen_ai.agent.name"]).toBe("build");
   expect(h.spans[0]?.attributes["error.type"]).toBeUndefined();
   expect(h.spans[0]?.endTime).toEqual([1, 500_000_000]);
 });

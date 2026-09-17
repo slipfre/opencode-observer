@@ -3,7 +3,6 @@ import type { Observer, RunFinish, RunReference, ToolReference } from "../../con
 export type RunOptions = {
   observer: Pick<Observer, "startRun" | "updateRun" | "finishRun">;
   captureContent?: boolean;
-  userID?: () => string | undefined;
 };
 
 export function createRunTracker(options: RunOptions) {
@@ -25,14 +24,12 @@ export function createRunTracker(options: RunOptions) {
         return;
       }
 
-      const userID = options.userID?.();
       const reference = runs.get(input.sessionID) ?? { sessionID: input.sessionID, id: input.id };
 
       if (!runs.has(input.sessionID)) {
         options.observer.startRun({
           ...reference,
           startedAt: input.createdAt,
-          userID,
           parent: input.parent,
           parentSessionID: input.parentSessionID,
         });
@@ -42,7 +39,7 @@ export function createRunTracker(options: RunOptions) {
       const text = options.captureContent ? input.text : undefined;
       seen.add(key);
       options.observer.updateRun({ ...reference, input: { id: input.id, text } });
-      return { reference, text, userID };
+      return { reference, text };
     },
     finish(input: RunFinish) {
       if (runs.get(input.sessionID)?.id !== input.id) {

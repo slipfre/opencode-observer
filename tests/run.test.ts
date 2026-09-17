@@ -555,12 +555,12 @@ test("custom attributes allow user.id but cannot override other derived or error
   expect(span?.attributes["openinference.span.kind"]).toBeUndefined();
 });
 
-test("resolved user identity is only used on newly created spans", async () => {
-  const identity: { value?: string } = {};
-  const h = setup({ userID: () => identity.value });
+test("consecutive runs retain the user identity configured at initialization", async () => {
+  const spanAttributes = { "user.id": "alice" };
+  const h = setup({ spanAttributes });
 
   await h.coordinator.message(user(), [text("u1", "first")]);
-  identity.value = "alice";
+  spanAttributes["user.id"] = "bob";
   await idle(h.coordinator);
 
   await h.coordinator.message(user("u2", 1500), [text("u2", "next")]);
@@ -568,7 +568,7 @@ test("resolved user identity is only used on newly created spans", async () => {
 
   const spans = await h.spans();
 
-  expect(spans[0]?.attributes["user.id"]).toBeUndefined();
+  expect(spans[0]?.attributes["user.id"]).toBe("alice");
   expect(spans[1]?.attributes["user.id"]).toBe("alice");
 });
 

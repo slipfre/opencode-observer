@@ -213,7 +213,6 @@ export function createLlmSpans(
               "gen_ai.request.max_tokens": input.parameters?.maxTokens,
               "opencode.llm.retry_count": 0,
               "opencode.llm.retry_history": "[]",
-              ...(input.userID ? { "user.id": input.userID } : {}),
               ...(options.captureContent && input.input !== undefined
                 ? { "gen_ai.input.messages": encodeTextMessage("user", input.input) }
                 : {}),

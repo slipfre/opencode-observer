@@ -86,7 +86,6 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
           (provider === "gcp.gemini" || provider === "gcp.vertex_ai" ? "generate_content" : "chat"),
         stream: true,
         agentName: call.info.agentName,
-        userID: parent.userID,
         input: options.captureContent ? parent.input : undefined,
         parameters: request?.parameters,
         agentType: parent.agentType,

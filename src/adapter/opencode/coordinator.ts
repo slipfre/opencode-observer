@@ -36,7 +36,6 @@ export type CoordinatorOptions = {
   observer: Observer;
   captureContent?: boolean;
   userIdentity?: { enabled: boolean; id?: string };
-  userID?: () => string | undefined;
   now?: () => number;
   log?: (error: unknown) => unknown;
 };
@@ -55,7 +54,6 @@ export function createCoordinator(options: CoordinatorOptions) {
   const runs = createRunTracker({
     observer: options.observer,
     captureContent: options.captureContent,
-    userID: options.userID,
   });
   const sessions = new Map<string, SessionState>();
   const registry = createSessionRegistry();
@@ -422,13 +420,7 @@ export function createCoordinator(options: CoordinatorOptions) {
     }
 
     const session = sessions.get(info.sessionID) ?? startSession(input.reference);
-    interactions.start(
-      session.reference,
-      info,
-      input.text,
-      registry.identity(info.sessionID),
-      input.userID,
-    );
+    interactions.start(session.reference, info, input.text, registry.identity(info.sessionID));
     compactions.message(session.reference, info, now());
     resolveCompactions(session.reference);
     resolveLlms(session.reference);

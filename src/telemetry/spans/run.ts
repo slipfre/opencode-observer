@@ -81,7 +81,6 @@ export function createRunSpans(
               "gen_ai.operation.name": "invoke_workflow",
               "opencode.run.id": input.id,
               "opencode.session.parent_id": input.parentSessionID,
-              ...(input.userID ? { "user.id": input.userID } : {}),
             },
           },
           parent,

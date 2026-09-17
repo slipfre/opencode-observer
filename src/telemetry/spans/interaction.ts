@@ -77,7 +77,6 @@ export function createInteractionSpans(
               "gen_ai.agent.name": input.agentName,
               "opencode.agent.type": input.agentType,
               "opencode.session.parent_id": input.parentSessionID,
-              ...(input.userID ? { "user.id": input.userID } : {}),
               ...(options.captureContent && input.input !== undefined
                 ? { "gen_ai.input.messages": encodeTextMessage("user", input.input) }
                 : {}),

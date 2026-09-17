@@ -74,7 +74,6 @@ export function createToolTracker(options: {
         agentName: owner.agentName,
         agentType: owner.agentType,
         parentSessionID: owner.parentSessionID,
-        userID: owner.userID,
       };
       options.observer.startTool(call.start);
     }

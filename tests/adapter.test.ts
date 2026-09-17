@@ -480,7 +480,7 @@ test.each([
     const expected = { ...headers, "X-Test": "kept", tracestate: input.expected };
     expect(output.headers).toEqual(expected);
     expect(headers.tracestate).toBe("vendor=value");
-    expect(h.llms[0]?.userID).toBeUndefined();
+    expect(h.llms[0]).not.toHaveProperty("userID");
     expect(h.llms[0]?.input).toBeUndefined();
     expect(failures).toEqual([]);
 
@@ -532,7 +532,6 @@ test("source messages become run operations with explicit unsupported associatio
       sessionID: "s1",
       id: "u1",
       startedAt: 1000,
-      userID: undefined,
       parent: undefined,
       parentSessionID: undefined,
     },
@@ -881,7 +880,6 @@ test("interaction uses the owner agent and assistant completion time while run u
       startedAt: 1000,
       input: "question",
       agentName: "review",
-      userID: undefined,
       agentType: undefined,
       parentSessionID: undefined,
     },
@@ -1066,22 +1064,6 @@ test("terminal assistant error fails its interaction without inventing a run-lev
   });
   expect(h.finishes[0]?.error).toBeUndefined();
   expect(h.finishes[0]?.output).toBeUndefined();
-});
-
-test("new interactions resolve user identity independently without altering the existing run", async () => {
-  const h = recording();
-  const identity: { value?: string } = {};
-  const coordinator = createCoordinatorHarness({
-    observer: h.observer,
-    userID: () => identity.value,
-  });
-
-  await coordinator.message(user(), [text()]);
-  identity.value = "alice";
-  await coordinator.message(user("u2", 1500), [text("u2", "steer")]);
-
-  expect(h.starts[0]?.userID).toBeUndefined();
-  expect(h.interactions.map((item) => item.userID)).toEqual([undefined, "alice"]);
 });
 
 test("LLM steps establish observed boundaries, request metadata and normalized usage", async () => {

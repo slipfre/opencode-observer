@@ -17,7 +17,7 @@ afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
-function setup(captureContent = true) {
+function setup(captureContent = true, spanAttributes: Record<string, string> = {}) {
   const spans: ReadableSpan[] = [];
   const provider = new BasicTracerProvider({
     spanProcessors: [
@@ -36,6 +36,7 @@ function setup(captureContent = true) {
     captureContent,
     now: () => 9000,
     spanAttributes: {
+      ...spanAttributes,
       "opencode.permission.granted": "fake",
       "opencode.compaction.auto": "fake",
       "gen_ai.tool.call.result": "fake",
@@ -189,6 +190,39 @@ async function marker(h: ReturnType<typeof setup>, id = "c1", time = 1400, overf
     time + 10,
   );
 }
+
+test.each([true, false])(
+  "all tracker spans use the configured instance identity with capture=%s",
+  async (captureContent) => {
+    const h = setup(captureContent, { "user.id": "configured-user" });
+    const other = setup(captureContent, { "user.id": "other-user" });
+
+    await h.user();
+    await other.user();
+    await h.message(assistant());
+    await h.part(step("a1", "step-start"));
+    await h.part(tool());
+    await h.ask();
+    await h.reply("once");
+    await h.part(tool(completed()));
+    await marker(h);
+    await h.coordinator.hooks.dispose();
+    await other.coordinator.hooks.dispose();
+
+    expect(h.spans.map((span) => [span.name, span.attributes["user.id"]]).sort()).toEqual([
+      ["opencode.compaction", "configured-user"],
+      ["opencode.interaction", "configured-user"],
+      ["opencode.llm", "configured-user"],
+      ["opencode.permission.check", "configured-user"],
+      ["opencode.run", "configured-user"],
+      ["opencode.tool.read", "configured-user"],
+    ]);
+    expect(other.spans.map((span) => span.attributes["user.id"])).toEqual([
+      "other-user",
+      "other-user",
+    ]);
+  },
+);
 
 test("coordinator trackers isolate identical object IDs in concurrent sessions during cleanup", async () => {
   const h = setup();

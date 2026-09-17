@@ -4,7 +4,6 @@ export type AgentIdentity = {
   agentName?: string;
   agentType?: "primary" | "subagent";
   parentSessionID?: string;
-  userID?: string;
 };
 
 export type RunReference = { sessionID: string; id: string };
@@ -14,7 +13,6 @@ export type ObservationError = { type: string; message?: string };
 export type RunStart = RunReference & {
   /** Source creation time, in Unix epoch milliseconds. */
   startedAt: number;
-  userID?: string;
   /** Exact task tool association, when known before the run starts. */
   parent: ToolReference | undefined;
   parentSessionID: string | undefined;
@@ -40,7 +38,6 @@ export type InteractionStart = InteractionReference & {
   startedAt: number;
   input: string | undefined;
   agentName: string;
-  userID?: string;
   agentType: AgentIdentity["agentType"];
   parentSessionID: string | undefined;
 };
@@ -92,7 +89,6 @@ export type LlmStart = LlmReference & {
   operation: "chat" | "generate_content" | "text_completion";
   stream: boolean;
   agentName?: string;
-  userID?: string;
   /** Owner text fallback; this is not the full model request. */
   input: string | undefined;
   parameters?: LlmParameters;

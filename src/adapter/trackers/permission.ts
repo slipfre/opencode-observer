@@ -73,7 +73,6 @@ export function createPermissionTracker(options: { observer: Observer }) {
         agentName: tool.agentName,
         agentType: tool.agentType,
         parentSessionID: tool.parentSessionID,
-        userID: tool.userID,
       });
 
       if (state.pending.size > 1024) {

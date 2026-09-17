@@ -59,7 +59,6 @@ export function createCompactionTracker(options: {
       agentName: owner.agentName,
       agentType: owner.agentType,
       parentSessionID: owner.parentSessionID,
-      userID: owner.userID,
     });
   }
 

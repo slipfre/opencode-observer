@@ -83,7 +83,7 @@ session 进入 idle、发生终止错误或插件实例关闭时，必须清理�
 
 ## 4. 跨对象协调
 
-协调模块负责确定观测对象之间的归属关系，在相关对象之间传递结果，并安排清理顺序。例如，权限拒绝结果需要传递给对应工具，task 工具结束时需要清理关联的子 run。coordinator 主动调用各 tracker 的查询方法，把解析后的 interaction 归属、活动工具或身份信息作为数据传入目标 tracker，不注入其他 tracker 的解析方法。生命周期通知由协调模块连接，模块依赖遵循 [总体架构 §2.3](architecture.md#23-各层内部组织)。
+协调模块负责确定观测对象之间的归属关系，在相关对象之间传递结果，并安排清理顺序。例如，权限拒绝结果需要传递给对应工具，task 工具结束时需要清理关联的子 run。coordinator 主动调用各 tracker 的查询方法，把解析后的 interaction 归属、活动工具或 agent 身份信息作为数据传入目标 tracker，不注入其他 tracker 的解析方法。tracker 不感知 user ID，span 的用户身份由初始化时的 `spanAttributes` 统一提供。生命周期通知由协调模块连接，模块依赖遵循 [总体架构 §2.3](architecture.md#23-各层内部组织)。
 
 LLM、tool 和 compaction 的开始证据可以先到达。对应 tracker 暂存自身数据，并通过 `unresolved(run)` 返回所需的消息或压缩标识及时间；coordinator 在消息和压缩证据更新后重新解析归属，通过 `associate` 提交结果。解析不成功时继续等待，保留原始开始、结束时间；对象已开始或结束后，迟到的解析结果不能改变已提交的父子关系。模型请求准备和 SDK 绑定前也由 coordinator 补齐可解析的归属。权限请求只接收 coordinator 已匹配的活动工具，没有匹配结果时沿用省略该检查的规则。
 

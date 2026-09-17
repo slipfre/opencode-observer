@@ -55,23 +55,19 @@ function setup(spanAttributes: Record<string, string>) {
   return { observer, spans };
 }
 
-test.each(
-  ["configured-user", "unknown"].flatMap((configuredUserID) =>
-    [undefined, "", "explicit-user"].map((userID) => ({ configuredUserID, userID })),
-  ),
-)(
-  "all six span types preserve $configuredUserID with contract identity $userID",
-  async ({ configuredUserID, userID }) => {
+test.each([undefined, "configured-user", "unknown"])(
+  "all six span types use only the configured user identity %j",
+  async (configuredUserID) => {
     const h = setup({
-      "user.id": configuredUserID,
+      ...(configuredUserID ? { "user.id": configuredUserID } : {}),
       "custom.attribute": "retained",
       "session.id": "forged",
       "gen_ai.input.messages": "forged",
     });
     const tool = { interaction, messageID: "a1", callID: "tool1" };
 
-    h.observer.startRun({ ...run, userID });
-    h.observer.startInteraction({ ...interaction, userID });
+    h.observer.startRun(run);
+    h.observer.startInteraction(interaction);
     h.observer.startLlm({
       interaction,
       id: "a1",
@@ -85,9 +81,8 @@ test.each(
       agentType: undefined,
       parentSessionID: undefined,
       compactionID: undefined,
-      userID,
     });
-    h.observer.startTool({ ...tool, name: "read", startedAt: 1200, userID });
+    h.observer.startTool({ ...tool, name: "read", startedAt: 1200 });
     h.observer.startPermission({
       tool,
       requestID: "p1",
@@ -95,7 +90,6 @@ test.each(
       name: "read",
       patterns: ["*"],
       startedAt: 1300,
-      userID,
     });
     h.observer.startCompaction({
       interaction,
@@ -103,7 +97,6 @@ test.each(
       startedAt: 1400,
       auto: true,
       overflow: false,
-      userID,
     });
     await h.observer.shutdown();
 
@@ -116,7 +109,7 @@ test.each(
       "opencode.tool.read",
     ]);
     h.spans.forEach((span) => {
-      expect(span.attributes["user.id"]).toBe(userID || configuredUserID);
+      expect(span.attributes["user.id"]).toBe(configuredUserID);
       expect(span.attributes["session.id"]).toBe("s1");
       expect(span.attributes["custom.attribute"]).toBe("retained");
       expect(span.attributes["gen_ai.input.messages"]).toBeUndefined();
