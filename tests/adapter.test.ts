@@ -865,36 +865,60 @@ test.each(["throw", "reject"])(
   },
 );
 
-test("interaction uses the owner agent and assistant completion time while run uses idle observation", async () => {
-  const h = recording();
-  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
+test.each([true, false])(
+  "interaction and run end at idle with captureContent=%s",
+  async (captureContent) => {
+    const h = recording();
+    const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent });
 
-  await coordinator.message({ ...user(), agent: "review" }, [text()]);
-  await reply(coordinator, "final");
-  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2500);
+    await coordinator.message({ ...user(), agent: "review" }, [text()]);
+    await reply(coordinator, "final");
+    await coordinator.event(
+      {
+        type: "session.status",
+        properties: { sessionID: "s1", status: { type: "busy" } },
+      },
+      2000,
+    );
 
-  expect(h.interactions).toEqual([
-    {
-      run: { sessionID: "s1", id: "u1" },
-      id: "u1",
-      startedAt: 1000,
-      input: "question",
-      agentName: "review",
-      agentType: undefined,
-      parentSessionID: undefined,
-    },
-  ]);
-  expect(h.completed).toEqual([
-    {
-      run: { sessionID: "s1", id: "u1" },
-      id: "u1",
-      endedAt: 1200,
-      status: "completed",
-      output: "final",
-    },
-  ]);
-  expect(h.finishes[0]).toMatchObject({ endedAt: 2500, output: "final" });
-});
+    expect(h.completed).toHaveLength(0);
+
+    await coordinator.event(
+      {
+        type: "session.status",
+        properties: { sessionID: "s1", status: { type: "idle" } },
+      },
+      2500,
+    );
+    await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 3000);
+
+    expect(h.interactions).toEqual([
+      {
+        run: { sessionID: "s1", id: "u1" },
+        id: "u1",
+        startedAt: 1000,
+        input: captureContent ? "question" : undefined,
+        agentName: "review",
+        agentType: undefined,
+        parentSessionID: undefined,
+      },
+    ]);
+    expect(h.completed).toEqual([
+      {
+        run: { sessionID: "s1", id: "u1" },
+        id: "u1",
+        endedAt: 2500,
+        status: "completed",
+        output: captureContent ? "final" : undefined,
+      },
+    ]);
+    expect(h.finishes).toHaveLength(1);
+    expect(h.finishes[0]).toMatchObject({
+      endedAt: 2500,
+      output: captureContent ? "final" : undefined,
+    });
+  },
+);
 
 test("steer supersedes the old interaction exactly at the next input and ignores late old output", async () => {
   const h = recording();
@@ -926,7 +950,7 @@ test("steer supersedes the old interaction exactly at the next input and ignores
     {
       run: { sessionID: "s1", id: "u1" },
       id: "u2",
-      endedAt: 1700,
+      endedAt: 2500,
       status: "completed",
       output: "final",
     },
@@ -1028,7 +1052,7 @@ test("compaction and continuation events retain the interaction through successf
 
   expect(h.interactions).toHaveLength(1);
   expect(h.interactions[0]?.input).toBe("real");
-  expect(h.completed[0]).toMatchObject({ status: "completed", endedAt: 1600, output: "recovered" });
+  expect(h.completed[0]).toMatchObject({ status: "completed", endedAt: 2000, output: "recovered" });
 });
 
 test("latest unfinished assistant causes observed-time cleanup instead of a fabricated completion", async () => {
@@ -1134,7 +1158,7 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
   expect(h.llms).toHaveLength(1);
   expect(h.llmFinishes).toHaveLength(1);
   expect(h.llmFinishes[0]?.endedAt).toBe(1300);
-  expect(h.completed[0]?.endedAt).toBe(3000);
+  expect(h.completed[0]?.endedAt).toBe(4500);
 });
 
 test("LLM spans omit fabricated assistants, unmatched parents, summaries and finish-only observations", async () => {

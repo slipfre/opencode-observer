@@ -43,7 +43,7 @@ export type InteractionStart = InteractionReference & {
 };
 
 export type InteractionFinish = InteractionReference & {
-  /** Assistant completion, steer creation, or terminal observation time in epoch milliseconds. */
+  /** Idle or terminal observation time, or steer creation time, in epoch milliseconds. */
   endedAt: number;
 } & (
     | { status: "completed"; output: string | undefined }

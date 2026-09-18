@@ -29,6 +29,7 @@ describe("OpenCode run E2E", () => {
         expect(new Set(spans.map((span) => span.traceId)).size).toBe(1);
         expect(run.parentSpanId ?? "").toBe("");
         expect(interaction.parentSpanId).toBe(run.spanId);
+        expect(interaction.endTimeUnixNano).toBe(run.endTimeUnixNano);
         expect(llm.parentSpanId).toBe(interaction.spanId);
         expect([run.kind, interaction.kind, llm.kind]).toEqual([1, 1, 3]);
         expect(run.attributes["gen_ai.operation.name"]).toBe("invoke_workflow");

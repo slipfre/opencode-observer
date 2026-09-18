@@ -195,18 +195,9 @@ export function createInteractionTracker(options: {
         )
         .sort((a, b) => (b.info?.time.created ?? 0) - (a.info?.time.created ?? 0))[0];
 
-      if (error || latestMessage?.info?.error) {
-        options.observer.finishInteraction({
-          run,
-          id: interaction.userMessageID,
-          endedAt: time,
-          status: "failed",
-          error: error ?? errorDetails(latestMessage?.info?.error),
-        });
-        return;
-      }
-
       if (
+        error ||
+        latestMessage?.info?.error ||
         latestMessage?.info?.time.completed === undefined ||
         latestMessage.info.finish === "tool-calls"
       ) {
@@ -215,7 +206,11 @@ export function createInteractionTracker(options: {
           id: interaction.userMessageID,
           endedAt: time,
           status: "failed",
-          error: { type: "_OTHER", message: "session ended before interaction completed" },
+          error:
+            error ??
+            (latestMessage?.info?.error
+              ? errorDetails(latestMessage.info.error)
+              : { type: "_OTHER", message: "session ended before interaction completed" }),
         });
         return;
       }
@@ -227,7 +222,7 @@ export function createInteractionTracker(options: {
       options.observer.finishInteraction({
         run,
         id: interaction.userMessageID,
-        endedAt: latestMessage.info.time.completed,
+        endedAt: time,
         status: "completed",
         output,
       });

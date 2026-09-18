@@ -175,8 +175,8 @@ run 和 interaction 只聚合真实用户文本及最终 assistant 文本，过�
 
 - 开始时间为 owner 用户消息的 `time.created`。synthetic 自动续接消息和 compaction marker 用户消息不会创建 interaction；v1 的 `synthetic` 位于 text part 上，不能读取不存在的 message 级字段。含真实用户输入的混合消息仍创建 interaction。
 - 收到同一 run 的新 steer 用户消息时，旧 interaction 正常结束，结束时间严格等于新 interaction 的开始时间，status 保持 `UNSET`；正文开启时写入 `gen_ai.output.messages=[]`。
-- 未被 steer 结束的 interaction 在 session idle 时正常结束，结束时间为对应用户消息最后一次 assistant 的 `time.completed`。
-- 若最后一次非摘要 assistant 缺少 `time.completed`，或只有 `tool-calls` 而未取得最终答复，则以 idle 观察时间作 `ERROR` 清理，`error.type=_OTHER`，status message 为 `session ended before interaction completed`；不伪造正常完成时间，也不回退到更早 assistant 的答复。已确认完成但未采集正文时仍可正常结束，省略输出属性。
+- 未被 steer 结束的 interaction 在 session idle 时结束，结束时间使用插件观察到 idle 的时间，与所属 run 一致。
+- 对应用户消息最后一次非摘要 assistant 的 `time.completed` 仅用于判断回复是否完成，不作为 span 结束时间。若缺少该字段，或只有 `tool-calls` 而未取得最终答复，则以 `ERROR` 清理，`error.type=_OTHER`，status message 为 `session ended before interaction completed`；不回退到更早 assistant 的答复。已确认完成但未采集正文时仍可正常结束，省略输出属性。
 - 旧 interaction 结束后不再回填输出或修改结束时间。已归属旧 interaction 的 LLM/tool span 保持原 parent，即使其完成事件晚于 steer 到达，也不改挂到新 interaction。
 - 发生终止错误时以 `ERROR` 结束。可恢复的 context overflow 期间保持打开。
 

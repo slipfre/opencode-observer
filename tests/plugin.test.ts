@@ -724,7 +724,7 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
     kind: 1,
   });
   expect(interaction?.startTimeUnixNano).toBe(String(BigInt(created) * 1_000_000n));
-  expect(interaction?.endTimeUnixNano).toBe(String(BigInt(created + 200) * 1_000_000n));
+  expect(interaction?.endTimeUnixNano).toBe(span?.endTimeUnixNano);
   expect(interaction?.status.code ?? 0).toBe(0);
   expect(
     Object.fromEntries(
