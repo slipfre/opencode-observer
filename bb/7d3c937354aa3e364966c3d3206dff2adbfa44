@@ -1,0 +1,52 @@
+src/adapter/opencode/coordinator.ts
+  s_d6c40cf0ac3226::t_3f8b3b9b3d679e 11,26,368-370,374
+  s_d6c40cf0ac3226::t_67a4e3595a96f1 371-373,402
+README.md
+  s_d6c40cf0ac3226::t_5557420eb512c1 74
+src/adapter/model/ai-sdk.ts
+  s_d6c40cf0ac3226::t_3f8b3b9b3d679e 19,36,75,81
+src/adapter/trackers/llm.ts
+  s_d6c40cf0ac3226::t_3f8b3b9b3d679e 40-41,114-119,121,201,205-208,443,486-494
+  s_d6c40cf0ac3226::t_c8d5b839f9c438 495-496
+e2e/run.e2e.test.ts
+  s_d6c40cf0ac3226::t_d8170f9451a015 53-54,251-258,279-280
+  s_d6c40cf0ac3226::t_67a4e3595a96f1 165-172
+src/telemetry/spans/llm.ts
+  s_d6c40cf0ac3226::t_3f8b3b9b3d679e 35,57-59,141-145
+  s_d6c40cf0ac3226::t_7cd6b5e99313a8 146-147
+src/contract/observer.ts
+  s_d6c40cf0ac3226::t_3f8b3b9b3d679e 129-135
+docs/schemas/trace.md
+  s_d6c40cf0ac3226::t_5557420eb512c1 236-239,376
+  s_d6c40cf0ac3226::t_67a4e3595a96f1 210-229
+  s_d6c40cf0ac3226::t_4e85fe80a82488 230
+tests/telemetry.test.ts
+  s_d6c40cf0ac3226::t_52c436792f429d 104,123,132-143,145-153
+  s_d6c40cf0ac3226::t_948619c64e0481 144
+  s_d6c40cf0ac3226::t_67a4e3595a96f1 97-103,105-122,124-131
+tests/ai-sdk.test.ts
+  s_d6c40cf0ac3226::t_eca70fe29156b0 49,129-133,138,141,143
+  s_d6c40cf0ac3226::t_948619c64e0481 354,358,571,753
+  s_d6c40cf0ac3226::t_67a4e3595a96f1 16,205-208,275-278,559-561
+  s_d6c40cf0ac3226::t_bf5e8c71b69b63 194-204,209-274,279-293
+  s_d6c40cf0ac3226::t_eb342ee9f69abb 193
+docs/adapter.md
+  s_d6c40cf0ac3226::t_5557420eb512c1 29,55
+  s_d6c40cf0ac3226::t_f284900d9ff7e3 56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bb7d3c937354aa3e364966c3d3206dff2adbfa44",
+  "prompts": {},
+  "sessions": {
+    "s_d6c40cf0ac3226": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b3b0-99b3-77d1-b101-44c19dc25ac4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
