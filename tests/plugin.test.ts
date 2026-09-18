@@ -604,7 +604,6 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
   );
 
   // Dispatch subsequent events without awaiting the chat hook, as OpenCode's event bridge can do.
-  const observedBefore = Date.now();
   const llmStart = hook.event?.({
     event: {
       type: "message.part.updated",
@@ -643,7 +642,6 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
       },
     },
   });
-  const observedAfter = Date.now();
   const message = hook.event?.({
     event: {
       type: "message.updated",
@@ -740,12 +738,8 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
   });
   expect(llm).toMatchObject({ traceId: span?.traceId, parentSpanId: interaction?.spanId, kind: 3 });
   expect(llm?.status.code ?? 0).toBe(0);
-  expect(BigInt(llm?.startTimeUnixNano ?? "0")).toBeGreaterThanOrEqual(
-    BigInt(observedBefore) * 1_000_000n,
-  );
-  expect(BigInt(llm?.endTimeUnixNano ?? "0")).toBeLessThanOrEqual(
-    BigInt(observedAfter) * 1_000_000n,
-  );
+  expect(BigInt(llm?.startTimeUnixNano ?? "0")).toBe(BigInt(created + 100) * 1_000_000n);
+  expect(BigInt(llm?.endTimeUnixNano ?? "0")).toBe(BigInt(created + 200) * 1_000_000n);
   expect(
     Object.fromEntries(
       llm?.attributes.map((attribute) => [attribute.key, attribute.value.stringValue]) ?? [],

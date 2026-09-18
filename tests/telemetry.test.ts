@@ -909,6 +909,41 @@ test("shutdown ends interactions before runs exactly once and stops later child 
   expect(h.shutdown).toHaveBeenCalledTimes(1);
 });
 
+test.each([false, true])(
+  "OpenCode retry metadata exports without content and survives terminal failure=%s",
+  async (failed) => {
+    const h = setup({ captureContent: false });
+    h.observer.startRun(start());
+    h.observer.startInteraction(interaction());
+    h.observer.startLlm(llm());
+    h.observer.updateLlm({
+      id: llm().id,
+      interaction: llm().interaction,
+      retries: [
+        { attempt: 1, reason: "busy", scheduledAt: 1200, observedAt: 1250 },
+        { attempt: 3, reason: "unavailable", observedAt: 1400 },
+      ],
+    });
+    h.observer.updateLlm({ id: llm().id, interaction: llm().interaction, request: {} });
+    h.observer.finishLlm({
+      ...llm(),
+      endedAt: 1500,
+      output: undefined,
+      error: failed ? { type: "APIError" } : undefined,
+    });
+    await h.observer.flush();
+
+    expect(h.spans[0]?.attributes["opencode.llm.retry_count"]).toBe(2);
+    expect(JSON.parse(String(h.spans[0]?.attributes["opencode.llm.retry_history"]))).toEqual([
+      { attempt: 1, reason: "busy", scheduled_start_offset_ms: 100, observed_start_offset_ms: 150 },
+      { attempt: 3, reason: "unavailable", observed_start_offset_ms: 300 },
+    ]);
+    expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toBeUndefined();
+    expect(h.spans[0]?.attributes["gen_ai.response.time_to_first_chunk"]).toBeUndefined();
+    expect(h.spans[0]?.status.code).toBe(failed ? SpanStatusCode.ERROR : SpanStatusCode.UNSET);
+  },
+);
+
 test("LLM contract maps client spans, request parameters and successful usage under an interaction", async () => {
   const h = setup({ tracePrefix: "custom." });
   h.observer.startRun(start());
@@ -987,6 +1022,7 @@ test("LLM contract maps client spans, request parameters and successful usage un
   expect(span?.attributes["gen_ai.response.id"]).toBeUndefined();
   expect(span?.attributes["gen_ai.response.model"]).toBeUndefined();
   expect(span?.attributes["gen_ai.response.time_to_first_chunk"]).toBeUndefined();
+  expect(span?.attributes["opencode.llm.end_time_source"]).toBeUndefined();
   expect(span?.attributes["opencode.compaction.id"]).toBeUndefined();
   expect(span?.attributes["opencode.agent.type"]).toBeUndefined();
 });
@@ -1142,7 +1178,7 @@ test("new request snapshots clear stale tools, output types and both header dire
   expect(attributes["http.response.header.x-error"]).toEqual(["terminal"]);
 });
 
-test("LLM failures omit successful usage, and run cleanup is scoped to its own calls", async () => {
+test("LLM failures omit time source and successful usage, and cleanup stays scoped", async () => {
   const h = setup();
   h.observer.startRun(start());
   h.observer.startInteraction(interaction());
@@ -1170,7 +1206,11 @@ test("LLM failures omit successful usage, and run cleanup is scoped to its own c
   expect(calls[0]?.attributes["gen_ai.response.finish_reasons"]).toEqual(["error"]);
   expect(calls[0]?.attributes["gen_ai.usage.input_tokens"]).toBeUndefined();
   expect(calls[0]?.attributes["opencode.llm.cost.total"]).toBeUndefined();
+  expect(calls[0]?.attributes["opencode.llm.end_time_source"]).toBeUndefined();
+  expect(calls[0]?.endTime).toEqual([1, 200_000_000]);
   expect(calls[1]?.status.message).toBe("session ended before message completed");
+  expect(calls[1]?.attributes["opencode.llm.end_time_source"]).toBeUndefined();
+  expect(calls[1]?.endTime).toEqual([2, 0]);
   expect(h.spans.find((span) => span.name === "opencode.run")?.status.code).toBe(
     SpanStatusCode.UNSET,
   );
@@ -1214,5 +1254,6 @@ test("shutdown ends LLMs before interactions and runs and rejects all late model
     [3, 0],
   ]);
   expect(h.spans[0]?.attributes["gen_ai.response.finish_reasons"]).toEqual(["error"]);
+  expect(h.spans[0]?.attributes["opencode.llm.end_time_source"]).toBeUndefined();
   expect(h.shutdown).toHaveBeenCalledTimes(1);
 });

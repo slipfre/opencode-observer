@@ -104,6 +104,16 @@ export function createCoordinator(options: CoordinatorOptions) {
     dispose() {
       state.shutdown ??= guard(() => {
         void guard(() => state.messageCapture?.close());
+        const time = now();
+        sessions.forEach(
+          (session) =>
+            void guard(() =>
+              llms.close(session.reference, time, {
+                type: "_OTHER",
+                message: "plugin disposed before message completed",
+              }),
+            ),
+        );
         return options.observer.shutdown();
       });
       return state.shutdown;
@@ -132,7 +142,7 @@ export function createCoordinator(options: CoordinatorOptions) {
           resolveLlms(session.reference);
         }
 
-        const headers = session ? llms.prepare(session.reference, input, now()) : undefined;
+        const headers = session ? llms.prepare(session.reference, input) : undefined;
         Object.assign(
           output.headers,
           headers && userIdentity?.enabled
@@ -194,6 +204,10 @@ export function createCoordinator(options: CoordinatorOptions) {
           case "session.status":
           case "session.idle": {
             if (event.type === "session.status" && event.properties.status.type !== "idle") {
+              const session = sessions.get(event.properties.sessionID);
+              if (session) {
+                llms.status(session.reference, event.properties.status, time);
+              }
               return;
             }
 
@@ -349,7 +363,7 @@ export function createCoordinator(options: CoordinatorOptions) {
                   part.type !== "text" ||
                   !interactions.resolve(session.reference, part.messageID)
                 ) {
-                  llms.part(session.reference, part, time);
+                  llms.part(session.reference, part);
                 }
                 return;
               }

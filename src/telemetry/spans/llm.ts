@@ -31,6 +31,7 @@ export function createLlmSpans(
       reference: LlmReference;
       compactionID?: string;
       span: Span;
+      startedAt: number;
       messages?: { input: string; system: string | undefined };
       output?: string;
       outputType?: string;
@@ -133,6 +134,21 @@ export function createLlmSpans(
         return;
       }
 
+      if (input.retries) {
+        call.span.setAttributes({
+          "opencode.llm.retry_count": input.retries.length,
+          "opencode.llm.retry_history": JSON.stringify(
+            input.retries.map((retry) => ({
+              attempt: retry.attempt,
+              reason: retry.reason,
+              scheduled_start_offset_ms:
+                retry.scheduledAt === undefined ? undefined : retry.scheduledAt - call.startedAt,
+              observed_start_offset_ms: retry.observedAt - call.startedAt,
+            })),
+          ),
+        });
+      }
+
       if (input.request) {
         call.outputType = input.request.outputType;
         delete call.output;
@@ -180,6 +196,7 @@ export function createLlmSpans(
       }
 
       calls.set(key, {
+        startedAt: input.startedAt,
         compactionID: input.compactionID,
         reference: {
           id: input.id,

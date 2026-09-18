@@ -320,7 +320,7 @@ test("request preparation starts one logical LLM before steps and preserves its 
   expect(h.llms[0]).toMatchObject({
     id: "a1",
     interaction: { id: "u1", run: { sessionID: "s1", id: "u1" } },
-    startedAt: 1080,
+    startedAt: 1050,
     model: "gemini-request-model",
     input: undefined,
     parameters: { temperature: 0, topP: 0.9, topK: 8, maxTokens: 100 },
@@ -331,6 +331,11 @@ test("request preparation starts one logical LLM before steps and preserves its 
   });
 
   await modelPart(coordinator, "step-finish", 1300);
+  expect(h.llmFinishes).toHaveLength(0);
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: modelMessage({ time: { created: 1050, completed: 1350 } }) },
+  });
   expect(h.llmFinishes).toHaveLength(1);
   expect(await coordinator.headers(request[0])).toEqual({});
   await coordinator.hooks.dispose();
@@ -1090,7 +1095,7 @@ test("terminal assistant error fails its interaction without inventing a run-lev
   expect(h.finishes[0]?.output).toBeUndefined();
 });
 
-test("LLM steps establish observed boundaries, request metadata and normalized usage", async () => {
+test("LLM spans use assistant timestamps while steps supply evidence and normalized usage", async () => {
   const h = recording();
   const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
   const request = modelRequest();
@@ -1111,10 +1116,21 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
   );
   await modelPart(coordinator, "step-finish", 1300);
 
+  expect(h.llmFinishes).toHaveLength(0);
+  await coordinator.event(
+    {
+      type: "message.updated",
+      properties: {
+        info: modelMessage({ time: { created: 1050, completed: 1350 }, finish: "stop" }),
+      },
+    },
+    1500,
+  );
+
   expect(h.llms[0]).toMatchObject({
     id: "a1",
     interaction: { id: "u1", run: { sessionID: "s1", id: "u1" } },
-    startedAt: 1100,
+    startedAt: 1050,
     providerName: "gcp.gemini",
     providerID: "google",
     model: "gemini-request-model",
@@ -1128,7 +1144,7 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
     compactionID: undefined,
   });
   expect(h.llmFinishes[0]).toMatchObject({
-    endedAt: 1300,
+    endedAt: 1350,
     output: "answer",
     finishReason: "stop",
     cost: 0.02,
@@ -1157,7 +1173,7 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
 
   expect(h.llms).toHaveLength(1);
   expect(h.llmFinishes).toHaveLength(1);
-  expect(h.llmFinishes[0]?.endedAt).toBe(1300);
+  expect(h.llmFinishes[0]?.endedAt).toBe(1350);
   expect(h.completed[0]?.endedAt).toBe(4500);
 });
 
@@ -1193,6 +1209,129 @@ test("LLM spans omit fabricated assistants, unmatched parents, summaries and fin
   expect(h.llmFinishes).toEqual([]);
 });
 
+test("assistant completion can precede step results without losing source time or usage", async () => {
+  const h = recording();
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  await coordinator.message(user(), [text()]);
+  await modelPart(coordinator, "step-start", 1400);
+  await coordinator.event(
+    {
+      type: "message.updated",
+      properties: { info: modelMessage({ time: { created: 1050, completed: 1350 } }) },
+    },
+    1500,
+  );
+
+  expect(h.llms[0]?.startedAt).toBe(1050);
+  expect(h.llmFinishes).toHaveLength(0);
+
+  await modelPart(coordinator, "step-finish", 1600);
+
+  expect(h.llmFinishes[0]).toMatchObject({
+    endedAt: 1350,
+    usage: { inputTokens: 13, outputTokens: 7 },
+  });
+});
+
+test.each([true, false])("assistant error uses completion when available=%s", async (completed) => {
+  const h = recording();
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1100);
+  await modelPart(coordinator, "step-start", 1150);
+  await coordinator.event(
+    {
+      type: "message.updated",
+      properties: {
+        info: modelMessage({
+          time: { created: 1050, ...(completed ? { completed: 1250 } : {}) },
+          error: { name: "MessageAbortedError", data: { message: "cancelled" } },
+        }),
+      },
+    },
+    1400,
+  );
+
+  expect(h.llmFinishes[0]).toMatchObject({
+    endedAt: completed ? 1250 : 1400,
+    error: { type: "MessageAbortedError", message: "cancelled" },
+  });
+
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: modelMessage({ time: { created: 1050, completed: 1450 } }) },
+  });
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 1500);
+
+  expect(h.llmFinishes).toHaveLength(1);
+  expect(h.llmFinishes[0]?.endedAt).toBe(completed ? 1250 : 1400);
+});
+
+test.each([undefined, Number.NaN, 1000])(
+  "step success without a valid assistant completion (%s) is closed as incomplete",
+  async (completed) => {
+    const h = recording();
+    const coordinator = createCoordinatorHarness({ observer: h.observer });
+    await coordinator.message(user(), [text()]);
+    await coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ time: { created: 1050, completed } }) },
+    });
+    await modelPart(coordinator, "step-start", 1100);
+    await modelPart(coordinator, "step-finish", 1200);
+
+    expect(h.llmFinishes).toHaveLength(0);
+
+    await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 1400);
+
+    expect(h.llmFinishes[0]).toMatchObject({
+      endedAt: 1400,
+      error: { type: "_OTHER", message: "session ended before message completed" },
+    });
+  },
+);
+
+test("a completed assistant with a prepared request needs no fabricated step usage at cleanup", async () => {
+  const h = recording();
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({ type: "message.updated", properties: { info: modelMessage() } });
+  await coordinator.headers(modelRequest()[0]);
+  await coordinator.event({
+    type: "message.updated",
+    properties: {
+      info: modelMessage({ time: { created: 1050, completed: 1250 }, finish: "stop" }),
+    },
+  });
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 1400);
+
+  expect(h.llmFinishes[0]).toMatchObject({
+    endedAt: 1250,
+    finishReason: "stop",
+  });
+  expect(h.llmFinishes[0]?.error).toBeUndefined();
+  expect(h.llmFinishes[0]?.usage).toBeUndefined();
+});
+
+test.each([Number.NaN, -1, Number.POSITIVE_INFINITY])(
+  "LLM spans omit invalid assistant creation time %s",
+  async (created) => {
+    const h = recording();
+    const coordinator = createCoordinatorHarness({ observer: h.observer });
+    await coordinator.message(user(), [text()]);
+    await coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ time: { created } }) },
+    });
+    await modelPart(coordinator, "step-start", 1100);
+    await modelPart(coordinator, "step-finish", 1200);
+    await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 1400);
+
+    expect(h.llms).toHaveLength(0);
+    expect(h.llmFinishes).toHaveLength(0);
+  },
+);
+
 test("LLM step events can precede metadata and late synthetic ownership stays with the old interaction", async () => {
   const h = recording();
   const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
@@ -1205,7 +1344,12 @@ test("LLM step events can precede metadata and late synthetic ownership stays wi
   );
   await modelPart(coordinator, "step-finish", 1700);
   await coordinator.event(
-    { type: "message.updated", properties: { info: modelMessage({ parentID: "continuation" }) } },
+    {
+      type: "message.updated",
+      properties: {
+        info: modelMessage({ parentID: "continuation", time: { created: 1550, completed: 1750 } }),
+      },
+    },
     1800,
   );
 
@@ -1217,14 +1361,14 @@ test("LLM step events can precede metadata and late synthetic ownership stays wi
   );
 
   expect(h.llms[0]).toMatchObject({
-    startedAt: 1600,
+    startedAt: 1550,
     interaction: { id: "u1" },
     input: "question",
   });
-  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1700, output: "old answer" });
+  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1750, output: "old answer" });
 });
 
-test("LLM retries retain one span, reset attempt text and ignore scheduled retry time", async () => {
+test("OpenCode retries retain one span and distinguish scheduled and observed execution", async () => {
   const h = recording();
   const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
   await coordinator.message(user(), [text()]);
@@ -1246,6 +1390,16 @@ test("LLM retries retain one span, reset attempt text and ignore scheduled retry
   );
 
   expect(h.llmFinishes).toHaveLength(0);
+  expect(h.llmUpdates).toHaveLength(0);
+
+  await coordinator.event(
+    { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } },
+    1540,
+  );
+
+  expect(h.llmUpdates.at(-1)?.retries).toEqual([
+    { attempt: 1, reason: "busy", scheduledAt: 1500, observedAt: 1540 },
+  ]);
 
   await modelPart(coordinator, "step-start", 1600, "a1", { id: "retry-step" });
   await coordinator.event(
@@ -1261,12 +1415,16 @@ test("LLM retries retain one span, reset attempt text and ignore scheduled retry
   );
   await modelPart(coordinator, "step-start", 1700, "a1", { id: "retry-step" });
   await modelPart(coordinator, "step-finish", 1800);
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: modelMessage({ time: { created: 1050, completed: 1850 } }) },
+  });
   await modelPart(coordinator, "step-start", 1900, "a1", { id: "late-step" });
 
   expect(h.llms).toHaveLength(1);
-  expect(h.llms[0]?.startedAt).toBe(1100);
+  expect(h.llms[0]?.startedAt).toBe(1050);
   expect(h.llmFinishes).toHaveLength(1);
-  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1800, output: "recovered" });
+  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1850, output: "recovered" });
   expect(h.llmFinishes[0]?.error).toBeUndefined();
 });
 
@@ -1360,6 +1518,10 @@ test.each([true, false])(
         cache: { read: 0, write: Number.POSITIVE_INFINITY },
       },
       cost: Number.NaN,
+    });
+    await coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ time: { created: 1050, completed: 1350 } }) },
     });
 
     expect(h.llms[0]?.input).toBe(captureContent ? "secret" : undefined);

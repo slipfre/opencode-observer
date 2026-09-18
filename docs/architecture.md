@@ -136,9 +136,9 @@ coordinator 在接受新 run 时显式调用各 tracker 的 `open(run)` 登记�
 | `flush(): Promise<void>`    | 异步刷新 SDK 缓冲区中已结束的数据，不结束活动对象；触发刷新的事件回调等待完成 |
 | `shutdown(): Promise<void>` | 清理未完成对象，由 SDK/exporter 排空并关闭；                                  |
 
-适配层在 session idle、error 或删除后触发刷新。协调器在宿主 `dispose` hook 内统一关闭：先注销模型采集监听器，再调用注入的 `Observer.shutdown()`。遥测层按实际父子关系结束活动 span，再异步等待导出并关闭资源。重复调用返回同一个关闭 Promise。插件初始化模块只负责装配，不再中转关闭回调。
+适配层在 session idle、error 或删除后触发刷新。协调器在宿主 `dispose` hook 内统一关闭：先注销模型采集监听器，再提交仍在等待的 LLM 结果，保留已经取得的 assistant 完成时间，最后调用注入的 `Observer.shutdown()`。遥测层按实际父子关系结束剩余活动 span，再异步等待导出并关闭资源。重复调用返回同一个关闭 Promise。插件初始化模块只负责装配，不再中转关闭回调。
 
-关闭只要求完成观测收尾、解除外部订阅并停止向已关闭实例提交采集数据，不主动清空 tracker、session registry 或 SDK 请求缓存。宿主和异步任务不再持有实例后，剩余纯数据由垃圾回收处理。正常运行期间移除已结束对象、释放父子绑定及清理所属 run 的上下文仍属于生命周期管理。
+关闭只要求完成观测收尾、解除外部订阅并停止向已关闭实例提交采集数据；LLM tracker 提交等待中的结果后释放调用，不额外遍历清空其他 tracker、session registry 或 SDK 请求缓存。宿主和异步任务不再持有实例后，剩余纯数据由垃圾回收处理。正常运行期间移除已结束对象、释放父子绑定及清理所属 run 的上下文仍属于生命周期管理。
 
 Observer 统一持有已结束 span 的历史记录，按 run、span 类型和完整对象引用隔离；需要保留的 interaction / compaction 上下文与去重标识使用同一条记录。span 模块只查询和登记完成状态，由 Observer 在结束 run 时先收尾后代，再统一释放子 span 记录，仅保留 run 的关闭标记至实例结束，用于拒绝旧任务重建。清理一个 run 不影响其他活动 run 的历史记录。
 

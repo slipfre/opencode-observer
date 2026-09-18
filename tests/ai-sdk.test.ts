@@ -1,4 +1,5 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import type { AssistantMessage } from "@opencode-ai/sdk";
 import type { OnStartEvent, OnStepStartEvent, OnStepFinishEvent } from "ai";
 import { jsonSchema, Output, streamText, tool } from "ai";
 import { MockLanguageModelV3, convertArrayToReadableStream } from "ai/test";
@@ -73,23 +74,24 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
       parts: [{ id: "text", sessionID: "s1", messageID: "u1", type: "text", text: "fallback" }],
     },
   );
+  const assistant: AssistantMessage = {
+    id: "a1",
+    sessionID: "s1",
+    parentID: "u1",
+    role: "assistant",
+    time: { created: 1050 },
+    modelID: "test",
+    providerID: "test",
+    mode: "build",
+    path: { cwd: "/test", root: "/test" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  };
   await adapter.hooks.event?.({
     event: {
       type: "message.updated",
       properties: {
-        info: {
-          id: "a1",
-          sessionID: "s1",
-          parentID: "u1",
-          role: "assistant",
-          time: { created: 1050 },
-          modelID: "test",
-          providerID: "test",
-          mode: "build",
-          path: { cwd: "/test", root: "/test" },
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-        },
+        info: assistant,
       },
     },
   });
@@ -101,6 +103,21 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
     updates,
     finishes,
     errors,
+    async complete(overrides: Partial<AssistantMessage> = {}) {
+      await adapter.hooks.event({
+        event: {
+          type: "message.updated",
+          properties: {
+            info: {
+              ...assistant,
+              time: { created: 1050, completed: 1400 },
+              finish: "stop",
+              ...overrides,
+            },
+          },
+        },
+      });
+    },
     async headers() {
       const output = { headers: { "X-Test": "kept" } };
       await adapter.hooks["chat.headers"]?.(input, output);
@@ -190,6 +207,7 @@ test.each([true, false])(
     }
 
     await h.step("step-finish");
+    await h.complete();
 
     if (!outputFirst) {
       expect(h.finishes).toHaveLength(0);
@@ -318,6 +336,7 @@ test.each(["throw", "reject"])(
 
     await integration().onStepFinish?.(outputEvent(metadata));
     await h.step("step-finish");
+    await h.complete();
 
     expect(h.finishes).toHaveLength(1);
     expect(h.errors).toEqual([failure]);
@@ -427,6 +446,7 @@ test("retry bindings discard old callbacks and session end releases a missing SD
   await integration().onStepStart?.(inputEvent(secondMetadata, await h.headers(), "retry"));
   await integration().onStepFinish?.(outputEvent(firstMetadata, "stale attempt"));
   await h.step("step-finish");
+  await h.complete();
 
   expect(h.finishes).toHaveLength(0);
   expect(h.updates.map((value) => value.input?.messages[0]?.parts)).toEqual([
@@ -441,7 +461,58 @@ test("retry bindings discard old callbacks and session end releases a missing SD
 
   expect(h.finishes).toHaveLength(1);
   expect(h.finishes[0]?.error).toBeUndefined();
+  expect(h.finishes[0]?.endedAt).toBe(1400);
   expect(h.updates).toHaveLength(2);
+});
+
+test.each(["dispose", "remove"] as const)(
+  "%s preserves assistant completion while SDK output is still pending",
+  async (termination) => {
+    const h = await setup();
+    await integration().onStepStart?.(inputEvent({}, await h.headers()));
+    await h.step("step-start");
+    await h.step("step-finish");
+    await h.complete();
+
+    expect(h.finishes).toHaveLength(0);
+
+    if (termination === "dispose") {
+      await h.adapter.hooks.dispose();
+    }
+    if (termination === "remove") {
+      await h.adapter.hooks.event({
+        event: { type: "message.removed", properties: { sessionID: "s1", messageID: "a1" } },
+      });
+    }
+
+    expect(h.finishes).toHaveLength(1);
+    expect(h.finishes[0]?.endedAt).toBe(1400);
+    expect(h.finishes[0]?.error).toBeUndefined();
+  },
+);
+
+test("a late step cannot clear completed results while SDK output is pending", async () => {
+  const h = await setup();
+  const metadata = {};
+  await integration().onStepStart?.(inputEvent(metadata, await h.headers()));
+  await h.step("step-start");
+  await h.step("step-finish");
+  await h.complete();
+  await h.adapter.hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: {
+        part: { id: "late-step", sessionID: "s1", messageID: "a1", type: "step-start" },
+      },
+    },
+  });
+  await integration().onStepFinish?.(outputEvent(metadata));
+
+  expect(h.finishes).toHaveLength(1);
+  expect(h.finishes[0]).toMatchObject({
+    endedAt: 1400,
+    usage: { inputTokens: 1, outputTokens: 1 },
+  });
 });
 
 test.each([false, true])(
@@ -501,6 +572,7 @@ test.each([false, true])(
     expect(h.updates).toHaveLength(count);
     await integration().onStepFinish?.(outputEvent(current.metadata!, "second response"));
     await h.step("step-finish");
+    await h.complete({ parentID: "u2", time: { created: 2100, completed: 2200 } });
 
     expect(h.finishes.at(-1)?.interaction.run.id).toBe("u2");
     expect(h.updates.at(-1)?.output?.[0]?.parts[0]).toEqual({
@@ -525,6 +597,7 @@ test("unresolved settings never block callbacks or discard an observed response"
     response: { ...outputEvent(event.metadata!).response, headers: { "x-response": "kept" } },
   });
   await h.step("step-finish");
+  await h.complete();
 
   expect(h.finishes).toHaveLength(1);
   const count = h.updates.length;
@@ -558,6 +631,7 @@ test("late async settings cannot replace a retry's request snapshot", async () =
   expect(h.updates.at(-1)?.input?.messages[0]?.parts[0]).toEqual({ type: "text", text: "retry" });
   await integration().onStepFinish?.(outputEvent(retry.metadata!, "retry response"));
   await h.step("step-finish");
+  await h.complete();
   expect(h.finishes).toHaveLength(1);
   expect(h.errors).toEqual([]);
 });
@@ -668,6 +742,7 @@ test("unmatched and ambiguous assistant requests keep the event fallback without
   expect(await h.headers()).toEqual({ "X-Test": "kept" });
   await h.step("step-start");
   await h.step("step-finish");
+  await h.complete();
 
   expect(h.updates).toEqual([]);
   expect(h.finishes).toHaveLength(1);
@@ -753,6 +828,14 @@ test("summary LLMs use the same SDK snapshot channel once their compaction paren
     },
   });
 
+  await h.complete({
+    id: "summary",
+    parentID: "compact",
+    mode: "compaction",
+    summary: true,
+    time: { created: 1250, completed: 1400 },
+  });
+
   expect(h.updates[0]?.id).toBe("summary");
   expect(h.updates[0]?.input?.messages[0]?.parts).toEqual([
     { type: "text", text: "summary history" },
@@ -779,6 +862,7 @@ test("native LLM runtime prepares trace headers without callback capture or a re
     expect(await h.headers()).toEqual({ "X-Test": "kept", ...headers });
     await h.step("step-start");
     await h.step("step-finish");
+    await h.complete();
 
     expect(h.updates).toEqual([]);
     expect(h.finishes).toHaveLength(1);
@@ -854,6 +938,7 @@ test.each([true, false])(
 
       if (part.type === "finish-step") {
         await h.step("step-finish");
+        await h.complete();
       }
     }
 

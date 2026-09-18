@@ -335,10 +335,10 @@ HTTP header 示例是原生 attribute 值：`http.request.header.content-type=["
 
 ### 8.4 Retry attributes
 
-| 字段                         | 类型         | 出现条件        | 值与口径                                              |
-| ---------------------------- | ------------ | --------------- | ----------------------------------------------------- |
-| `opencode.llm.retry_count`   | int          | 必有，初始 `0`  | 已确认实际开始的 retry attempt 数，不含初次 attempt。 |
-| `opencode.llm.retry_history` | string(JSON) | 必有，初始 `[]` | 按 attempt 升序排列的已开始重试记录。                 |
+| 字段                         | 类型         | 出现条件        | 值与口径                                                                               |
+| ---------------------------- | ------------ | --------------- | -------------------------------------------------------------------------------------- |
+| `opencode.llm.retry_count`   | int          | 必有，初始 `0`  | 已观察到 OpenCode 从 retry 重新进入 busy 的次数，不含初次执行，等于 history 的记录数。 |
+| `opencode.llm.retry_history` | string(JSON) | 必有，初始 `[]` | 按 attempt 升序排列的已确认 OpenCode 重试记录，不包含仍在退避的计划。                  |
 
 `opencode.llm.retry_history` 的结构：
 
@@ -346,23 +346,44 @@ HTTP header 示例是原生 attribute 值：`http.request.header.content-type=["
 type RetryHistory = Array<{
   attempt: number;
   reason: string;
-  start_offset_ms: number;
+  scheduled_start_offset_ms?: number;
+  observed_start_offset_ms: number;
 }>;
 ```
 
-`session.status` 的 retry 通知携带 `attempt`、`message` 和预计重试时间 `next`，在退避前发送，不代表重试已经开始。先保存待执行记录，观察到新 attempt 实际开始后才增加计数并写入 history；`reason` 取通知的 `message`，`start_offset_ms` 为实际开始时间相对本 LLM span 开始时间的毫秒偏移。
+采集范围为 **OpenCode session processor 的重试流程**，不统计 AI SDK、鉴权插件、provider 或传输层内部的请求重发，也不要求探测网络请求边界。`session.status` 的 retry 通知携带 `attempt`、`message` 和预计重试时间 `next`，在退避前发送。适配层将通知绑定到同一 run 下唯一可识别的活动 assistant；随后观察到该调用对应 session 的 busy，确认 OpenCode 已重新进入执行流程，增加计数并写入 history。摘要调用采用相同规则；归属未知或歧义时省略该次记录，不根据其他 session 或新 assistant 的活动补计。
 
-等待期间取消不计入已开始次数；没有请求边界探测时不能用 `next` 伪造时间，初始 `0` / `[]` 仅表示尚未确认到重试开始。这里是 GenAI 逻辑请求层的重试，不等同于 HTTP 单次重发序号，因此不改为 `http.request.resend_count`。
+`attempt` 保留 OpenCode 通知的正整数序号，`reason` 取通知的 `message`。重复或较旧序号不重复记录；busy 没有待执行通知时不计数。退避期间取消、终止、删除或关闭不会提交该条计划，已确认历史保留。缺失中间 busy 时不按最大 attempt 补造次数，因此 count 可能小于最大的 attempt。`0` / `[]` 表示没有观察并确认到 OpenCode 重试，不保证底层没有重发。
+
+两个时间字段均为相对 LLM span 开始时间（`assistant.time.created`）的毫秒偏移，不受 `captureContent` 控制：
+
+- `scheduled_start_offset_ms` = retry 通知的 `next` − span 开始时间。表示预计恢复执行时间；无效 `next` 时省略。
+- `observed_start_offset_ms` = 插件接收到后续 busy 的本地时间 − span 开始时间。表示 OpenCode 恢复执行的观察时间，不能用作实际网络请求发出时间。旧的 `start_offset_ms` 不再导出。
+
+两者之差可用于观察计划与恢复执行通知的偏差，但包含调度和事件分发延迟，不是精确的定时器误差。OpenCode 以当前时间加退避时长计算 `next`；事件循环繁忙、GC、进程或系统暂停都可能延迟恢复，之后的请求准备、其他插件 hooks、鉴权和连接建立还会推迟网络请求。没有固定的毫秒级误差保证或上限；取消时甚至不会实际执行。系统时钟调整可能令差值为负，保留原始差值，不钳制为零。这些字段不能替代首 chunk 耗时或 `http.request.resend_count`。
 
 ### 8.5 生命周期与状态
 
 - 仅为有请求准备或模型 step 证据的 assistant message 创建 span。OpenCode 的 subtask / 命令路径也可能直接构造 assistant message，不能仅凭 `role=assistant` 创建 LLM span。
-- 精确开始时间取逻辑模型调用发起时刻，结束时间取响应流完成或该调用终止时刻；span 覆盖期间发生的重试和退避，不包含对应工具的执行或等待时间。
-- `assistant.time.created/completed` 是消息处理时间；`time.completed` 在工具等待和清理之后写入，不能作为纯 LLM 结束时间。普通消息/part 事件只能提供近似观察边界，精确边界需要额外 lifecycle 探测。
-- 当前实现优先在 `chat.headers` 唯一匹配 assistant 和 parent 后创建 span，以便发送前传播上下文；起点是请求准备的本地观察时间，不保证请求最终到达网络。没有取得该关联时降级为首个 `step-start` 的观察时间。结束使用 `step-finish` 或终止事件的观察时间；这可能包含请求准备、事件处理、快照及工具等待开销，不能声称是纯模型请求耗时。只有结束事件且没有请求准备或 step 开始证据时不补造起点。
+- 开始时间统一使用 `assistant.time.created`，正常结束时间统一使用 `assistant.time.completed`。这是 assistant 消息生命周期，包含请求准备、重试退避、工具执行和清理，不表示纯模型或网络请求耗时。
+- 当前实现优先在 `chat.headers` 唯一匹配 assistant 和 parent 后创建 span，以便发送前传播上下文；未取得该关联时，等待 `step-start` 和消息归属证据。实际创建时间可以晚于开始时间，但起点始终取消息的 `time.created`，不使用 hook 或事件接收时间替代。缺失或无效的创建时间不补造 span；只有完成消息或结束事件、没有请求准备或 step 开始证据时也不创建 span。
+- `step-finish` 提供结束原因、用量和费用，不提供 span 结束时间。消息完成与 step 结果乱序时分别暂存；成功结果仍等待已绑定的 SDK 输出，提交结束时保持消息时间。结束时间必须有效且不早于创建时间，重复通知和迟到更新不得改写已结束 span。
 - 无法测量首 chunk 时，不导出标准或 attempt 级首 chunk 耗时。不能用首个 assistant 文本事件的观察时间伪造精确值。
 - 正常完成保持 `UNSET`，provider / OpenCode 错误终止时设置 `ERROR`、`error.type` 和 status message。重试后成功的逻辑 LLM span 不残留终态 `error.type` 或 `ERROR`；重试原因保留在 history。
-- session 结束时仍未完成的 LLM span 以 `ERROR` 清理，status message 为 `session ended before message completed` 或具体会话错误。
+- session 或插件收尾时，已取得消息完成时间但仍等待 SDK 输出或 step 结果的调用，保留该完成时间和已知结果，省略缺失内容及用量；不因采集回调缺失而把已完成调用标为失败。仍未取得消息完成时间的调用以 `ERROR` 清理，status message 为 `session ended before message completed` 或具体终止原因。
+
+异常边界：
+
+| 场景                                           | 时间与状态                                                                               |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 错误或取消的 assistant 更新已包含 completed    | 使用消息创建、完成时间，保留具体错误。                                                   |
+| session.error 先于 completed 到达              | 立即按错误观察时间收尾并标记 `observation`；不延迟宿主，也不等待可能永不到达的完成更新。 |
+| step-finish 已到达，但 idle 时仍没有 completed | 使用 idle 观察时间，以消息未完成错误收尾；不能把 step 完成当作消息完成。                 |
+| 已有 completed，SDK 输出或 step 结果未到达     | 收尾时保留消息完成时间；只保留已有的数据，不填入初始化零用量。                           |
+| 消息删除、压缩结束或插件关闭                   | 优先保留已有消息完成时间；缺失时按对应终止观察时间和错误收尾。                           |
+| 重试后成功                                     | 同一 assistant 仍只有一个 span，从消息创建到完成；包含退避，不残留终态错误。             |
+| 可恢复的上下文溢出                             | 失败的 LLM 调用独立结束，run / interaction 可继续执行压缩和后续调用。                    |
+| 进程被强杀或崩溃，未执行 dispose               | 不保证活动 span 能结束或导出，不补造完成时间。                                           |
 
 ## 9. `<prefix>tool.<tool-name>`
 

@@ -201,12 +201,73 @@ describe("OpenCode run E2E", () => {
         expect(result.stdout).toContain("recovered");
         expect(fixture.llm.mainHits()).toHaveLength(3);
         const llm = oneSpan(spans, "e2e.llm");
-        // The adapter observes steps, not actual retry attempt boundaries.
-        expect(llm.attributes["opencode.llm.retry_count"]).toBe(0);
-        expect(llm.attributes["opencode.llm.retry_history"]).toBe("[]");
+        expect(llm.attributes["opencode.llm.retry_count"]).toBe(2);
+        const history = JSON.parse(String(llm.attributes["opencode.llm.retry_history"])) as Array<{
+          attempt: number;
+          reason: string;
+          scheduled_start_offset_ms: number;
+          observed_start_offset_ms: number;
+        }>;
+        expect(history).toEqual([
+          {
+            attempt: 1,
+            reason: "temporary failure one",
+            scheduled_start_offset_ms: expect.any(Number),
+            observed_start_offset_ms: expect.any(Number),
+          },
+          {
+            attempt: 2,
+            reason: "temporary failure two",
+            scheduled_start_offset_ms: expect.any(Number),
+            observed_start_offset_ms: expect.any(Number),
+          },
+        ]);
+        const startedAt = Number(BigInt(llm.startTimeUnixNano) / 1_000_000n);
+        // The server timestamp includes request preparation and loopback transport. It is not a send timestamp.
+        console.info(
+          "OpenCode retry timing samples (ms):",
+          JSON.stringify(
+            history.map((retry, index) => ({
+              attempt: retry.attempt,
+              observedMinusScheduled:
+                retry.observed_start_offset_ms - retry.scheduled_start_offset_ms,
+              receivedMinusScheduled:
+                fixture.llm.mainHits()[index + 1]!.receivedAt -
+                startedAt -
+                retry.scheduled_start_offset_ms,
+            })),
+          ),
+        );
         expect(llm.attributes["gen_ai.response.time_to_first_chunk"]).toBeUndefined();
         expect(llm.attributes["gen_ai.response.finish_reasons"]).toEqual(["stop"]);
         spans.forEach(expectUnset);
+      },
+    ));
+
+  test("preserves confirmed OpenCode retry history on terminal provider failure", () =>
+    withE2EFixture(
+      {
+        replies: [
+          { type: "error", code: "server_error", status: 500, message: "retry this" },
+          { type: "error", code: "invalid_request", message: "stop retrying" },
+        ],
+      },
+      async (fixture) => {
+        const result = await fixture.run("retry then fail");
+        const spans = requireSpans(fixture, result, 3, 1);
+        const llm = oneSpan(spans, "e2e.llm");
+
+        expect(fixture.llm.mainHits()).toHaveLength(2);
+        expect(llm.attributes["opencode.llm.retry_count"]).toBe(1);
+        expect(JSON.parse(String(llm.attributes["opencode.llm.retry_history"]))).toEqual([
+          {
+            attempt: 1,
+            reason: "retry this",
+            scheduled_start_offset_ms: expect.any(Number),
+            observed_start_offset_ms: expect.any(Number),
+          },
+        ]);
+        spans.forEach((span) => expectError(span, "APIError"));
       },
     ));
 

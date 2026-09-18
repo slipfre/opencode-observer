@@ -27,12 +27,18 @@ function completion(delta: Record<string, unknown>, finish?: string, usage?: Usa
 
 export function startFakeLlm(replies: LlmReply[]) {
   const pending = [...replies];
-  const hits: Array<{ body: Record<string, unknown>; headers: Headers; title: boolean }> = [];
+  const hits: Array<{
+    body: Record<string, unknown>;
+    headers: Headers;
+    title: boolean;
+    receivedAt: number;
+  }> = [];
   const errors: string[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(request) {
+      const receivedAt = Date.now();
       if (request.method !== "POST" || new URL(request.url).pathname !== "/v1/chat/completions") {
         errors.push(`Unexpected model route: ${request.method} ${request.url}`);
         return new Response("Not found", { status: 404 });
@@ -42,7 +48,7 @@ export function startFakeLlm(replies: LlmReply[]) {
       const title = JSON.stringify(body.messages).includes(
         "Generate a title for this conversation",
       );
-      hits.push({ body, headers: new Headers(request.headers), title });
+      hits.push({ body, headers: new Headers(request.headers), title, receivedAt });
       const reply = title ? { type: "text" as const, text: "Observer E2E" } : pending.shift();
 
       if (!reply) {

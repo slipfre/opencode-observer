@@ -81,7 +81,7 @@ export type ModelRequest = {
 };
 
 export type LlmStart = LlmReference & {
-  /** Request preparation time, or first model step observation as fallback, in Unix epoch milliseconds. */
+  /** Assistant message creation time in Unix epoch milliseconds. */
   startedAt: number;
   providerID: string;
   providerName: string;
@@ -98,7 +98,7 @@ export type LlmStart = LlmReference & {
 };
 
 export type LlmFinish = LlmReference & {
-  /** Model step completion or terminal event observation time in epoch milliseconds. */
+  /** Assistant completion time, or terminal observation time when unavailable, in epoch milliseconds. */
   endedAt: number;
   /** Observed assistant text snapshot, with undefined distinct from known empty text. */
   output: string | undefined;
@@ -115,7 +115,19 @@ export type LlmFinish = LlmReference & {
   error?: ObservationError;
 };
 
+export type LlmRetry = {
+  /** OpenCode retry sequence number, excluding the initial execution. */
+  attempt: number;
+  reason: string;
+  /** Scheduled execution time from OpenCode, in Unix epoch milliseconds. */
+  scheduledAt?: number;
+  /** Observation time of OpenCode re-entering busy, not a network request timestamp. */
+  observedAt: number;
+};
+
 export type LlmUpdate = LlmReference & {
+  /** Replace the history of confirmed OpenCode execution retries. */
+  retries?: LlmRetry[];
   /** Replace the SDK request snapshot and clear the previous step's response. */
   request?: ModelRequest;
   responseHeaders?: ModelHeaders;

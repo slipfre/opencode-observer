@@ -202,7 +202,7 @@ test("LLM bindings expire on release even when the same run and message are regi
     const starts = observer.startLlm.mock.calls.length;
     tracker.open(run);
     tracker.message(run, { ...message, sessionID: run.sessionID }, 1000);
-    tracker.prepare(run, request, 1050);
+    tracker.prepare(run, request);
     expect(tracker.bind(run, request)).toBeUndefined();
     expect(tracker.activeRequest(run)).toBeUndefined();
     expect(observer.startLlm).toHaveBeenCalledTimes(starts);
@@ -210,11 +210,12 @@ test("LLM bindings expire on release even when the same run and message are regi
       { id: "assistant", parentID: "input", summary: undefined },
     ]);
 
-    tracker.part(
-      run,
-      { type: "step-start", id: "step", messageID: "assistant", sessionID: run.sessionID },
-      1100,
-    );
+    tracker.part(run, {
+      type: "step-start",
+      id: "step",
+      messageID: "assistant",
+      sessionID: run.sessionID,
+    });
     tracker.associate(run, "assistant", {
       reference: { run, id: "input" },
       userInputText: undefined,
@@ -231,7 +232,7 @@ test("LLM bindings expire on release even when the same run and message are regi
     expect(observer.startLlm).toHaveBeenLastCalledWith(
       expect.objectContaining({
         interaction: { run, id: "input" },
-        startedAt: 1100,
+        startedAt: 1000,
       }),
     );
     const capture = tracker.bind(run, request);

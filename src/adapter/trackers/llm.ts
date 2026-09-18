@@ -1,7 +1,8 @@
-import type { AssistantMessage, Part, UserMessage } from "@opencode-ai/sdk";
+import type { AssistantMessage, Part, SessionStatus, UserMessage } from "@opencode-ai/sdk";
 import type {
   LlmFinish,
   LlmReference,
+  LlmRetry,
   LlmUpdate,
   ModelHeaders,
   Observer,
@@ -24,19 +25,26 @@ type LlmCall = {
     modelID: string;
     providerID: string;
     agentName?: string;
+    createdAt?: number;
     completedAt?: number;
+    finishReason?: string;
     summary?: boolean;
   };
   interactionContext?: InteractionContext;
-  startedAt?: number;
+  prepared?: boolean;
   reference?: LlmReference;
-  finishSnapshot?: Omit<LlmFinish, "interaction" | "id" | "output">;
+  finishSnapshot?: Omit<LlmFinish, "interaction" | "id" | "output" | "endedAt"> & {
+    endedAt?: number;
+  };
   startedStepIDs?: Set<string>;
   previousStepTextPartIDs?: Set<string>;
   textParts: Map<string, string>;
   awaitingSdkOutput?: boolean;
   captureBinding?: symbol;
   pendingUpdate?: Omit<LlmUpdate, "interaction" | "id">;
+  pendingRetry?: Omit<LlmRetry, "observedAt">;
+  retryAttempt?: number;
+  retries?: LlmRetry[];
 };
 
 export function createLlmTracker(options: { observer: Observer; captureContent?: boolean }) {
@@ -55,8 +63,13 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
     }
 
     const call = state.llmCalls.get(messageID);
+    const startedAt = call?.assistantMessage?.createdAt;
 
-    if (!call?.assistantMessage || call.startedAt === undefined) {
+    if (
+      !call?.assistantMessage ||
+      startedAt === undefined ||
+      (!call.prepared && !call.startedStepIDs?.size)
+    ) {
       return;
     }
 
@@ -79,7 +92,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       state.requestSettings.delete(requestKey);
       options.observer.startLlm({
         ...call.reference,
-        startedAt: call.startedAt,
+        startedAt,
         providerID: message.providerID,
         providerName: provider,
         model: request?.model ?? message.modelID,
@@ -101,7 +114,8 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       delete call.pendingUpdate;
     }
 
-    if (call.finishSnapshot) {
+    const endedAt = call.assistantMessage.completedAt ?? call.finishSnapshot?.endedAt;
+    if (call.finishSnapshot && endedAt !== undefined) {
       if (call.awaitingSdkOutput && !call.finishSnapshot.error) {
         return;
       }
@@ -111,6 +125,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       options.observer.finishLlm({
         ...call.reference,
         ...call.finishSnapshot,
+        endedAt,
         output:
           options.captureContent && call.textParts.size > 0
             ? Array.from(call.textParts.values()).join("\n")
@@ -147,11 +162,18 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
     }
 
     state.llmCalls.forEach((call) => {
-      if (call.startedAt === undefined) {
+      if (!call.prepared && !call.startedStepIDs?.size) {
         return;
       }
 
-      call.finishSnapshot ??= { endedAt, error };
+      call.finishSnapshot = {
+        ...call.finishSnapshot,
+        endedAt: call.finishSnapshot?.endedAt ?? endedAt,
+        finishReason: call.finishSnapshot?.finishReason ?? call.assistantMessage?.finishReason,
+        error:
+          call.finishSnapshot?.error ??
+          (call.assistantMessage?.completedAt === undefined ? error : undefined),
+      };
       if (options.captureContent && response?.messageID === call.messageID) {
         call.finishSnapshot.responseHeaders = response.headers;
       }
@@ -219,7 +241,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         (call) =>
           call.assistantMessage &&
           !call.assistantMessage.summary &&
-          call.startedAt !== undefined &&
+          (call.prepared || call.startedStepIDs?.size) &&
           !call.finishSnapshot,
       );
       const call = activeCalls.length === 1 ? activeCalls[0] : undefined;
@@ -229,6 +251,51 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
             parentMessageID: call.assistantMessage.parentMessageID,
           }
         : undefined;
+    },
+    status(
+      run: RunReference,
+      status: Exclude<SessionStatus, { type: "idle" }>,
+      observedAt: number,
+    ) {
+      // Status events identify only a session. Never assign a retry to an ambiguous call.
+      const candidates = Array.from(store.get(run)?.llmCalls.values() ?? []).filter(
+        (call) =>
+          call.assistantMessage &&
+          call.assistantMessage.completedAt === undefined &&
+          call.finishSnapshot?.endedAt === undefined &&
+          (call.prepared || call.startedStepIDs?.size),
+      );
+      const call = candidates.length === 1 ? candidates[0] : undefined;
+
+      if (!call) {
+        candidates.forEach((candidate) => {
+          delete candidate.pendingRetry;
+        });
+        return;
+      }
+
+      if (status.type === "retry") {
+        if (!Number.isSafeInteger(status.attempt) || status.attempt <= (call.retryAttempt ?? 0)) {
+          return;
+        }
+
+        call.retryAttempt = status.attempt;
+        call.pendingRetry = {
+          attempt: status.attempt,
+          reason: status.message,
+          scheduledAt: nonNegativeNumber(status.next),
+        };
+        return;
+      }
+
+      if (!call.pendingRetry) {
+        return;
+      }
+
+      call.retries = [...(call.retries ?? []), { ...call.pendingRetry, observedAt }];
+      delete call.pendingRetry;
+      call.pendingUpdate = { ...call.pendingUpdate, retries: call.retries };
+      record(run, call.messageID);
     },
     closeCompaction(
       run: RunReference,
@@ -244,12 +311,17 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
 
       state.llmCalls.forEach((call) => {
         if (call.assistantMessage?.summary && call.assistantMessage.parentMessageID === markerID) {
-          call.finishSnapshot ??= {
-            endedAt,
-            error: error ?? {
-              type: "_OTHER",
-              message: "compaction ended before message completed",
-            },
+          call.finishSnapshot = {
+            ...call.finishSnapshot,
+            endedAt: call.finishSnapshot?.endedAt ?? endedAt,
+            error:
+              call.finishSnapshot?.error ??
+              (call.assistantMessage.completedAt === undefined
+                ? (error ?? {
+                    type: "_OTHER",
+                    message: "compaction ended before message completed",
+                  })
+                : undefined),
           };
           call.awaitingSdkOutput = false;
           record(run, call.messageID);
@@ -257,7 +329,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       });
       state.closedCompactionIDs.add(markerID);
     },
-    prepare(run: RunReference, input: LlmRequest[0], observedAt: number) {
+    prepare(run: RunReference, input: LlmRequest[0]) {
       const call = resolveRequest(run, input);
 
       if (!call) {
@@ -265,7 +337,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       }
 
       // Headers must reference a span that already exists before provider execution.
-      call.startedAt ??= observedAt;
+      call.prepared = true;
       record(run, call.messageID);
       return call.reference ? options.observer.llmTraceHeaders(call.reference) : undefined;
     },
@@ -329,7 +401,13 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         modelID: info.modelID,
         providerID: info.providerID,
         agentName: agent || undefined,
-        completedAt: info.time.completed,
+        createdAt: call.assistantMessage?.createdAt ?? nonNegativeNumber(info.time.created),
+        completedAt:
+          call.assistantMessage?.completedAt ??
+          (info.time.completed !== undefined && info.time.completed >= info.time.created
+            ? nonNegativeNumber(info.time.completed)
+            : undefined),
+        finishReason: info.finish || call.assistantMessage?.finishReason,
         summary: info.summary,
       };
 
@@ -337,9 +415,10 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         call.interactionContext = context;
       }
 
-      if (info.error && call.startedAt !== undefined) {
-        call.finishSnapshot ??= {
-          endedAt: observedAt,
+      if (info.error) {
+        call.finishSnapshot = {
+          ...call.finishSnapshot,
+          endedAt: call.finishSnapshot?.endedAt ?? observedAt,
           error: errorDetails(info.error),
           finishReason: info.finish,
           responseHeaders: options.captureContent
@@ -350,7 +429,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
 
       record(run, info.id);
     },
-    part(run: RunReference, part: Part, observedAt: number) {
+    part(run: RunReference, part: Part) {
       const state = store.get(run);
 
       if (!state) {
@@ -389,8 +468,15 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       }
 
       if (part.type === "step-start") {
+        if (call.assistantMessage?.completedAt !== undefined && call.startedStepIDs?.size) {
+          return;
+        }
+
         // Repeated steps/retries belong to the same logical request. A step is not an exact attempt boundary.
         if (call.startedStepIDs?.size && !call.startedStepIDs.has(part.id)) {
+          if (call.finishSnapshot?.endedAt === undefined) {
+            delete call.finishSnapshot;
+          }
           call.previousStepTextPartIDs ??= new Set();
           call.textParts.forEach((_text, partID) => call.previousStepTextPartIDs?.add(partID));
           call.textParts.clear();
@@ -398,18 +484,16 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
 
         call.startedStepIDs ??= new Set();
         call.startedStepIDs.add(part.id);
-        call.startedAt ??= observedAt;
       }
 
       if (part.type === "step-finish") {
-        if (call.startedAt === undefined) {
+        if (!call.prepared && !call.startedStepIDs?.size) {
           state.llmCalls.delete(part.messageID);
           state.finishedMessageIDs.add(part.messageID);
           return;
         }
 
         call.finishSnapshot ??= {
-          endedAt: observedAt,
           finishReason: part.reason || undefined,
           usage: parseModelUsage(part.tokens),
           cost: nonNegativeNumber(part.cost),
@@ -436,10 +520,16 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       const call = state.llmCalls.get(messageID);
 
       if (call) {
-        call.finishSnapshot ??= {
-          endedAt: observedAt,
-          error: { type: "_OTHER", message: "message removed before model completed" },
+        call.finishSnapshot = {
+          ...call.finishSnapshot,
+          endedAt: call.finishSnapshot?.endedAt ?? observedAt,
+          error:
+            call.finishSnapshot?.error ??
+            (call.assistantMessage?.completedAt === undefined
+              ? { type: "_OTHER", message: "message removed before model completed" }
+              : undefined),
         };
+        call.awaitingSdkOutput = false;
         record(run, messageID);
         state.llmCalls.delete(messageID);
         state.finishedMessageIDs.add(messageID);

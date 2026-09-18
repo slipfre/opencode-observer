@@ -248,6 +248,15 @@ test("coordinator trackers isolate identical object IDs in concurrent sessions d
   await h.reply("once", "p1", "s2");
   await h.part(tool(completed(), { sessionID: "s2" }));
   await h.part(step("summary", "step-finish", "s2"));
+  await h.message(
+    assistant({
+      id: "summary",
+      parentID: "c1",
+      sessionID: "s2",
+      summary: true,
+      time: { created: 1100, completed: 1700 },
+    }),
+  );
   await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s2" } }, 1800);
   await h.part(step("a1", "step-finish", "s2"));
   await h.message(
@@ -458,6 +467,15 @@ test("coordinator resolves a completed summary after delayed compaction evidence
   await h.part(step("summary", "step-start"), 1500);
   await h.part(step("summary", "step-finish"), 1700);
   expect(h.spans).toHaveLength(0);
+  await h.message(
+    assistant({
+      id: "summary",
+      parentID: "c1",
+      summary: true,
+      time: { created: 1100, completed: 1750 },
+    }),
+    1800,
+  );
 
   await h.message(user("c1", "s1", 1400), 1800);
   await h.part(
@@ -467,8 +485,8 @@ test("coordinator resolves a completed summary after delayed compaction evidence
   expect(h.spans).toHaveLength(1);
   const summary = h.spans[0];
   expect(summary?.name).toBe("opencode.llm");
-  expect(summary?.startTime).toEqual([1, 500_000_000]);
-  expect(summary?.endTime).toEqual([1, 700_000_000]);
+  expect(summary?.startTime).toEqual([1, 100_000_000]);
+  expect(summary?.endTime).toEqual([1, 750_000_000]);
 
   await h.coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } }, 1900);
   await h.idle();
