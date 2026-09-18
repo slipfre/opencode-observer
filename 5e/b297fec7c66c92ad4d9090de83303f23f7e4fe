@@ -1,0 +1,104 @@
+tests/telemetry.test.ts
+  s_dfcfd8f5aa3ff2::t_18e9e8f103a91a 935,946
+  s_dfcfd8f5aa3ff2::t_ac74439265619a 1257
+  s_dfcfd8f5aa3ff2::t_347a2e892af702 927
+  s_dfcfd8f5aa3ff2::t_9c2fe8e4923b5e 1025,1181
+  s_dfcfd8f5aa3ff2::t_33ce533a21e91e 912-926,928-934,936-945
+  s_dfcfd8f5aa3ff2::t_4c3a5185a20452 1209-1210,1212-1213
+docs/architecture.md
+  s_dfcfd8f5aa3ff2::t_c18331fad777ed 139,141
+e2e/support/fake-llm.ts
+  s_dfcfd8f5aa3ff2::t_33ce533a21e91e 30-35
+  s_dfcfd8f5aa3ff2::t_c2fab913a3a74e 41,51
+e2e/run.e2e.test.ts
+  s_dfcfd8f5aa3ff2::t_33ce533a21e91e 212-223,227-240,263-268
+  s_dfcfd8f5aa3ff2::t_c2fab913a3a74e 204-211,224-226,247-262,269-271
+  s_dfcfd8f5aa3ff2::t_fa5012426a7046 272-273
+src/contract/observer.ts
+  s_dfcfd8f5aa3ff2::t_9d055740911ee6 84,101
+  s_dfcfd8f5aa3ff2::t_53047e28943257 118-127,129-130
+docs/adapter.md
+  s_dfcfd8f5aa3ff2::t_347a2e892af702 55
+  s_dfcfd8f5aa3ff2::t_9c2fe8e4923b5e 29,85
+  s_dfcfd8f5aa3ff2::t_e8013c468fd94b 22,48,51,81,83
+  s_dfcfd8f5aa3ff2::t_dcc6ab349e3376 19-21,23-25
+  s_dfcfd8f5aa3ff2::t_916229fe32e57e 56
+src/adapter/trackers/llm.ts
+  s_dfcfd8f5aa3ff2::t_33ce533a21e91e 255-259
+  s_dfcfd8f5aa3ff2::t_53047e28943257 1,5,45,47,260-270,274-277,279-281,283-298
+  s_dfcfd8f5aa3ff2::t_43ed89942c863d 278
+  s_dfcfd8f5aa3ff2::t_8a7d144b817e54 477-479,532
+  s_dfcfd8f5aa3ff2::t_347a2e892af702 271-273
+  s_dfcfd8f5aa3ff2::t_c18331fad777ed 171,316,421,525
+  s_dfcfd8f5aa3ff2::t_364642441b59ff 66,70,95,432,526-530
+  s_dfcfd8f5aa3ff2::t_9d055740911ee6 28,30,34,36-38,68-69,71-72,117-118,128,165,169-170,172-176,244,314-315,317-324,332,340,404-410,418-420,490,523-524
+  s_dfcfd8f5aa3ff2::t_3f819e9866cff3 46,282
+  s_dfcfd8f5aa3ff2::t_d584fc576c0116 471-474
+  s_dfcfd8f5aa3ff2::t_6bad5b5bc78b65 299
+tests/operations.test.ts
+  s_dfcfd8f5aa3ff2::t_8a7d144b817e54 251-259,470,477-478,488-489
+  s_dfcfd8f5aa3ff2::t_26731847be8a52 471-476
+tests/llm-retry.test.ts
+  s_dfcfd8f5aa3ff2::t_33ce533a21e91e 53-58,65-118
+  s_dfcfd8f5aa3ff2::t_18e9e8f103a91a 1-52,59-64,119,134,138-172
+  s_dfcfd8f5aa3ff2::t_43ed89942c863d 120-133,135-137
+tests/adapter.test.ts
+  s_dfcfd8f5aa3ff2::t_18e9e8f103a91a 1371,1393-1402
+  s_dfcfd8f5aa3ff2::t_364642441b59ff 323,334-338
+  s_dfcfd8f5aa3ff2::t_26731847be8a52 1123-1125,1302-1304
+  s_dfcfd8f5aa3ff2::t_7ac1e55fc8d9bd 1212-1301,1305-1334,1525
+  s_dfcfd8f5aa3ff2::t_8a7d144b817e54 1098,1119-1122,1126-1129,1133,1147,1176,1347-1352,1364,1368,1418-1421,1425,1427,1522-1524
+tests/ai-sdk.test.ts
+  s_dfcfd8f5aa3ff2::t_7ac1e55fc8d9bd 464,468-492
+  s_dfcfd8f5aa3ff2::t_d584fc576c0116 494-517
+  s_dfcfd8f5aa3ff2::t_26731847be8a52 78-88,110-117,831-837
+  s_dfcfd8f5aa3ff2::t_358a72369ed83e 2,77,89,94,106-109,118-120,210,339,449,575,600,634,745,865,941
+  s_dfcfd8f5aa3ff2::t_fad2ebd43a8e7c 493
+  s_dfcfd8f5aa3ff2::t_40bb087c471eae 838
+e2e/timing.e2e.test.ts
+  s_dfcfd8f5aa3ff2::t_7ac1e55fc8d9bd 1-10,16-19,23,27-38,40-41,47-53,55-63,67-74,76,80-81
+  s_dfcfd8f5aa3ff2::t_c18331fad777ed 43-45
+  s_dfcfd8f5aa3ff2::t_ac74439265619a 75
+  s_dfcfd8f5aa3ff2::t_9c2fe8e4923b5e 39,54
+  s_dfcfd8f5aa3ff2::t_26731847be8a52 11-15,20-22,24-26,42,46,64-66,77-79
+src/telemetry/spans/llm.ts
+  s_dfcfd8f5aa3ff2::t_53047e28943257 34,137-151,199
+tests/tracker-lifecycle.test.ts
+  s_dfcfd8f5aa3ff2::t_26731847be8a52 213-218
+  s_dfcfd8f5aa3ff2::t_364642441b59ff 205,235
+src/adapter/opencode/coordinator.ts
+  s_dfcfd8f5aa3ff2::t_26731847be8a52 108-115
+  s_dfcfd8f5aa3ff2::t_53047e28943257 207-210
+  s_dfcfd8f5aa3ff2::t_8a7d144b817e54 107,116
+  s_dfcfd8f5aa3ff2::t_364642441b59ff 366
+  s_dfcfd8f5aa3ff2::t_9d055740911ee6 145
+e2e/support/timing-plugin.ts
+  s_dfcfd8f5aa3ff2::t_26731847be8a52 14-17
+  s_dfcfd8f5aa3ff2::t_7ac1e55fc8d9bd 1-13,18-31
+README.md
+  s_dfcfd8f5aa3ff2::t_9c2fe8e4923b5e 74
+  s_dfcfd8f5aa3ff2::t_ac45968fe3b729 75
+docs/schemas/trace.md
+  s_dfcfd8f5aa3ff2::t_33ce533a21e91e 338-339,341
+  s_dfcfd8f5aa3ff2::t_c18331fad777ed 368-370,373-376
+  s_dfcfd8f5aa3ff2::t_ac45968fe3b729 340,349-350,354,356-363
+  s_dfcfd8f5aa3ff2::t_dcc6ab349e3376 377-386
+tests/plugin.test.ts
+  s_dfcfd8f5aa3ff2::t_22aefba4a05a99 741-742
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5eb297fec7c66c92ad4d9090de83303f23f7e4fe",
+  "prompts": {},
+  "sessions": {
+    "s_dfcfd8f5aa3ff2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b327-4cc1-7a12-94eb-f595053e04e1",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
