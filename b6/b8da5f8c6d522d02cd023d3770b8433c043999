@@ -1,0 +1,30 @@
+e2e/run.e2e.test.ts
+  s_51f61298da69fe::t_3527dd40a14c5d 32
+tests/adapter.test.ts
+  s_51f61298da69fe::t_9b68f166bb74c7 868-882,884,886-893,895-916,919-921
+  s_51f61298da69fe::t_3527dd40a14c5d 894,917-918,953,1055,1161
+src/adapter/trackers/interaction.ts
+  s_51f61298da69fe::t_3527dd40a14c5d 199-200,209-213,225
+src/contract/observer.ts
+  s_51f61298da69fe::t_3527dd40a14c5d 46
+tests/plugin.test.ts
+  s_51f61298da69fe::t_3527dd40a14c5d 727
+docs/schemas/trace.md
+  s_51f61298da69fe::t_3527dd40a14c5d 178-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b6b8da5f8c6d522d02cd023d3770b8433c043999",
+  "prompts": {},
+  "sessions": {
+    "s_51f61298da69fe": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b245-aa84-7393-8261-a997507be534",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
