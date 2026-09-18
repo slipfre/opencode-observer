@@ -26,7 +26,7 @@ OpenCode hooks/events 提供用户输入、消息和调用的标识、模型生�
 
 SDK 输出回调只负责补充内容，不能单独作为结束 LLM 调用的依据，也不能用回调到达时间或 SDK 用量替换上表规定的数据来源。内容回调与 `step-finish` part 更新的到达顺序不一致时，按第 3.4 节协调提交。
 
-LLM span 记录 assistant 消息生命周期，包含请求准备、重试退避、工具执行和清理，不能视为纯模型或精确网络耗时。错误或取消时，OpenCode 可能先发送 `session.error` / idle，再写入消息完成时间；这类调用按终止观察时间收尾，不等待未来事件。首个文本更新不等于首个响应块到达，不能据此计算精确的首块延迟。重试采集限于 OpenCode 流程，使用 retry → busy 确认恢复执行，预计时间和观察时间分别记录，均不冒充网络请求时间。具体测量限制和异常规则见 [Trace Schema §8.4–8.5](schemas/trace.md#84-retry-attributes)。
+LLM span 记录 assistant 消息生命周期，包含请求准备、重试退避、工具执行和清理，不能视为纯模型或精确网络耗时。错误或取消时，OpenCode 可能先发送 `session.error` / idle，再写入消息完成时间；这类调用按终止观察时间收尾，不等待未来事件。首块延迟以首次 SDK `onStepStart` 到首次 OpenCode `step-start` 的时间差近似，不能用首个文本更新替代。重试采集限于 OpenCode 流程，使用 retry → busy 确认恢复执行，预计时间和观察时间分别记录，均不冒充网络请求时间。具体测量限制和异常规则见 [Trace Schema §8](schemas/trace.md#8-prefixllm)。
 
 `captureContent` 统一控制正文、LLM 工具定义及模型请求/响应 headers 的解析、保留和提交。关闭该开关时，仍可采集 SDK 明确提供的输出类型；具体约束见 [总体架构 §4](architecture.md#4-观测契约)。上下文传播遵循 [总体架构 §5.2](architecture.md#52-传播边界)。
 
@@ -51,6 +51,8 @@ LLM span 记录 assistant 消息生命周期，包含请求准备、重试退避
 适配层优先在 `chat.headers` 请求准备阶段完成关联，以便在请求发出前传播 trace 上下文。该 hook 和 `step-start` 只提供调用开始证据，span 开始时间始终使用 assistant 的 `time.created`。消息元数据稍后到达时暂存证据，待消息与归属确定后补交开始。只有 assistant message 或完成通知，而没有调用开始证据时，不创建 LLM 观测记录。
 
 同一 assistant message 对应的 step 和重试归入同一个逻辑 LLM 调用。进入新的 step 时更新当前快照，清除前一步遗留的数据；同一 step 的重复通知不清空快照，旧尝试的迟到内容也不能覆盖新结果。观察到 step part 更新的时间不代表精确的网络请求或重试起点。
+
+首块近似计时独立于内容快照：SDK `onStepStart` 同步记录首次请求起点，异步设置补充不更新时间。首次 `step-start` 优先使用事件携带的有效发布时间，缺失时使用接收时间。tracker 通过 `LlmUpdate.firstChunk` 提交两个时间戳，telemetry 换算为秒并标记来源。重试重新绑定不清除起点，重复和后续 step 不替换首次终点；没有初始 SDK 起点、终点早于起点或调用已结束时不补造数据。完整口径见 [Trace Schema §8.1](schemas/trace.md#81-身份模型和用量)。
 
 `session.status` 的 retry 和 busy 由 coordinator 转交 LLM tracker。tracker 将 retry 计划绑定到唯一活动 assistant，直到后续 busy 才提交重试历史快照；重复及较旧序号忽略，归属歧义时丢弃候选调用的待确认计划，等待期间终止也丢弃计划。已确认历史独立于 SDK 内容快照保存，摘要调用同样采集，不依赖正文开关。契约传递序号、原因、预计时间和观察时间，遥测层只编码偏移量及 JSON，不自行推断重试。
 

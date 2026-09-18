@@ -13,7 +13,7 @@ afterEach(async () => {
   await Promise.all(adapters.splice(0).map((adapter) => adapter.hooks.dispose()));
 });
 
-async function setup(captureContent = true, log?: (error: unknown) => unknown) {
+async function setup(captureContent = true, log?: (error: unknown) => unknown, now?: () => number) {
   const updates: LlmUpdate[] = [];
   const finishes: LlmFinish[] = [];
   const errors: unknown[] = [];
@@ -46,6 +46,7 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
   const adapter = createCoordinator({
     observer,
     captureContent,
+    now,
     log(error) {
       errors.push(error);
       return log?.(error);
@@ -125,16 +126,21 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
       // OpenCode merges headers into a new object before starting AI SDK.
       return { ...output.headers } as Record<string, string>;
     },
-    async step(type: "step-start" | "step-finish") {
+    async step(
+      type: "step-start" | "step-finish",
+      time?: number,
+      id = type === "step-start" ? "start" : "finish",
+    ) {
       await adapter.hooks.event?.({
         event: {
           type: "message.part.updated",
           properties: {
+            ...(time === undefined ? {} : { time }),
             part:
               type === "step-start"
-                ? { id: "start", sessionID: "s1", messageID: "a1", type }
+                ? { id, sessionID: "s1", messageID: "a1", type }
                 : {
-                    id: "finish",
+                    id,
                     sessionID: "s1",
                     messageID: "a1",
                     type,
@@ -183,6 +189,107 @@ function outputEvent(metadata: Record<string, unknown>, text = "full output"): O
     response: { messages: [] },
   } as unknown as OnStepFinishEvent;
 }
+
+test.each([true, false])(
+  "first chunk uses step publication time and survives retries with content=%s",
+  async (captureContent) => {
+    const clock = { time: 1100 };
+    const h = await setup(captureContent, undefined, () => clock.time);
+    const first = inputEvent({}, await h.headers());
+    await integration().onStepStart?.(first);
+
+    clock.time = 1400;
+    await h.adapter.hooks.event({
+      event: {
+        type: "session.status",
+        properties: {
+          sessionID: "s1",
+          status: { type: "retry", attempt: 1, message: "busy", next: 1600 },
+        },
+      },
+    });
+    clock.time = 1700;
+    await h.adapter.hooks.event({
+      event: { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } },
+    });
+    const retry = inputEvent({}, await h.headers());
+    await integration().onStepStart?.(retry);
+    clock.time = 2300;
+    await h.step("step-start", 2100);
+
+    expect(h.updates.flatMap((update) => update.firstChunk ?? [])).toEqual([
+      { requestStartedAt: 1100, observedAt: 2100 },
+    ]);
+
+    // Duplicate events, later steps, and old SDK bindings never replace the first observation.
+    await h.step("step-start", 2200);
+    await integration().onStepStart?.(inputEvent(first.metadata!, {}));
+    await integration().onStepStart?.(inputEvent(retry.metadata!, {}));
+    await h.step("step-start", 2400, "next-step");
+    await integration().onStepFinish?.(outputEvent(retry.metadata!));
+    await h.step("step-finish");
+    await h.complete({ time: { created: 1050, completed: 2600 } });
+    await h.step("step-start", 2800, "late-step");
+
+    expect(h.updates.flatMap((update) => update.firstChunk ?? [])).toEqual([
+      { requestStartedAt: 1100, observedAt: 2100 },
+    ]);
+    expect(h.finishes).toHaveLength(1);
+    expect(h.errors).toEqual([]);
+  },
+);
+
+test.each([undefined, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+  "first chunk falls back to receipt time for unavailable publication time %s",
+  async (time) => {
+    const clock = { time: 1100 };
+    const h = await setup(false, undefined, () => clock.time);
+    await integration().onStepStart?.(inputEvent({}, await h.headers()));
+
+    clock.time = 1500;
+    await h.step("step-start", time);
+
+    expect(h.updates.at(-1)?.firstChunk).toEqual({ requestStartedAt: 1100, observedAt: 1500 });
+  },
+);
+
+test("a backwards first-step timestamp is omitted instead of replaced by a later step", async () => {
+  const h = await setup(false, undefined, () => 1100);
+  await integration().onStepStart?.(inputEvent({}, await h.headers()));
+
+  await h.step("step-start", 1000);
+  await h.step("step-start", 1400, "next-step");
+
+  expect(h.updates.every((update) => update.firstChunk === undefined)).toBe(true);
+});
+
+test.each(["missing", "late", "retry"])(
+  "first chunk is omitted when the original SDK start is %s",
+  async (mode) => {
+    const h = await setup(false, undefined, () => 1100);
+    if (mode === "retry") {
+      await h.headers();
+      await h.adapter.hooks.event({
+        event: {
+          type: "session.status",
+          properties: {
+            sessionID: "s1",
+            status: { type: "retry", attempt: 1, message: "busy", next: 1200 },
+          },
+        },
+      });
+      await integration().onStepStart?.(inputEvent({}, await h.headers()));
+    }
+
+    await h.step("step-start", 1400);
+    if (mode === "late") {
+      await integration().onStepStart?.(inputEvent({}, await h.headers()));
+      await h.step("step-start", 1500, "next-step");
+    }
+
+    expect(h.updates.every((update) => update.firstChunk === undefined)).toBe(true);
+  },
+);
 
 test.each([true, false])(
   "AI SDK snapshots survive callback ordering with output first=%s",
@@ -244,11 +351,11 @@ test("AI SDK bindings isolate identical sessions in different instances and igno
     functionId: "agent.title",
   });
 
-  expect(first.updates).toHaveLength(1);
+  expect(first.updates).toHaveLength(2);
   expect(second.updates).toHaveLength(0);
 
   await integration().onStepFinish?.(outputEvent(metadata));
-  expect(first.updates).toHaveLength(2);
+  expect(first.updates).toHaveLength(3);
   expect(second.updates).toHaveLength(0);
 });
 
@@ -449,10 +556,9 @@ test("retry bindings discard old callbacks and session end releases a missing SD
   await h.complete();
 
   expect(h.finishes).toHaveLength(0);
-  expect(h.updates.map((value) => value.input?.messages[0]?.parts)).toEqual([
-    [{ type: "text", text: "first" }],
-    [{ type: "text", text: "retry" }],
-  ]);
+  expect(
+    h.updates.filter((value) => value.input).map((value) => value.input?.messages[0]?.parts),
+  ).toEqual([[{ type: "text", text: "first" }], [{ type: "text", text: "retry" }]]);
 
   await h.adapter.hooks.event?.({
     event: { type: "session.idle", properties: { sessionID: "s1" } },
@@ -462,7 +568,7 @@ test("retry bindings discard old callbacks and session end releases a missing SD
   expect(h.finishes).toHaveLength(1);
   expect(h.finishes[0]?.error).toBeUndefined();
   expect(h.finishes[0]?.endedAt).toBe(1400);
-  expect(h.updates).toHaveLength(2);
+  expect(h.updates).toHaveLength(3);
 });
 
 test.each(["dispose", "remove"] as const)(
@@ -644,7 +750,7 @@ test.each(["session end", "dispose"])("%s invalidates pending async settings", a
     output: { ...Output.text(), responseFormat: format.promise },
   });
   await h.step("step-start");
-  expect(h.updates).toHaveLength(1);
+  expect(h.updates).toHaveLength(2);
 
   await (boundary === "dispose"
     ? h.adapter.hooks.dispose()

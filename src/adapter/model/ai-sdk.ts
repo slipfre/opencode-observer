@@ -16,7 +16,7 @@ const correlationHeader = "x-opencode-observer-request";
 
 export type ModelCapture = {
   active(): boolean;
-  input(value: Pick<LlmUpdate, "input" | "request">): void;
+  input(value: Pick<LlmUpdate, "input" | "request">, startedAt?: number): void;
   output(value: Pick<LlmUpdate, "output" | "responseHeaders">): void;
 };
 
@@ -33,6 +33,7 @@ type ModelCaptureBroker = { listeners: Set<ModelCaptureListener> };
 export function createModelMessageCapture(options: {
   bind(input: LlmRequest[0]): ModelCapture | undefined;
   captureContent: boolean;
+  now?: () => number;
   log(error: unknown): unknown;
 }) {
   const pending = new Map<string, ModelCapture>();
@@ -71,12 +72,13 @@ export function createModelMessageCapture(options: {
       const binding = activeBinding(event);
 
       if (binding) {
+        const startedAt = options.now?.() ?? Date.now();
         const step = ++binding.step;
         const snapshot = {
           ...(options.captureContent ? { input: parseModelInput(event) } : {}),
           request: options.captureContent ? { headers: parseModelHeaders(event.headers) } : {},
         };
-        binding.capture.input(snapshot);
+        binding.capture.input(snapshot, startedAt);
         binding.responded = false;
 
         if (event.output || (options.captureContent && event.tools)) {

@@ -207,30 +207,35 @@ compaction 上的标准 usage 是子摘要 LLM 用量的镜像。
 
 ### 8.1 身份、模型和用量
 
-| 字段                                                  | 类型     | 出现条件                           | 值与口径                                                                                                                                                                   |
-| ----------------------------------------------------- | -------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gen_ai.operation.name`                               | string   | 必有                               | 按实际模型 API 操作设置：聊天补全为 `chat`，内容生成为 `generate_content`，传统文本补全为 `text_completion`。遵循对应 provider 的约定，不因 span 名为 `llm` 就写入 `llm`。 |
-| `gen_ai.provider.name`                                | string   | 必有                               | 插件识别的 provider 标准名；例如 `openai`、`anthropic`、`aws.bedrock`、`azure.ai.openai`、`gcp.gemini`、`gcp.vertex_ai`。                                                  |
-| `opencode.provider.id`                                | string   | 必有                               | OpenCode 原始 provider ID，用于保留配置身份。                                                                                                                              |
-| `gen_ai.request.model`                                | string   | 必有                               | 请求的 model ID。                                                                                                                                                          |
-| `gen_ai.response.model`                               | string   | 实际响应提供时                     | 响应中确认的模型名，不能用请求 model ID 补造。                                                                                                                             |
-| `gen_ai.response.id`                                  | string   | 实际响应提供时                     | Provider response ID，不能用 OpenCode assistant message ID 替代。                                                                                                          |
-| `opencode.message.id`                                 | string   | 必有                               | OpenCode assistant message ID。                                                                                                                                            |
-| `gen_ai.agent.name`                                   | string   | agent 可识别时                     | 优先使用 assistant 的 `agent`，兼容 `mode`；未知时省略。                                                                                                                   |
-| `opencode.agent.type`                                 | string   | 必有                               | `primary` 或 `subagent`。                                                                                                                                                  |
-| `gen_ai.usage.input_tokens`                           | int      | 模型请求成功且 usage 可用          | OpenCode 归一化后的 `tokens.input + tokens.cache.read + tokens.cache.write`，包含缓存输入。                                                                                |
-| `gen_ai.usage.output_tokens`                          | int      | 模型请求成功且 usage 可用          | OpenCode 归一化后的 `tokens.output + tokens.reasoning`，包含 reasoning。                                                                                                   |
-| `gen_ai.usage.reasoning.output_tokens`                | int      | 模型请求成功且对应 usage 可用      | `tokens.reasoning`，是 output tokens 的子集。                                                                                                                              |
-| `gen_ai.usage.cache_read.input_tokens`                | int      | 模型请求成功且对应 usage 可用      | `tokens.cache.read`，是 input tokens 的子集。                                                                                                                              |
-| `gen_ai.usage.cache_write.input_tokens`               | int      | 模型请求成功且对应 usage 可用      | `tokens.cache.write`，是 input tokens 的子集；本基线使用 `cache_write`。                                                                                                   |
-| `opencode.llm.cost.total`                             | double   | 模型请求成功且 cost 可用           | OpenCode assistant 的 `cost`，单位 USD。通常为计价估算；缺少价格时源数据可能为 `0`，不代表账单实付金额。                                                                   |
-| `gen_ai.response.finish_reasons`                      | string[] | 存在结束原因，或生成异常终止       | 单候选时为 `[assistant.finish]`；缺失预期的结束原因且生成失败、取消或流异常结束时，对应位置写入 `error`。                                                                  |
-| `gen_ai.response.time_to_first_chunk`                 | double   | 实际探测到请求发起和首 chunk       | 秒。当前逻辑模型请求发起到首次收到响应流 chunk 的时间；不要求 chunk 含非空文本。计时起点不随重试重置，包含首 chunk 前的重试和退避。                                        |
-| `opencode.llm.successful_attempt.time_to_first_chunk` | double   | 请求最终成功且可精确测量该 attempt | 秒。最终成功 attempt 开始到该 attempt 首 chunk 的时间，保留原文档的 attempt 级指标；与上一行的逻辑请求口径不同。                                                           |
+| 字段                                                  | 类型     | 出现条件                                  | 值与口径                                                                                                                                                                   |
+| ----------------------------------------------------- | -------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gen_ai.operation.name`                               | string   | 必有                                      | 按实际模型 API 操作设置：聊天补全为 `chat`，内容生成为 `generate_content`，传统文本补全为 `text_completion`。遵循对应 provider 的约定，不因 span 名为 `llm` 就写入 `llm`。 |
+| `gen_ai.provider.name`                                | string   | 必有                                      | 插件识别的 provider 标准名；例如 `openai`、`anthropic`、`aws.bedrock`、`azure.ai.openai`、`gcp.gemini`、`gcp.vertex_ai`。                                                  |
+| `opencode.provider.id`                                | string   | 必有                                      | OpenCode 原始 provider ID，用于保留配置身份。                                                                                                                              |
+| `gen_ai.request.model`                                | string   | 必有                                      | 请求的 model ID。                                                                                                                                                          |
+| `gen_ai.response.model`                               | string   | 实际响应提供时                            | 响应中确认的模型名，不能用请求 model ID 补造。                                                                                                                             |
+| `gen_ai.response.id`                                  | string   | 实际响应提供时                            | Provider response ID，不能用 OpenCode assistant message ID 替代。                                                                                                          |
+| `opencode.message.id`                                 | string   | 必有                                      | OpenCode assistant message ID。                                                                                                                                            |
+| `gen_ai.agent.name`                                   | string   | agent 可识别时                            | 优先使用 assistant 的 `agent`，兼容 `mode`；未知时省略。                                                                                                                   |
+| `opencode.agent.type`                                 | string   | 必有                                      | `primary` 或 `subagent`。                                                                                                                                                  |
+| `gen_ai.usage.input_tokens`                           | int      | 模型请求成功且 usage 可用                 | OpenCode 归一化后的 `tokens.input + tokens.cache.read + tokens.cache.write`，包含缓存输入。                                                                                |
+| `gen_ai.usage.output_tokens`                          | int      | 模型请求成功且 usage 可用                 | OpenCode 归一化后的 `tokens.output + tokens.reasoning`，包含 reasoning。                                                                                                   |
+| `gen_ai.usage.reasoning.output_tokens`                | int      | 模型请求成功且对应 usage 可用             | `tokens.reasoning`，是 output tokens 的子集。                                                                                                                              |
+| `gen_ai.usage.cache_read.input_tokens`                | int      | 模型请求成功且对应 usage 可用             | `tokens.cache.read`，是 input tokens 的子集。                                                                                                                              |
+| `gen_ai.usage.cache_write.input_tokens`               | int      | 模型请求成功且对应 usage 可用             | `tokens.cache.write`，是 input tokens 的子集；本基线使用 `cache_write`。                                                                                                   |
+| `opencode.llm.cost.total`                             | double   | 模型请求成功且 cost 可用                  | OpenCode assistant 的 `cost`，单位 USD。通常为计价估算；缺少价格时源数据可能为 `0`，不代表账单实付金额。                                                                   |
+| `gen_ai.response.finish_reasons`                      | string[] | 存在结束原因，或生成异常终止              | 单候选时为 `[assistant.finish]`；缺失预期的结束原因且生成失败、取消或流异常结束时，对应位置写入 `error`。                                                                  |
+| `gen_ai.response.time_to_first_chunk`                 | double   | 取得首次 SDK step 起点和首次 `step-start` | 秒。以 OpenCode `step-start` 近似首 chunk 到达时间；起点不随重试重置，包含首个 step 前的重试和退避，不要求非空文本。                                                       |
+| `opencode.llm.time_to_first_chunk.source`             | string   | 导出上述近似耗时时                        | 固定为 `step-start`，说明该值来自 OpenCode 事件，包含本地处理延迟，不是精确的网络首块计时。                                                                                |
+| `opencode.llm.successful_attempt.time_to_first_chunk` | double   | 请求最终成功且可精确测量该 attempt        | 秒。最终成功 attempt 开始到该 attempt 首 chunk 的时间，保留原文档的 attempt 级指标；与逻辑请求口径不同，当前不导出。                                                       |
 
 usage 公式适用于 OpenCode 已归一化的 token 数据；如果另取 provider 原始 usage，需先理解其缓存和 reasoning 是否已经包含在总量中，不能再次相加。本文基线没有通用的 `gen_ai.usage.total_tokens` 或费用属性；总 token 数直接由 input + output 计算，不另造标准字段。LLM span 覆盖重试，但源 assistant usage/cost 不保证包含所有失败 attempt 的消耗，不将其描述为完整重试账单。
 
 `gen_ai.response.finish_reasons` 按返回候选顺序排列，不能把各次 retry 的 finish reason 混入这个数组。正文数组经过过滤时，finish reasons 仍对应原候选顺序。不再把 `finish_reason` 写到输出消息对象中，该 JSON 属性在本基线已弃用。
+
+首 chunk 耗时是明确降级的近似值：`(首次 step-start 时间 − 首次 AI SDK onStepStart 回调时间) / 1000`。终点优先取 `message.part.updated.properties.time`（OpenCode 发布该 part 的时间），缺失或无效时取插件接收时间；起点不使用 `assistant.time.created`。当前 AI SDK 在识别首个非合成启动 chunk 时生成 `start-step`，OpenCode 再转换并发布 `step-start`，因此该值包含流处理、调度和事件发布前的延迟，回退到接收时间时还包含事件分发延迟，没有固定误差上限。
+
+同一逻辑 LLM 只保留首次观察，SDK 重新绑定、重试和后续 step 都不重置。首次 SDK 起点缺失（包括 native 路径或直到重试后才取得绑定）、首次 step 时间早于起点、首个 step 前失败或取消时省略；不以稍后的 step 或首个文本补值。首个 step 后失败仍保留已观察到的耗时。该字段及来源标记不受 `captureContent` 控制；当前不导出精确的 successful-attempt 首 chunk 耗时。
 
 ### 8.2 消息与系统指令
 
@@ -368,7 +373,7 @@ type RetryHistory = Array<{
 - 开始时间统一使用 `assistant.time.created`，正常结束时间统一使用 `assistant.time.completed`。这是 assistant 消息生命周期，包含请求准备、重试退避、工具执行和清理，不表示纯模型或网络请求耗时。
 - 当前实现优先在 `chat.headers` 唯一匹配 assistant 和 parent 后创建 span，以便发送前传播上下文；未取得该关联时，等待 `step-start` 和消息归属证据。实际创建时间可以晚于开始时间，但起点始终取消息的 `time.created`，不使用 hook 或事件接收时间替代。缺失或无效的创建时间不补造 span；只有完成消息或结束事件、没有请求准备或 step 开始证据时也不创建 span。
 - `step-finish` 提供结束原因、用量和费用，不提供 span 结束时间。消息完成与 step 结果乱序时分别暂存；成功结果仍等待已绑定的 SDK 输出，提交结束时保持消息时间。结束时间必须有效且不早于创建时间，重复通知和迟到更新不得改写已结束 span。
-- 无法测量首 chunk 时，不导出标准或 attempt 级首 chunk 耗时。不能用首个 assistant 文本事件的观察时间伪造精确值。
+- 取得首次 SDK step 起点和首次 OpenCode `step-start` 时，按第 8.1 节导出首 chunk 近似耗时及 `source=step-start` 标记；证据缺失或时间无效时省略。不导出精确的 attempt 级耗时，也不用首个 assistant 文本事件补值。
 - 正常完成保持 `UNSET`，provider / OpenCode 错误终止时设置 `ERROR`、`error.type` 和 status message。重试后成功的逻辑 LLM span 不残留终态 `error.type` 或 `ERROR`；重试原因保留在 history。
 - session 或插件收尾时，已取得消息完成时间但仍等待 SDK 输出或 step 结果的调用，保留该完成时间和已知结果，省略缺失内容及用量；不因采集回调缺失而把已完成调用标为失败。仍未取得消息完成时间的调用以 `ERROR` 清理，status message 为 `session ended before message completed` 或具体终止原因。
 

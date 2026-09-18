@@ -8,6 +8,7 @@ import type {
   ToolReference,
 } from "../../contract/observer.js";
 import { errorDetails } from "../shared/error.js";
+import { nonNegativeNumber } from "../shared/number.js";
 import { createGuard } from "../shared/guard.js";
 import type { createModelMessageCapture } from "../model/ai-sdk.js";
 import { parseErrorResponseHeaders } from "../model/headers.js";
@@ -22,6 +23,7 @@ import { createSessionRegistry } from "./session.js";
 
 export type OpenCodeEvent =
   | Event
+  | { type: "message.part.updated"; properties: { part: Part; time?: number } }
   | { type: "permission.asked"; properties: PermissionRequest }
   | {
       type: "permission.replied";
@@ -363,7 +365,13 @@ export function createCoordinator(options: CoordinatorOptions) {
                   part.type !== "text" ||
                   !interactions.resolve(session.reference, part.messageID)
                 ) {
-                  llms.part(session.reference, part);
+                  llms.part(
+                    session.reference,
+                    part,
+                    nonNegativeNumber(
+                      "time" in event.properties ? event.properties.time : undefined,
+                    ) ?? time,
+                  );
                 }
                 return;
               }
@@ -391,6 +399,7 @@ export function createCoordinator(options: CoordinatorOptions) {
 
     if (!state.shutdown) {
       state.messageCapture = createModelMessageCapture({
+        now,
         bind: (input) => {
           const session = sessions.get(input.sessionID);
           if (!session) {

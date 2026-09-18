@@ -94,6 +94,63 @@ function llm(id = "a1", parent = interaction()): LlmStart {
   };
 }
 
+test.each([true, false])(
+  "first chunk timing is independent of content=%s and survives failure",
+  async (captureContent) => {
+    const h = setup({ captureContent });
+    h.observer.startRun(start());
+    h.observer.startInteraction(interaction());
+    h.observer.startLlm(llm());
+
+    h.observer.updateLlm({
+      id: "a1",
+      interaction: llm().interaction,
+      firstChunk: { requestStartedAt: 1200, observedAt: 1550 },
+    });
+    h.observer.updateLlm({
+      id: "a1",
+      interaction: llm().interaction,
+      request: {},
+      firstChunk: { requestStartedAt: 1600, observedAt: 2300 },
+    });
+    h.observer.finishLlm({
+      ...llm(),
+      endedAt: 2400,
+      output: undefined,
+      error: { type: "APIError" },
+    });
+    await h.observer.flush();
+
+    expect(h.spans[0]?.attributes["gen_ai.response.time_to_first_chunk"]).toBe(0.35);
+    expect(h.spans[0]?.attributes["opencode.llm.time_to_first_chunk.source"]).toBe("step-start");
+    expect(h.spans[0]?.status.code).toBe(SpanStatusCode.ERROR);
+    expect(
+      h.spans[0]?.attributes["opencode.llm.successful_attempt.time_to_first_chunk"],
+    ).toBeUndefined();
+  },
+);
+
+test.each([
+  { requestStartedAt: 1200, observedAt: 1200, expected: 0 },
+  { requestStartedAt: 1200, observedAt: 1100, expected: undefined },
+  { requestStartedAt: -1, observedAt: 1300, expected: undefined },
+  { requestStartedAt: Number.NaN, observedAt: 1300, expected: undefined },
+  { requestStartedAt: 1200, observedAt: Number.POSITIVE_INFINITY, expected: undefined },
+])("first chunk timestamps are validated: %j", async (timing) => {
+  const h = setup();
+  h.observer.startRun(start());
+  h.observer.startInteraction(interaction());
+  h.observer.startLlm(llm());
+  h.observer.updateLlm({ id: "a1", interaction: llm().interaction, firstChunk: timing });
+  h.observer.finishLlm({ ...llm(), endedAt: 1400, output: undefined });
+  await h.observer.flush();
+
+  expect(h.spans[0]?.attributes["gen_ai.response.time_to_first_chunk"]).toBe(timing.expected);
+  expect(h.spans[0]?.attributes["opencode.llm.time_to_first_chunk.source"]).toBe(
+    timing.expected === undefined ? undefined : "step-start",
+  );
+});
+
 test("shared span history isolates types and releases all child records when a run closes", () => {
   const history = createSpanHistory();
   const runs = [start(), start("u2"), start("u1", "s2")];

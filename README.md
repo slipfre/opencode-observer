@@ -71,7 +71,7 @@ Resource 默认上报 `service.name=opencode`，`service.version` 来自运行�
 - 一个 run 表示一次任务执行，包含一次或多次用户交互。任务执行中的追加输入（steer）会创建新 interaction；run 和 interaction 的正文仅聚合真实用户文本和最终答复。
 - 开启正文采集后，模型消息可包含历史上下文、系统指令、reasoning、工具调用与结果、多模态内容，工具 span 可记录参数与成功结果。模型正文反映 SDK 可见的内容，后续 provider 转换仍可能改变实际请求。开启 `OPENCODE_EXPERIMENTAL_NATIVE_LLM` 或无法取得完整消息时，普通模型调用降级为所属用户文本和可见答复，摘要调用省略未知输入。
 - 可唯一关联的模型请求在 `chat.headers` 阶段创建 LLM span，并注入该 span 的 W3C `traceparent`；非空 `tracestate` 及启用的身份字段一并传播，不依赖正文采集开关。AI SDK 路径支持端到端传播；当前 OpenCode native HTTP 层会覆盖准备好的 traceparent，因此 native 路径尚不能保证与本插件 trace 关联。标题、归属未知或歧义的调用省略注入；不读取外部 trace 上下文配置。
-- LLM span 使用 `assistant.time.created/completed`，表示消息生命周期，包含请求准备、重试退避、工具执行和清理。异常收尾时若完成时间缺失，使用终止观察时间。当前未精确测量网络请求耗时或首 chunk 耗时。
+- LLM span 使用 `assistant.time.created/completed`，表示消息生命周期，包含请求准备、重试退避、工具执行和清理。异常收尾时若完成时间缺失，使用终止观察时间。`gen_ai.response.time_to_first_chunk` 以首次 SDK `onStepStart` 到首次 OpenCode `step-start` 的时间差近似，单位为秒，附带 `opencode.llm.time_to_first_chunk.source=step-start`，包含首个 step 前的重试退避及本地处理延迟，不代表精确网络耗时。该指标不受正文开关控制；缺少 SDK 起点（如 native 路径）、首个 step 前失败或时间倒退时省略。
 - 重试次数和历史统计 OpenCode 的 retry → busy，即退避后重新进入执行流程；等待期间取消不计数，不覆盖 SDK、鉴权插件或传输层内部重发。历史分别记录预计恢复时间和 busy 的观察时间相对 span 起点的毫秒偏移，不能当成实际网络请求时间，两者差距没有固定上限。归属未知或歧义时不补造记录；`0` / `[]` 表示没有确认到 OpenCode 重试。重试元数据不受正文采集开关控制。
 - 同一 `captureContent` 开关还控制 LLM span 的有效工具定义（含可取得的描述和参数 Schema）及模型请求／响应 headers。请求 headers 来自 AI SDK step 回调，响应 headers 来自 SDK 响应或可关联的 OpenCode API 错误；记录可见原值，不代表底层传输追加后的完整请求头。`otlpHeaders` 仅配置发往遥测接收端的导出请求，与模型 headers 采集无关。
 - `gen_ai.output.type` 不受正文开关控制：取得显式 SDK 输出格式时记录 `text` 或 `json`，没有约束或无法识别时省略，不根据回答内容猜测。native 路径没有 SDK 快照时省略输出类型、工具定义及 SDK headers。

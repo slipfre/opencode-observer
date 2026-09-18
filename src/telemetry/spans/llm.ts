@@ -32,6 +32,7 @@ export function createLlmSpans(
       compactionID?: string;
       span: Span;
       startedAt: number;
+      timeToFirstChunk?: number;
       messages?: { input: string; system: string | undefined };
       output?: string;
       outputType?: string;
@@ -53,6 +54,9 @@ export function createLlmSpans(
     calls.delete(key);
     options.history.add(call.reference.interaction.run, "llm", key);
     call.span.setAttributes({
+      "gen_ai.response.time_to_first_chunk": call.timeToFirstChunk,
+      "opencode.llm.time_to_first_chunk.source":
+        call.timeToFirstChunk === undefined ? undefined : "step-start",
       "gen_ai.output.type": call.outputType,
       "gen_ai.response.finish_reasons": input.finishReason
         ? [input.finishReason]
@@ -132,6 +136,13 @@ export function createLlmSpans(
 
       if (!call || call.reference.interaction.id !== input.interaction.id) {
         return;
+      }
+
+      if (input.firstChunk && call.timeToFirstChunk === undefined) {
+        const elapsed = input.firstChunk.observedAt - input.firstChunk.requestStartedAt;
+        if (input.firstChunk.requestStartedAt >= 0 && Number.isFinite(elapsed) && elapsed >= 0) {
+          call.timeToFirstChunk = elapsed / 1000;
+        }
       }
 
       if (input.retries) {

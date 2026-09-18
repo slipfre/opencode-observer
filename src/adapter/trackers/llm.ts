@@ -37,6 +37,8 @@ type LlmCall = {
     endedAt?: number;
   };
   startedStepIDs?: Set<string>;
+  requestStartedAt?: number;
+  firstChunk?: LlmUpdate["firstChunk"];
   previousStepTextPartIDs?: Set<string>;
   textParts: Map<string, string>;
   awaitingSdkOutput?: boolean;
@@ -109,9 +111,14 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       });
     }
 
-    if (call.pendingUpdate) {
-      options.observer.updateLlm({ ...call.reference, ...call.pendingUpdate });
+    if (call.pendingUpdate || call.firstChunk) {
+      options.observer.updateLlm({
+        ...call.reference,
+        ...call.pendingUpdate,
+        ...(call.firstChunk ? { firstChunk: call.firstChunk } : {}),
+      });
       delete call.pendingUpdate;
+      delete call.firstChunk;
     }
 
     const endedAt = call.assistantMessage.completedAt ?? call.finishSnapshot?.endedAt;
@@ -191,10 +198,14 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
 
     return {
       active: () => currentCall() !== undefined,
-      input(value) {
+      input(value, startedAt) {
         const call = currentCall();
 
         if (call) {
+          // An SDK binding first acquired after a retry or response cannot recover the original start.
+          if (!call.startedStepIDs?.size && call.retryAttempt === undefined) {
+            call.requestStartedAt ??= nonNegativeNumber(startedAt);
+          }
           call.pendingUpdate = value;
           call.awaitingSdkOutput = true;
           record(run, messageID);
@@ -429,7 +440,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
 
       record(run, info.id);
     },
-    part(run: RunReference, part: Part) {
+    part(run: RunReference, part: Part, observedAt?: number) {
       const state = store.get(run);
 
       if (!state) {
@@ -470,6 +481,17 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       if (part.type === "step-start") {
         if (call.assistantMessage?.completedAt !== undefined && call.startedStepIDs?.size) {
           return;
+        }
+
+        // Only the first step estimates first chunk arrival; retries and duplicate events cannot replace it.
+        if (
+          !call.startedStepIDs?.size &&
+          call.requestStartedAt !== undefined &&
+          observedAt !== undefined &&
+          Number.isFinite(observedAt) &&
+          observedAt >= call.requestStartedAt
+        ) {
+          call.firstChunk = { requestStartedAt: call.requestStartedAt, observedAt };
         }
 
         // Repeated steps/retries belong to the same logical request. A step is not an exact attempt boundary.

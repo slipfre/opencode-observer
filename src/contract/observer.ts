@@ -126,6 +126,13 @@ export type LlmRetry = {
 };
 
 export type LlmUpdate = LlmReference & {
+  /** First step-start estimates first chunk arrival; retain the first valid observation. */
+  firstChunk?: {
+    /** First SDK model-step start, in epoch milliseconds; never reset by retries. */
+    requestStartedAt: number;
+    /** Step-start publication time, or local receipt time when unavailable, in epoch milliseconds. */
+    observedAt: number;
+  };
   /** Replace the history of confirmed OpenCode execution retries. */
   retries?: LlmRetry[];
   /** Replace the SDK request snapshot and clear the previous step's response. */

@@ -50,6 +50,8 @@ describe("OpenCode run E2E", () => {
           "gen_ai.response.finish_reasons": ["stop"],
           "opencode.llm.retry_count": 0,
           "opencode.llm.retry_history": "[]",
+          "gen_ai.response.time_to_first_chunk": expect.any(Number),
+          "opencode.llm.time_to_first_chunk.source": "step-start",
         });
         expect(messages(llm, "input")).toContainEqual({
           role: "user",
@@ -160,6 +162,14 @@ describe("OpenCode run E2E", () => {
           ).toBe(false);
         });
         expect(JSON.stringify(fixture.otlp.payloads)).not.toContain("private-");
+        spans
+          .filter((span) => span.name === "e2e.llm")
+          .forEach((span) => {
+            expect(span.attributes["gen_ai.response.time_to_first_chunk"]).toBeGreaterThanOrEqual(
+              0,
+            );
+            expect(span.attributes["opencode.llm.time_to_first_chunk.source"]).toBe("step-start");
+          });
         expect(
           spans
             .filter((span) => span.name === "e2e.llm")
@@ -238,7 +248,14 @@ describe("OpenCode run E2E", () => {
             })),
           ),
         );
-        expect(llm.attributes["gen_ai.response.time_to_first_chunk"]).toBeUndefined();
+        const firstChunk = llm.attributes["gen_ai.response.time_to_first_chunk"];
+        expect(firstChunk).toBeGreaterThanOrEqual(
+          (fixture.llm.mainHits()[2]!.receivedAt - fixture.llm.mainHits()[0]!.receivedAt) / 1000,
+        );
+        expect(firstChunk).toBeLessThanOrEqual(
+          Number(BigInt(llm.endTimeUnixNano) - BigInt(llm.startTimeUnixNano)) / 1_000_000_000,
+        );
+        expect(llm.attributes["opencode.llm.time_to_first_chunk.source"]).toBe("step-start");
         expect(llm.attributes["gen_ai.response.finish_reasons"]).toEqual(["stop"]);
         spans.forEach(expectUnset);
       },
@@ -259,6 +276,8 @@ describe("OpenCode run E2E", () => {
 
         expect(fixture.llm.mainHits()).toHaveLength(2);
         expect(llm.attributes["opencode.llm.retry_count"]).toBe(1);
+        expect(llm.attributes["gen_ai.response.time_to_first_chunk"]).toBeUndefined();
+        expect(llm.attributes["opencode.llm.time_to_first_chunk.source"]).toBeUndefined();
         expect(JSON.parse(String(llm.attributes["opencode.llm.retry_history"]))).toEqual([
           {
             attempt: 1,
