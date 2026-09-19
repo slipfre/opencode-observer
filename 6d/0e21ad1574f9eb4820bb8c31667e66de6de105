@@ -1,0 +1,38 @@
+src/telemetry/spans/run.ts
+  s_ca8f1790b6e237::t_2a496ef92e85f6 14,34,76,97,99,103
+docs/adapter.md
+  s_ca8f1790b6e237::t_df0aa5711736c7 118-119
+tests/tracker-lifecycle.test.ts
+  s_ca8f1790b6e237::t_faafe1af1b3b14 167-268
+src/contract/observer.ts
+  s_ca8f1790b6e237::t_2a496ef92e85f6 204,207-209
+  s_ca8f1790b6e237::t_df0aa5711736c7 205-206
+docs/architecture.md
+  s_ca8f1790b6e237::t_df0aa5711736c7 99-102,162
+src/telemetry/spans/llm.ts
+  s_ca8f1790b6e237::t_2a496ef92e85f6 20,47,50,113,115,133,135,207
+src/adapter/trackers/tool.ts
+  s_ca8f1790b6e237::t_2a496ef92e85f6 46,51-55,57-62,210
+src/telemetry/spans/common.ts
+  s_ca8f1790b6e237::t_2a496ef92e85f6 5,29
+tests/telemetry.test.ts
+  s_ca8f1790b6e237::t_c4f7a90406b56f 233,247,255
+  s_ca8f1790b6e237::t_faafe1af1b3b14 217-232,234-246,248-254,256-276,651-667
+  s_ca8f1790b6e237::t_8ad135f90389da 668-669
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6d0e21ad1574f9eb4820bb8c31667e66de6de105",
+  "prompts": {},
+  "sessions": {
+    "s_ca8f1790b6e237": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ba8c-3d5d-7772-a551-3a6321aea457",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
