@@ -201,6 +201,12 @@ export type PermissionFinish = PermissionReference & {
     | { reply?: never; error: ObservationError }
   );
 
+/**
+ * Operations use complete references: repeated starts cannot recreate an object,
+ * and repeated finishes or late updates cannot rewrite its terminal state.
+ * Update payloads define their own append or replacement semantics.
+ * Source event deduplication and lifecycle callbacks belong to the caller.
+ */
 export type Observer = {
   /** Recording is synchronous and never waits for network export. */
   startRun(input: RunStart): void;

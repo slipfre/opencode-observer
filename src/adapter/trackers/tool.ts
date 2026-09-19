@@ -43,13 +43,23 @@ export function createToolTracker(options: {
   ) {
     const state = store.get(run);
 
-    if (!state || !call.startSnapshot) {
+    if (!state) {
       return;
     }
 
     const callKey = `${call.messageID}:${call.callID}`;
-    state.toolCalls.delete(callKey);
+
+    if (!state.toolCalls.delete(callKey)) {
+      return;
+    }
+
     state.finishedCallKeys.add(callKey);
+
+    // Removed or closed parts cannot acquire an owner and reopen through a late update.
+    if (!call.startSnapshot) {
+      return;
+    }
+
     const reference = {
       interaction: call.startSnapshot.interaction,
       callID: call.callID,
@@ -197,7 +207,7 @@ export function createToolTracker(options: {
         return;
       }
 
-      state.toolCalls.forEach((call, key) => {
+      state.toolCalls.forEach((call) => {
         if (call.messageID === messageID && (partID === undefined || call.partID === partID)) {
           finish(
             run,
@@ -205,8 +215,6 @@ export function createToolTracker(options: {
             { endedAt: time, error: { type: "_OTHER", message: "tool removed before completion" } },
             time,
           );
-          state.toolCalls.delete(key);
-          state.finishedCallKeys.add(key);
         }
       });
     },

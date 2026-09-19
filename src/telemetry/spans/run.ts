@@ -11,7 +11,7 @@ import { encodeTextMessage, type SpanOptions } from "./common.js";
 type RunSpanState = {
   reference: RunReference;
   span: Span;
-  inputTextsByMessageID: Map<string, string | undefined>;
+  inputTextsByMessageID?: Map<string, string | undefined>;
 };
 
 export function createRunSpans(
@@ -31,7 +31,7 @@ export function createRunSpans(
 
     activeSpans.delete(key);
 
-    if (options.captureContent && spanState.inputTextsByMessageID.size > 0) {
+    if (spanState.inputTextsByMessageID?.size) {
       const texts = Array.from(spanState.inputTextsByMessageID.values());
 
       if (texts.every((text) => text !== undefined)) {
@@ -73,7 +73,7 @@ export function createRunSpans(
 
       activeSpans.set(key, {
         reference: { sessionID: input.sessionID, id: input.id },
-        inputTextsByMessageID: new Map(),
+        inputTextsByMessageID: options.captureContent ? new Map() : undefined,
         span: options.tracer.startSpan(
           `${options.spanNamePrefix}run`,
           {
@@ -94,16 +94,13 @@ export function createRunSpans(
       return true;
     },
     update(input: RunUpdate) {
-      const spanState = activeSpans.get(`${input.sessionID}:${input.id}`);
+      const inputs = activeSpans.get(`${input.sessionID}:${input.id}`)?.inputTextsByMessageID;
 
-      if (!spanState || spanState.inputTextsByMessageID.has(input.input.id)) {
+      if (!inputs || inputs.has(input.input.id)) {
         return;
       }
 
-      spanState.inputTextsByMessageID.set(
-        input.input.id,
-        options.captureContent ? input.input.text : undefined,
-      );
+      inputs.set(input.input.id, input.input.text);
     },
     context(reference: RunReference) {
       const spanState = activeSpans.get(`${reference.sessionID}:${reference.id}`);

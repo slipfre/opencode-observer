@@ -2,6 +2,7 @@ import { SpanStatusCode, type Context, type Span, type Tracer } from "@opentelem
 import type {
   AgentContext,
   CompactionReference,
+  LlmReference,
   ObservationError,
   RunReference,
   ToolReference,
@@ -25,7 +26,7 @@ export function encodeTextMessage(role: "user" | "assistant", text: string) {
   return JSON.stringify([{ role, parts: [{ type: "text", content: text }] }]);
 }
 
-export function operationKey(reference: ToolReference | CompactionReference) {
+export function operationKey(reference: ToolReference | CompactionReference | LlmReference) {
   const key = `${reference.interaction.run.sessionID}:${reference.interaction.run.id}:${reference.interaction.id}`;
   return "messageID" in reference
     ? `${key}:${reference.messageID}:${encodeURIComponent(reference.callID)}`

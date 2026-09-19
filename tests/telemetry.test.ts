@@ -214,6 +214,66 @@ test("finished span registry keeps matching interaction and LLM IDs independent 
   expect(h.spans.every((span) => span.status.code === SpanStatusCode.UNSET)).toBe(true);
 });
 
+test.each([false, true])(
+  "LLM deduplication uses the complete reference with the first call finished=%s",
+  async (finishFirstEarly) => {
+    const h = setup();
+    const parents = [interaction("first"), interaction("second")];
+    const calls = parents.map((parent) => llm("same-message", parent));
+    h.observer.startRun(start());
+    parents.forEach((parent) => h.observer.startInteraction(parent));
+    h.observer.startLlm(calls[0]!);
+    h.observer.updateLlm({ ...calls[0]!, request: { outputType: "text" } });
+
+    if (finishFirstEarly) {
+      h.observer.finishLlm({ ...calls[0]!, endedAt: 1400, fallbackOutputText: "first answer" });
+    }
+
+    h.observer.startLlm(calls[1]!);
+    h.observer.updateLlm({ ...calls[1]!, request: { outputType: "json" } });
+    const headers = calls.map((call) => h.observer.llmTraceHeaders(call));
+    expect(headers[1]?.traceparent).toBeDefined();
+    expect(headers[0]?.traceparent).not.toBe(headers[1]?.traceparent);
+    expect(headers[0] === undefined).toBe(finishFirstEarly);
+
+    calls.forEach((call, index) => {
+      h.observer.startLlm({ ...call, model: "duplicate" });
+      h.observer.finishLlm({
+        ...call,
+        endedAt: index === 0 ? 1400 : 1500,
+        fallbackOutputText: index === 0 ? "first answer" : "second answer",
+      });
+      h.observer.startLlm(call);
+      h.observer.updateLlm({ ...call, request: { outputType: index === 0 ? "json" : "text" } });
+      h.observer.finishLlm({ ...call, endedAt: 9000, fallbackOutputText: "late" });
+    });
+    h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
+    await h.observer.flush();
+
+    const spans = h.spans.filter((span) => span.name === "opencode.llm");
+    expect(spans).toHaveLength(2);
+    expect(spans.map((span) => span.attributes["gen_ai.output.type"])).toEqual(["text", "json"]);
+    expect(spans.map((span) => span.attributes["gen_ai.request.model"])).toEqual([
+      "gemini",
+      "gemini",
+    ]);
+    expect(spans.map((span) => span.endTime)).toEqual([
+      [1, 400_000_000],
+      [1, 500_000_000],
+    ]);
+    spans.forEach((span, index) => {
+      expect(span.attributes["gen_ai.output.messages"]).toContain(
+        index === 0 ? "first answer" : "second answer",
+      );
+      expect(span.parentSpanContext?.spanId).toBe(
+        h.spans
+          .find((parent) => parent.attributes["opencode.interaction.id"] === parents[index]?.id)
+          ?.spanContext().spanId,
+      );
+    });
+  },
+);
+
 test("run cleanup preserves child deduplication in live runs and rejects closed-run replays", async () => {
   const h = setup();
   const first = interaction();
@@ -586,6 +646,25 @@ test("contract calls create only run spans and deduplicate inputs, starts, ends 
   expect(h.spans[0]?.attributes["opencode.session.parent_id"]).toBeUndefined();
   expect(h.spans[0]?.parentSpanContext).toBeUndefined();
   expect(h.spans[0]?.attributes["error.type"]).toBeUndefined();
+});
+
+test("run input aggregation does not inspect payloads when content capture is disabled", async () => {
+  const h = setup({ captureContent: false });
+  h.observer.startRun(start());
+  const update = {
+    ...start(),
+    get input(): { id: string; text: string } {
+      throw new Error("disabled input aggregation must not inspect or retain input");
+    },
+  };
+  h.observer.updateRun(update);
+  h.observer.updateRun(update);
+  h.observer.finishRun({ ...start(), endedAt: 2000, output: "secret" });
+  await h.observer.flush();
+
+  expect(h.spans).toHaveLength(1);
+  expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toBeUndefined();
+  expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBeUndefined();
 });
 
 test("run identity is scoped by session and unknown objects cannot create spans through updates", async () => {

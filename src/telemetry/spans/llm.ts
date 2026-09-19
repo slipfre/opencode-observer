@@ -17,7 +17,7 @@ import type {
   RunReference,
   TraceHeaders,
 } from "../../contract/observer.js";
-import { encodeTextMessage, type SpanOptions } from "./common.js";
+import { encodeTextMessage, operationKey, type SpanOptions } from "./common.js";
 import { encodeModelMessages, encodeSystemInstructions } from "./messages.js";
 
 export function createLlmSpans(
@@ -44,10 +44,10 @@ export function createLlmSpans(
   const propagator = new W3CTraceContextPropagator();
 
   function finish(input: LlmFinish) {
-    const key = `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`;
+    const key = operationKey(input);
     const spanState = activeSpans.get(key);
 
-    if (!spanState || spanState.reference.interaction.id !== input.interaction.id) {
+    if (!spanState) {
       return;
     }
 
@@ -110,11 +110,9 @@ export function createLlmSpans(
   return {
     finish,
     traceHeaders(input: LlmReference): TraceHeaders | undefined {
-      const spanState = activeSpans.get(
-        `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`,
-      );
+      const spanState = activeSpans.get(operationKey(input));
 
-      if (!spanState || spanState.reference.interaction.id !== input.interaction.id) {
+      if (!spanState) {
         return;
       }
 
@@ -132,11 +130,9 @@ export function createLlmSpans(
         : undefined;
     },
     update(input: LlmUpdate) {
-      const spanState = activeSpans.get(
-        `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`,
-      );
+      const spanState = activeSpans.get(operationKey(input));
 
-      if (!spanState || spanState.reference.interaction.id !== input.interaction.id) {
+      if (!spanState) {
         return;
       }
 
@@ -208,7 +204,7 @@ export function createLlmSpans(
       }
     },
     start(input: LlmStart) {
-      const key = `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`;
+      const key = operationKey(input);
       const parent = options.parentContext(input);
 
       if (

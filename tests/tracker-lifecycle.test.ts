@@ -164,6 +164,108 @@ test("tool partitions isolate full run identities and release parts waiting for 
   expect(tracker.activeStart(other, "assistant", "call")).toBeDefined();
 });
 
+test.each(["completed", "removed", "closed"])(
+  "tool %s retires source identity and invokes lifecycle callbacks once",
+  (terminal) => {
+    const observer = recording();
+    const onFinish = mock(() => {});
+    const tracker = createToolTracker({ observer, onFinish, onChildSessionObserved() {} });
+    const run = { sessionID: "s1", id: "r1" };
+    const context = { reference: { run, id: "input" }, userInputText: undefined };
+    const part: ToolPart = {
+      type: "tool",
+      id: "part",
+      messageID: "assistant",
+      sessionID: "s1",
+      callID: "call",
+      tool: "read",
+      state: { status: "running", input: {}, time: { start: 1000 } },
+    };
+    const completed: ToolPart = {
+      ...part,
+      state: {
+        status: "completed",
+        input: {},
+        output: "result",
+        title: "read",
+        metadata: {},
+        time: { start: 1000, end: 1200 },
+      },
+    };
+    tracker.open(run);
+    tracker.part(run, part, 1000, context);
+
+    if (terminal === "completed") {
+      tracker.part(run, completed, 1200, context);
+    }
+
+    if (terminal === "removed") {
+      tracker.remove(run, part.messageID, 1200, part.id);
+    }
+
+    if (terminal === "closed") {
+      tracker.close(run, 1200);
+    }
+
+    const updates = observer.updateTool.mock.calls.length;
+    tracker.part(run, part, 1300, context);
+    tracker.part(run, completed, 1400, context);
+    tracker.associate(run, part.messageID, part.callID, context);
+    tracker.remove(run, part.messageID, 1500);
+    tracker.close(run, 1600);
+
+    expect(tracker.activeStart(run, part.messageID, part.callID)).toBeUndefined();
+    expect(tracker.unresolved(run)).toEqual([]);
+    expect(observer.startTool).toHaveBeenCalledTimes(1);
+    expect(observer.updateTool).toHaveBeenCalledTimes(updates);
+    expect(observer.finishTool).toHaveBeenCalledTimes(1);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    expect(observer.finishTool).toHaveBeenCalledWith(
+      expect.objectContaining({ interaction: context.reference, endedAt: 1200 }),
+    );
+  },
+);
+
+test.each(["removed", "closed"])(
+  "unowned tool %s cannot be associated or recreated by late parts",
+  (terminal) => {
+    const observer = recording();
+    const onFinish = mock(() => {});
+    const tracker = createToolTracker({ observer, onFinish, onChildSessionObserved() {} });
+    const run = { sessionID: "s1", id: "r1" };
+    const context = { reference: { run, id: "input" }, userInputText: undefined };
+    const part: ToolPart = {
+      type: "tool",
+      id: "part",
+      messageID: "assistant",
+      sessionID: "s1",
+      callID: "call",
+      tool: "read",
+      state: { status: "running", input: {}, time: { start: 1000 } },
+    };
+    tracker.open(run);
+    tracker.part(run, part, 1000);
+
+    if (terminal === "removed") {
+      tracker.remove(run, part.messageID, 1200, part.id);
+    }
+
+    if (terminal === "closed") {
+      tracker.close(run, 1200);
+    }
+
+    tracker.associate(run, part.messageID, part.callID, context);
+    tracker.part(run, part, 1300, context);
+    tracker.close(run, 1400);
+
+    expect(tracker.unresolved(run)).toEqual([]);
+    expect(observer.startTool).not.toHaveBeenCalled();
+    expect(observer.updateTool).not.toHaveBeenCalled();
+    expect(observer.finishTool).not.toHaveBeenCalled();
+    expect(onFinish).not.toHaveBeenCalled();
+  },
+);
+
 test("LLM bindings expire on release even when the same run and message are registered again", () => {
   const observer = recording();
   const tracker = createLlmTracker({
