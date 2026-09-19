@@ -15,7 +15,7 @@ type FixtureOptions = {
   env?: Record<string, string>;
 };
 export type E2EFixture = Parameters<Parameters<typeof withE2EFixture>[1]>[0];
-export type RunResult = Awaited<ReturnType<E2EFixture["run"]>>;
+export type CliRunResult = Awaited<ReturnType<E2EFixture["run"]>>;
 
 export async function withE2EFixture(
   options: FixtureOptions,
@@ -60,7 +60,7 @@ export async function withE2EFixture(
   using llm = startFakeLlm(options.replies);
   using otlp = startOtlpReceiver(options.otlpDelayMs);
   const processes = new Set<Bun.Subprocess>();
-  const results: RunResult[] = [];
+  const results: CliRunResult[] = [];
 
   try {
     const configDirectory = path.join(directory, ".config/opencode");

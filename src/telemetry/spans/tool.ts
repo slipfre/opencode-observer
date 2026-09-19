@@ -21,24 +21,24 @@ export function createToolSpans(
     parentContext(reference: InteractionReference): Context | undefined;
   },
 ) {
-  const tools = new Map<string, { reference: ToolReference; name: string; span: Span }>();
+  const activeSpans = new Map<string, { reference: ToolReference; toolName: string; span: Span }>();
 
   function finish(input: ToolFinish) {
     const key = operationKey(input);
-    const tool = tools.get(key);
+    const spanState = activeSpans.get(key);
 
-    if (!tool) {
+    if (!spanState) {
       return;
     }
 
-    tools.delete(key);
-    options.history.add(tool.reference.interaction.run, "tool", key);
+    activeSpans.delete(key);
+    options.finishedSpanRegistry.add(spanState.reference.interaction.run, "tool", key);
 
     if (options.captureContent && !input.error && input.output !== undefined) {
-      tool.span.setAttribute("gen_ai.tool.call.result", toolResult(input.output));
+      spanState.span.setAttribute("gen_ai.tool.call.result", encodeToolResult(input.output));
     }
 
-    endSpan(tool.span, input.endedAt, input.error);
+    endSpan(spanState.span, input.endedAt, input.error);
   }
 
   return {
@@ -47,19 +47,23 @@ export function createToolSpans(
       const key = operationKey(input);
       const parent = options.parentContext(input.interaction);
 
-      if (!parent || tools.has(key) || options.history.has(input.interaction.run, "tool", key)) {
+      if (
+        !parent ||
+        activeSpans.has(key) ||
+        options.finishedSpanRegistry.has(input.interaction.run, "tool", key)
+      ) {
         return;
       }
 
-      tools.set(key, {
+      activeSpans.set(key, {
         reference: {
           interaction: { run: { ...input.interaction.run }, id: input.interaction.id },
           messageID: input.messageID,
           callID: input.callID,
         },
-        name: input.name,
+        toolName: input.name,
         span: options.tracer.startSpan(
-          `${options.tracePrefix}tool.${input.name}`,
+          `${options.spanNamePrefix}tool.${input.name}`,
           {
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
@@ -79,33 +83,33 @@ export function createToolSpans(
       });
     },
     update(input: ToolUpdate) {
-      const tool = tools.get(operationKey(input));
+      const spanState = activeSpans.get(operationKey(input));
 
-      if (tool && options.captureContent && input.arguments !== undefined) {
-        tool.span.setAttribute("gen_ai.tool.call.arguments", JSON.stringify(input.arguments));
+      if (spanState && options.captureContent && input.arguments !== undefined) {
+        spanState.span.setAttribute("gen_ai.tool.call.arguments", JSON.stringify(input.arguments));
       }
     },
     context(reference: ToolReference, taskOnly = false) {
-      const tool = tools.get(operationKey(reference));
-      return tool && (!taskOnly || tool.name === "task")
-        ? trace.setSpan(options.rootContext, tool.span)
+      const spanState = activeSpans.get(operationKey(reference));
+      return spanState && (!taskOnly || spanState.toolName === "task")
+        ? trace.setSpan(options.rootContext, spanState.span)
         : undefined;
     },
-    closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
-      tools.forEach((tool) => {
-        if (sameRun(tool.reference.interaction.run, run)) {
+    finishPendingForRun(run: RunReference, endedAt: number, error?: ObservationError) {
+      activeSpans.forEach((spanState) => {
+        if (sameRun(spanState.reference.interaction.run, run)) {
           finish({
-            ...tool.reference,
+            ...spanState.reference,
             endedAt,
             error: error ?? { type: "_OTHER", message: "session ended before tool completed" },
           });
         }
       });
     },
-    close(endedAt: number) {
-      tools.forEach((tool) =>
+    finishAllOnShutdown(endedAt: number) {
+      activeSpans.forEach((spanState) =>
         finish({
-          ...tool.reference,
+          ...spanState.reference,
           endedAt,
           error: { type: "_OTHER", message: "plugin disposed before tool completed" },
         }),
@@ -114,7 +118,7 @@ export function createToolSpans(
   };
 }
 
-function toolResult(output: string) {
+function encodeToolResult(output: string) {
   try {
     const value: unknown = JSON.parse(output);
 

@@ -29,7 +29,7 @@ export function createPermissionTracker(options: { observer: Observer }) {
   return {
     open: store.open,
     release: store.release,
-    asked(
+    observeRequest(
       run: RunReference,
       request: PermissionRequest,
       observedAt: number,
@@ -83,7 +83,7 @@ export function createPermissionTracker(options: { observer: Observer }) {
         }
       }
     },
-    replied(
+    observeReply(
       run: RunReference,
       requestID: string,
       reply: "once" | "always" | "reject",
@@ -105,7 +105,7 @@ export function createPermissionTracker(options: { observer: Observer }) {
       finish({ ...reference, reply, endedAt: observedAt });
       return reply === "reject" ? reference.tool : undefined;
     },
-    closeTool(tool: ToolReference, observedAt: number, error?: ObservationError) {
+    finishPendingForTool(tool: ToolReference, observedAt: number, error?: ObservationError) {
       store.get(tool.interaction.run)?.pendingRequests.forEach((reference) => {
         if (reference.tool.callID === tool.callID && reference.tool.messageID === tool.messageID) {
           finish({

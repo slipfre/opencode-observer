@@ -1,6 +1,6 @@
 import type { ObservationError } from "../../contract/observer.js";
 
-export function errorDetails(error: unknown): ObservationError {
+export function normalizeError(error: unknown): ObservationError {
   if (!error || typeof error !== "object") {
     return { type: "_OTHER", ...(typeof error === "string" && error ? { message: error } : {}) };
   }

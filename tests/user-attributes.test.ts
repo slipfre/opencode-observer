@@ -13,7 +13,7 @@ const run = {
   id: "u1",
   sessionID: "s1",
   startedAt: 1000,
-  parent: undefined,
+  parentTool: undefined,
   parentSessionID: undefined,
 };
 const interaction = {
@@ -32,7 +32,7 @@ afterEach(async () => {
 
 function setup(spanAttributes: Record<string, string>) {
   const spans: ReadableSpan[] = [];
-  const provider = new BasicTracerProvider({
+  const tracerProvider = new BasicTracerProvider({
     spanProcessors: [
       new SimpleSpanProcessor({
         export(batch, callback) {
@@ -44,8 +44,8 @@ function setup(spanAttributes: Record<string, string>) {
     ],
   });
   const observer = createObserver({
-    provider,
-    scope: { name: "test" },
+    tracerProvider,
+    instrumentationScope: { name: "test" },
     captureContent: false,
     now: () => 2000,
     spanAttributes,
@@ -77,7 +77,7 @@ test.each([undefined, "configured-user", "unknown"])(
       model: "model",
       operation: "chat",
       stream: true,
-      input: undefined,
+      fallbackInputText: undefined,
       agentType: undefined,
       parentSessionID: undefined,
       compactionID: undefined,

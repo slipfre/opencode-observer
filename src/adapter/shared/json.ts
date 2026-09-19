@@ -1,6 +1,9 @@
 import type { JsonValue } from "../../contract/messages.js";
 
-export function jsonValue(value: unknown, parents = new WeakSet<object>()): JsonValue | undefined {
+export function toJsonValue(
+  value: unknown,
+  parents = new WeakSet<object>(),
+): JsonValue | undefined {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return value;
   }
@@ -27,10 +30,10 @@ export function jsonValue(value: unknown, parents = new WeakSet<object>()): Json
 
   parents.add(value);
   const result = Array.isArray(value)
-    ? value.map((item) => jsonValue(item, parents) ?? null)
+    ? value.map((item) => toJsonValue(item, parents) ?? null)
     : Object.fromEntries(
         Object.entries(value).flatMap(([key, item]) => {
-          const cleaned = jsonValue(item, parents);
+          const cleaned = toJsonValue(item, parents);
           return cleaned === undefined ? [] : [[key, cleaned]];
         }),
       );
@@ -39,8 +42,8 @@ export function jsonValue(value: unknown, parents = new WeakSet<object>()): Json
   return result;
 }
 
-export function jsonObject(value: unknown) {
-  const result = jsonValue(value);
+export function toJsonObject(value: unknown) {
+  const result = toJsonValue(value);
   return result !== null && typeof result === "object" && !Array.isArray(result)
     ? result
     : undefined;

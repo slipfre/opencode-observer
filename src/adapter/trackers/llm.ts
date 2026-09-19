@@ -10,11 +10,11 @@ import type {
   RunReference,
 } from "../../contract/observer.js";
 import { createRunScopedStore } from "../shared/runs.js";
-import { errorDetails } from "../shared/error.js";
+import { normalizeError } from "../shared/error.js";
 import { nonNegativeNumber } from "../shared/number.js";
 import type { ModelCapture } from "../model/ai-sdk.js";
-import { parseModelRequest, providerName, type LlmRequest } from "../model/request.js";
-import { parseModelUsage } from "../model/usage.js";
+import { parseChatParams, providerName, type ChatParamsHookArgs } from "../model/request.js";
+import { normalizeOpenCodeUsage } from "../model/usage.js";
 import { parseErrorResponseHeaders } from "../model/headers.js";
 import type { InteractionContext } from "./interaction.js";
 
@@ -31,21 +31,21 @@ type LlmCall = {
     summary?: boolean;
   };
   interactionContext?: InteractionContext;
-  prepared?: boolean;
+  requestPreparationObserved?: boolean;
   reference?: LlmReference;
-  finishSnapshot?: Omit<LlmFinish, "interaction" | "id" | "output" | "endedAt"> & {
+  finishSnapshot?: Omit<LlmFinish, "interaction" | "id" | "fallbackOutputText" | "endedAt"> & {
     endedAt?: number;
   };
   startedStepIDs?: Set<string>;
-  requestStartedAt?: number;
-  firstChunk?: LlmUpdate["firstChunk"];
+  firstSdkStepStartedAt?: number;
+  firstChunkEstimate?: LlmUpdate["firstChunkEstimate"];
   previousStepTextPartIDs?: Set<string>;
   textParts: Map<string, string>;
   awaitingSdkOutput?: boolean;
   captureBinding?: symbol;
   pendingUpdate?: Omit<LlmUpdate, "interaction" | "id">;
   pendingRetry?: Omit<LlmRetry, "observedAt">;
-  retryAttempt?: number;
+  highestSeenRetryAttempt?: number;
   retries?: LlmRetry[];
 };
 
@@ -54,7 +54,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
     llmCalls: new Map<string, LlmCall>(),
     finishedMessageIDs: new Set<string>(),
     closedCompactionIDs: new Set<string>(),
-    requestSettings: new Map<string, ReturnType<typeof parseModelRequest>>(),
+    requestSettings: new Map<string, ReturnType<typeof parseChatParams>>(),
   }));
 
   function record(run: RunReference, messageID: string) {
@@ -70,7 +70,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
     if (
       !call?.assistantMessage ||
       startedAt === undefined ||
-      (!call.prepared && !call.startedStepIDs?.size)
+      (!call.requestPreparationObserved && !call.startedStepIDs?.size)
     ) {
       return;
     }
@@ -103,7 +103,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
           (provider === "gcp.gemini" || provider === "gcp.vertex_ai" ? "generate_content" : "chat"),
         stream: true,
         agentName: message.agentName,
-        input: options.captureContent ? context.userInputText : undefined,
+        fallbackInputText: options.captureContent ? context.userInputText : undefined,
         parameters: request?.parameters,
         agentType: context.agentType,
         parentSessionID: context.parentSessionID,
@@ -111,14 +111,14 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       });
     }
 
-    if (call.pendingUpdate || call.firstChunk) {
+    if (call.pendingUpdate || call.firstChunkEstimate) {
       options.observer.updateLlm({
         ...call.reference,
         ...call.pendingUpdate,
-        ...(call.firstChunk ? { firstChunk: call.firstChunk } : {}),
+        ...(call.firstChunkEstimate ? { firstChunkEstimate: call.firstChunkEstimate } : {}),
       });
       delete call.pendingUpdate;
-      delete call.firstChunk;
+      delete call.firstChunkEstimate;
     }
 
     const endedAt = call.assistantMessage.completedAt ?? call.finishSnapshot?.endedAt;
@@ -133,7 +133,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         ...call.reference,
         ...call.finishSnapshot,
         endedAt,
-        output:
+        fallbackOutputText:
           options.captureContent && call.textParts.size > 0
             ? Array.from(call.textParts.values()).join("\n")
             : undefined,
@@ -141,7 +141,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
     }
   }
 
-  function resolveRequest(run: RunReference, input: LlmRequest[0]) {
+  function findMatchingCall(run: RunReference, input: ChatParamsHookArgs[0]) {
     const candidates = Array.from(store.get(run)?.llmCalls.values() ?? []).filter(
       (call) =>
         !call.finishSnapshot &&
@@ -169,7 +169,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
     }
 
     state.llmCalls.forEach((call) => {
-      if (!call.prepared && !call.startedStepIDs?.size) {
+      if (!call.requestPreparationObserved && !call.startedStepIDs?.size) {
         return;
       }
 
@@ -190,7 +190,11 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
   }
 
   // SDK callbacks retain only identity, never a call record or its content snapshots.
-  function capture(run: RunReference, messageID: string, captureBinding: symbol): ModelCapture {
+  function createCaptureCallbacks(
+    run: RunReference,
+    messageID: string,
+    captureBinding: symbol,
+  ): ModelCapture {
     function currentCall() {
       const call = store.get(run)?.llmCalls.get(messageID);
       return call?.captureBinding === captureBinding ? call : undefined;
@@ -203,8 +207,8 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
 
         if (call) {
           // An SDK binding first acquired after a retry or response cannot recover the original start.
-          if (!call.startedStepIDs?.size && call.retryAttempt === undefined) {
-            call.requestStartedAt ??= nonNegativeNumber(startedAt);
+          if (!call.startedStepIDs?.size && call.highestSeenRetryAttempt === undefined) {
+            call.firstSdkStepStartedAt ??= nonNegativeNumber(startedAt);
           }
           call.pendingUpdate = value;
           call.awaitingSdkOutput = true;
@@ -247,12 +251,12 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         record(run, messageID);
       }
     },
-    activeRequest(run: RunReference) {
+    activeAssistant(run: RunReference) {
       const activeCalls = Array.from(store.get(run)?.llmCalls.values() ?? []).filter(
         (call) =>
           call.assistantMessage &&
           !call.assistantMessage.summary &&
-          (call.prepared || call.startedStepIDs?.size) &&
+          (call.requestPreparationObserved || call.startedStepIDs?.size) &&
           !call.finishSnapshot,
       );
       const call = activeCalls.length === 1 ? activeCalls[0] : undefined;
@@ -274,7 +278,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
           call.assistantMessage &&
           call.assistantMessage.completedAt === undefined &&
           call.finishSnapshot?.endedAt === undefined &&
-          (call.prepared || call.startedStepIDs?.size),
+          (call.requestPreparationObserved || call.startedStepIDs?.size),
       );
       const call = candidates.length === 1 ? candidates[0] : undefined;
 
@@ -286,11 +290,14 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       }
 
       if (status.type === "retry") {
-        if (!Number.isSafeInteger(status.attempt) || status.attempt <= (call.retryAttempt ?? 0)) {
+        if (
+          !Number.isSafeInteger(status.attempt) ||
+          status.attempt <= (call.highestSeenRetryAttempt ?? 0)
+        ) {
           return;
         }
 
-        call.retryAttempt = status.attempt;
+        call.highestSeenRetryAttempt = status.attempt;
         call.pendingRetry = {
           attempt: status.attempt,
           reason: status.message,
@@ -308,7 +315,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       call.pendingUpdate = { ...call.pendingUpdate, retries: call.retries };
       record(run, call.messageID);
     },
-    closeCompaction(
+    finishForCompaction(
       run: RunReference,
       markerID: string,
       endedAt: number,
@@ -340,20 +347,20 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       });
       state.closedCompactionIDs.add(markerID);
     },
-    prepare(run: RunReference, input: LlmRequest[0]) {
-      const call = resolveRequest(run, input);
+    prepareTraceHeaders(run: RunReference, input: ChatParamsHookArgs[0]) {
+      const call = findMatchingCall(run, input);
 
       if (!call) {
         return;
       }
 
       // Headers must reference a span that already exists before provider execution.
-      call.prepared = true;
+      call.requestPreparationObserved = true;
       record(run, call.messageID);
       return call.reference ? options.observer.llmTraceHeaders(call.reference) : undefined;
     },
-    bind(run: RunReference, input: LlmRequest[0]): ModelCapture | undefined {
-      const call = resolveRequest(run, input);
+    bind(run: RunReference, input: ChatParamsHookArgs[0]): ModelCapture | undefined {
+      const call = findMatchingCall(run, input);
 
       if (!call) {
         return;
@@ -361,9 +368,13 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
 
       const captureBinding = Symbol();
       call.captureBinding = captureBinding;
-      return capture(run, call.messageID, captureBinding);
+      return createCaptureCallbacks(run, call.messageID, captureBinding);
     },
-    request(run: RunReference, input: LlmRequest[0], output: LlmRequest[1]) {
+    observeRequestParameters(
+      run: RunReference,
+      input: ChatParamsHookArgs[0],
+      output: ChatParamsHookArgs[1],
+    ) {
       const state = store.get(run);
 
       if (!state) {
@@ -373,7 +384,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       const requestKey =
         `${input.message.id}:${encodeURIComponent(input.model.providerID)}:` +
         `${encodeURIComponent(input.model.id)}:${encodeURIComponent(input.agent)}`;
-      state.requestSettings.set(requestKey, parseModelRequest(input, output));
+      state.requestSettings.set(requestKey, parseChatParams(input, output));
     },
     message(
       run: RunReference,
@@ -430,7 +441,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         call.finishSnapshot = {
           ...call.finishSnapshot,
           endedAt: call.finishSnapshot?.endedAt ?? observedAt,
-          error: errorDetails(info.error),
+          error: normalizeError(info.error),
           finishReason: info.finish,
           responseHeaders: options.captureContent
             ? parseErrorResponseHeaders(info.error)
@@ -486,12 +497,15 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
         // Only the first step estimates first chunk arrival; retries and duplicate events cannot replace it.
         if (
           !call.startedStepIDs?.size &&
-          call.requestStartedAt !== undefined &&
+          call.firstSdkStepStartedAt !== undefined &&
           observedAt !== undefined &&
           Number.isFinite(observedAt) &&
-          observedAt >= call.requestStartedAt
+          observedAt >= call.firstSdkStepStartedAt
         ) {
-          call.firstChunk = { requestStartedAt: call.requestStartedAt, observedAt };
+          call.firstChunkEstimate = {
+            firstSdkStepStartedAt: call.firstSdkStepStartedAt,
+            observedAt,
+          };
         }
 
         // Repeated steps/retries belong to the same logical request. A step is not an exact attempt boundary.
@@ -509,7 +523,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
       }
 
       if (part.type === "step-finish") {
-        if (!call.prepared && !call.startedStepIDs?.size) {
+        if (!call.requestPreparationObserved && !call.startedStepIDs?.size) {
           state.llmCalls.delete(part.messageID);
           state.finishedMessageIDs.add(part.messageID);
           return;
@@ -517,7 +531,7 @@ export function createLlmTracker(options: { observer: Observer; captureContent?:
 
         call.finishSnapshot ??= {
           finishReason: part.reason || undefined,
-          usage: parseModelUsage(part.tokens),
+          usage: normalizeOpenCodeUsage(part.tokens),
           cost: nonNegativeNumber(part.cost),
           ...(part.reason === "error"
             ? { error: { type: "_OTHER", message: "model generation ended with error" } }

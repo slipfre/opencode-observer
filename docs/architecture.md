@@ -60,11 +60,11 @@ adapter → contract ← telemetry
 
 以上模块均属于适配层。tracker 必须将观测结果转换为 SDK 无关的契约数据，通过注入的 Observer 接口提交，不直接依赖遥测实现；对应的 span 状态和导出由遥测层管理。
 
-每个 coordinator 只创建一组 run、interaction、LLM、tool、permission 和 compaction tracker，跨 run 复用行为对象及其回调连接。各 tracker 自己持有数据；interaction、LLM、tool、permission 和 compaction 的数据按 `(sessionID, runID)` 分区，不建立集中业务状态模型。coordinator 的 `SessionState` 只保存活动 run 引用、父工具及 overflow 恢复信息。
+每个 coordinator 只创建一组 run、interaction、LLM、tool、permission 和 compaction tracker，跨 run 复用行为对象及其回调连接。各 tracker 自己持有数据；interaction、LLM、tool、permission 和 compaction 的数据按 `(sessionID, runID)` 分区，不建立集中业务状态模型。coordinator 的 `ActiveRunState` 只保存活动 run 引用、父工具及 overflow 恢复信息。
 
 coordinator 在接受新 run 时显式调用各 tracker 的 `open(run)` 登记数据分区。事件处理、归属查询及收尾操作携带完整 run 引用，只使用已有分区。`close` / `finish` 提交观测结果，`release(run)` 释放该 run 的全部数据。tracker 不提供实例关闭时的数据清理接口。`shared/runs.ts` 仅提供各 tracker 独立使用的分区容器，不保存共享业务数据；具体数据类型和识别规则留在对应 tracker 中。
 
-跨对象归属由 coordinator 查询并解析，再作为数据传入 tracker；tracker 不接收其他 tracker 的查询、解析函数或返回归属的回调。tracker 可以暴露自身的归属查询，以及 `unresolved(run)` 所需关联线索；coordinator 在相关证据到达后调用 `associate` 补齐归属。已有归属在提交观测对象后固定。`onFinish`、`onTask` 等回调只通知生命周期变化，由 coordinator 安排清理和绑定，不用于反向获取归属。
+跨对象归属由 coordinator 查询并解析，再作为数据传入 tracker；tracker 不接收其他 tracker 的查询、解析函数或返回归属的回调。tracker 可以暴露自身的归属查询，以及 `unresolved(run)` 所需关联线索；coordinator 在相关证据到达后调用 `associate` 补齐归属。已有归属在提交观测对象后固定。`onFinish`、`onChildSessionObserved` 等回调只通知生命周期变化，由 coordinator 安排清理和绑定，不用于反向获取归属。
 
 #### 契约层（`src/contract/`）
 

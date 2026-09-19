@@ -7,7 +7,7 @@ import type {
   RunReference,
 } from "../../contract/observer.js";
 import { createRunScopedStore } from "../shared/runs.js";
-import { errorDetails } from "../shared/error.js";
+import { normalizeError } from "../shared/error.js";
 
 type AssistantMessageState = { info?: AssistantMessage; texts: Map<string, string> };
 
@@ -35,7 +35,10 @@ export function createInteractionTracker(options: {
     assistantMessages: new Map<string, AssistantMessageState>(),
   }));
 
-  function resolve(run: RunReference, userMessageID: string): InteractionContext | undefined {
+  function resolveByUserMessage(
+    run: RunReference,
+    userMessageID: string,
+  ): InteractionContext | undefined {
     const interaction = store.get(run)?.userMessageOwners.get(userMessageID);
     return interaction
       ? {
@@ -49,16 +52,16 @@ export function createInteractionTracker(options: {
   return {
     open: store.open,
     release: store.release,
-    resolve,
-    at(run: RunReference, time: number) {
+    resolveByUserMessage,
+    resolveAt(run: RunReference, time: number) {
       const interaction = store
         .get(run)
         ?.interactions.findLast((interaction) => interaction.startedAt <= time);
-      return interaction ? resolve(run, interaction.userMessageID) : undefined;
+      return interaction ? resolveByUserMessage(run, interaction.userMessageID) : undefined;
     },
-    resolveAssistant(run: RunReference, messageID: string) {
+    resolveByAssistantMessage(run: RunReference, messageID: string) {
       const info = store.get(run)?.assistantMessages.get(messageID)?.info;
-      const context = info ? resolve(run, info.parentID) : undefined;
+      const context = info ? resolveByUserMessage(run, info.parentID) : undefined;
       return context && info
         ? {
             ...context,
@@ -172,7 +175,7 @@ export function createInteractionTracker(options: {
 
       state.assistantMessages.delete(messageID);
     },
-    finish(run: RunReference, time: number, error?: ObservationError) {
+    finishCurrent(run: RunReference, time: number, error?: ObservationError) {
       const state = store.get(run);
 
       if (!state) {
@@ -209,7 +212,7 @@ export function createInteractionTracker(options: {
           error:
             error ??
             (latestMessage?.info?.error
-              ? errorDetails(latestMessage.info.error)
+              ? normalizeError(latestMessage.info.error)
               : { type: "_OTHER", message: "session ended before interaction completed" }),
         });
         return;

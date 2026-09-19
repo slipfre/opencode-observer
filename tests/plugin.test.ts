@@ -993,7 +993,7 @@ test.each(["options", "environment"])(
         sessionID: "s1",
         id,
         startedAt: 1000,
-        parent: undefined,
+        parentTool: undefined,
         parentSessionID: undefined,
       });
       telemetry.finishRun({ sessionID: "s1", id, endedAt: 2000, output: undefined });

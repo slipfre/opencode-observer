@@ -32,12 +32,12 @@ export function loadConfig(
     enabled: true as const,
     endpoint: endpoint.toString(),
     captureContent: parseBoolean(options.captureContent ?? env.OPENCODE_CAPTURE_CONTENT, false),
-    tracePrefix: parseString(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
-    otlpHeaders: parseAttributes(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
-    resourceAttributes: parseAttributes(
+    spanNamePrefix: parseString(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
+    otlpHeaders: parseStringMap(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
+    resourceAttributes: parseStringMap(
       options.resourceAttributes ?? env.OPENCODE_RESOURCE_ATTRIBUTES,
     ),
-    spanAttributes: parseAttributes(options.spanAttributes ?? env.OPENCODE_SPAN_ATTRIBUTES),
+    spanAttributes: parseStringMap(options.spanAttributes ?? env.OPENCODE_SPAN_ATTRIBUTES),
     spanAttributeCountLimit,
   };
 }
@@ -70,7 +70,7 @@ function parseBoolean(value: unknown, fallback: boolean) {
   throw new Error("Expected a boolean configuration value");
 }
 
-function parseAttributes(value: unknown): Record<string, string> {
+function parseStringMap(value: unknown): Record<string, string> {
   if (value === undefined || value === "") {
     return {};
   }

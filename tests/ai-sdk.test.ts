@@ -5,7 +5,7 @@ import { jsonSchema, Output, streamText, tool } from "ai";
 import { MockLanguageModelV3, convertArrayToReadableStream } from "ai/test";
 import type { LlmFinish, LlmUpdate, Observer } from "../src/contract/observer.js";
 import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
-import type { LlmRequest } from "../src/adapter/model/request.js";
+import type { ChatParamsHookArgs } from "../src/adapter/model/request.js";
 
 const adapters: ReturnType<typeof createCoordinator>[] = [];
 
@@ -53,8 +53,8 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown, n
     },
   });
   adapters.push(adapter);
-  await adapter.startModelMessageCapture();
-  const input: LlmRequest[0] = {
+  await adapter.startSdkModelCapture();
+  const input: ChatParamsHookArgs[0] = {
     sessionID: "s1",
     agent: "build",
     message: {
@@ -65,8 +65,8 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown, n
       model: { providerID: "test", modelID: "test" },
       time: { created: 1000 },
     },
-    model: { id: "test", providerID: "test" } as LlmRequest[0]["model"],
-    provider: {} as LlmRequest[0]["provider"],
+    model: { id: "test", providerID: "test" } as ChatParamsHookArgs[0]["model"],
+    provider: {} as ChatParamsHookArgs[0]["provider"],
   };
   await adapter.hooks["chat.message"]?.(
     { sessionID: "s1" },
@@ -217,8 +217,8 @@ test.each([true, false])(
     clock.time = 2300;
     await h.step("step-start", 2100);
 
-    expect(h.updates.flatMap((update) => update.firstChunk ?? [])).toEqual([
-      { requestStartedAt: 1100, observedAt: 2100 },
+    expect(h.updates.flatMap((update) => update.firstChunkEstimate ?? [])).toEqual([
+      { firstSdkStepStartedAt: 1100, observedAt: 2100 },
     ]);
 
     // Duplicate events, later steps, and old SDK bindings never replace the first observation.
@@ -231,8 +231,8 @@ test.each([true, false])(
     await h.complete({ time: { created: 1050, completed: 2600 } });
     await h.step("step-start", 2800, "late-step");
 
-    expect(h.updates.flatMap((update) => update.firstChunk ?? [])).toEqual([
-      { requestStartedAt: 1100, observedAt: 2100 },
+    expect(h.updates.flatMap((update) => update.firstChunkEstimate ?? [])).toEqual([
+      { firstSdkStepStartedAt: 1100, observedAt: 2100 },
     ]);
     expect(h.finishes).toHaveLength(1);
     expect(h.errors).toEqual([]);
@@ -249,7 +249,10 @@ test.each([undefined, -1, Number.NaN, Number.POSITIVE_INFINITY])(
     clock.time = 1500;
     await h.step("step-start", time);
 
-    expect(h.updates.at(-1)?.firstChunk).toEqual({ requestStartedAt: 1100, observedAt: 1500 });
+    expect(h.updates.at(-1)?.firstChunkEstimate).toEqual({
+      firstSdkStepStartedAt: 1100,
+      observedAt: 1500,
+    });
   },
 );
 
@@ -260,7 +263,7 @@ test("a backwards first-step timestamp is omitted instead of replaced by a later
   await h.step("step-start", 1000);
   await h.step("step-start", 1400, "next-step");
 
-  expect(h.updates.every((update) => update.firstChunk === undefined)).toBe(true);
+  expect(h.updates.every((update) => update.firstChunkEstimate === undefined)).toBe(true);
 });
 
 test.each(["missing", "late", "retry"])(
@@ -287,7 +290,7 @@ test.each(["missing", "late", "retry"])(
       await h.step("step-start", 1500, "next-step");
     }
 
-    expect(h.updates.every((update) => update.firstChunk === undefined)).toBe(true);
+    expect(h.updates.every((update) => update.firstChunkEstimate === undefined)).toBe(true);
   },
 );
 
@@ -515,12 +518,12 @@ test("closing during SDK setup prevents late listener registration and restart",
   });
   adapters.push(closing);
 
-  const installation = closing.startModelMessageCapture();
+  const installation = closing.startSdkModelCapture();
   const disposal = closing.hooks.dispose();
 
   try {
     await installation;
-    await closing.startModelMessageCapture();
+    await closing.startSdkModelCapture();
     await integration().onStart?.(
       inputEvent({}, Object.freeze({ "x-opencode-observer-request": "unbound" })) as OnStartEvent &
         OnStepStartEvent,
@@ -534,7 +537,7 @@ test("closing during SDK setup prevents late listener registration and restart",
     await disposal;
   }
 
-  await closing.startModelMessageCapture();
+  await closing.startSdkModelCapture();
   await integration().onStart?.(
     inputEvent({}, Object.freeze({ "x-opencode-observer-request": "unbound" })) as OnStartEvent &
       OnStepStartEvent,

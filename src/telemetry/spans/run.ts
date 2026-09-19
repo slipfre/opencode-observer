@@ -8,10 +8,10 @@ import type {
 } from "../../contract/observer.js";
 import { encodeTextMessage, type SpanOptions } from "./common.js";
 
-type Run = {
+type RunSpanState = {
   reference: RunReference;
   span: Span;
-  inputs: Map<string, string | undefined>;
+  inputTextsByMessageID: Map<string, string | undefined>;
 };
 
 export function createRunSpans(
@@ -19,23 +19,23 @@ export function createRunSpans(
     parentContext?(reference: ToolReference): Context | undefined;
   },
 ) {
-  const runs = new Map<string, Run>();
+  const activeSpans = new Map<string, RunSpanState>();
 
   function finish(input: RunFinish) {
     const key = `${input.sessionID}:${input.id}`;
-    const run = runs.get(key);
+    const spanState = activeSpans.get(key);
 
-    if (!run) {
+    if (!spanState) {
       return;
     }
 
-    runs.delete(key);
+    activeSpans.delete(key);
 
-    if (options.captureContent && run.inputs.size > 0) {
-      const texts = Array.from(run.inputs.values());
+    if (options.captureContent && spanState.inputTextsByMessageID.size > 0) {
+      const texts = Array.from(spanState.inputTextsByMessageID.values());
 
       if (texts.every((text) => text !== undefined)) {
-        run.span.setAttribute(
+        spanState.span.setAttribute(
           "gen_ai.input.messages",
           JSON.stringify(
             texts.map((text) => ({ role: "user", parts: [{ type: "text", content: text }] })),
@@ -45,32 +45,37 @@ export function createRunSpans(
     }
 
     if (input.error) {
-      run.span.setAttribute("error.type", input.error.type);
-      run.span.setStatus({ code: SpanStatusCode.ERROR, message: input.error.message });
+      spanState.span.setAttribute("error.type", input.error.type);
+      spanState.span.setStatus({ code: SpanStatusCode.ERROR, message: input.error.message });
     }
 
     if (!input.error && options.captureContent && input.output !== undefined) {
-      run.span.setAttribute("gen_ai.output.messages", encodeTextMessage("assistant", input.output));
+      spanState.span.setAttribute(
+        "gen_ai.output.messages",
+        encodeTextMessage("assistant", input.output),
+      );
     }
 
-    run.span.end(new Date(input.endedAt));
+    spanState.span.end(new Date(input.endedAt));
   }
 
   return {
     finish,
     start(input: RunStart) {
       const key = `${input.sessionID}:${input.id}`;
-      const parent = input.parent ? options.parentContext?.(input.parent) : options.rootContext;
+      const parent = input.parentTool
+        ? options.parentContext?.(input.parentTool)
+        : options.rootContext;
 
-      if (!parent || runs.has(key)) {
+      if (!parent || activeSpans.has(key)) {
         return;
       }
 
-      runs.set(key, {
+      activeSpans.set(key, {
         reference: { sessionID: input.sessionID, id: input.id },
-        inputs: new Map(),
+        inputTextsByMessageID: new Map(),
         span: options.tracer.startSpan(
-          `${options.tracePrefix}run`,
+          `${options.spanNamePrefix}run`,
           {
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
@@ -89,22 +94,25 @@ export function createRunSpans(
       return true;
     },
     update(input: RunUpdate) {
-      const run = runs.get(`${input.sessionID}:${input.id}`);
+      const spanState = activeSpans.get(`${input.sessionID}:${input.id}`);
 
-      if (!run || run.inputs.has(input.input.id)) {
+      if (!spanState || spanState.inputTextsByMessageID.has(input.input.id)) {
         return;
       }
 
-      run.inputs.set(input.input.id, options.captureContent ? input.input.text : undefined);
+      spanState.inputTextsByMessageID.set(
+        input.input.id,
+        options.captureContent ? input.input.text : undefined,
+      );
     },
     context(reference: RunReference) {
-      const run = runs.get(`${reference.sessionID}:${reference.id}`);
-      return run ? trace.setSpan(options.rootContext, run.span) : undefined;
+      const spanState = activeSpans.get(`${reference.sessionID}:${reference.id}`);
+      return spanState ? trace.setSpan(options.rootContext, spanState.span) : undefined;
     },
-    close(endedAt: number) {
-      runs.forEach((run) =>
+    finishAllOnShutdown(endedAt: number) {
+      activeSpans.forEach((spanState) =>
         finish({
-          ...run.reference,
+          ...spanState.reference,
           endedAt,
           output: undefined,
           error: { type: "_OTHER", message: "plugin disposed before run completed" },

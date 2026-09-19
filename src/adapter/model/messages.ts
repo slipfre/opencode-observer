@@ -1,6 +1,6 @@
 import type { OnStepFinishEvent, OnStepStartEvent } from "ai";
 import type { JsonValue, ModelInput, ModelMessage, ModelPart } from "../../contract/messages.js";
-import { jsonValue } from "../shared/json.js";
+import { toJsonValue } from "../shared/json.js";
 
 export function parseModelInput(
   event: Pick<OnStepStartEvent, "messages" | "system" | "providerOptions">,
@@ -14,9 +14,9 @@ export function parseModelInput(
         : parseModelMessages(Array.isArray(event.system) ? event.system : [event.system]).flatMap(
             (message) => message.parts,
           );
-  const instructions = record(event.providerOptions)
+  const instructions = isRecord(event.providerOptions)
     ? [event.providerOptions, ...Object.values(event.providerOptions)]
-        .filter(record)
+        .filter(isRecord)
         .find((options) => typeof options.instructions === "string")?.instructions
     : undefined;
 
@@ -63,7 +63,7 @@ function parseModelMessages(values: unknown): ModelMessage[] {
   }
 
   return values.flatMap((value) => {
-    if (!record(value) || typeof value.role !== "string") {
+    if (!isRecord(value) || typeof value.role !== "string") {
       return [];
     }
 
@@ -81,7 +81,7 @@ function parseModelMessages(values: unknown): ModelMessage[] {
 }
 
 function parseModelPart(value: unknown): ModelPart | undefined {
-  if (!record(value)) {
+  if (!isRecord(value)) {
     return;
   }
 
@@ -94,7 +94,7 @@ function parseModelPart(value: unknown): ModelPart | undefined {
       type: "tool-call",
       name: value.toolName,
       id: typeof value.toolCallId === "string" ? value.toolCallId : undefined,
-      arguments: toolArguments(value.input !== undefined ? value.input : value.args),
+      arguments: parseToolArguments(value.input !== undefined ? value.input : value.args),
     };
   }
 
@@ -105,7 +105,7 @@ function parseModelPart(value: unknown): ModelPart | undefined {
         : value.output !== undefined
           ? value.output
           : value.result;
-    const response = jsonValue(record(output) && "value" in output ? output.value : output);
+    const response = toJsonValue(isRecord(output) && "value" in output ? output.value : output);
 
     return response === undefined
       ? undefined
@@ -120,7 +120,7 @@ function parseModelPart(value: unknown): ModelPart | undefined {
     return;
   }
 
-  const file = record(value.file) ? value.file : value;
+  const file = isRecord(value.file) ? value.file : value;
   const data = value.image ?? file.data ?? file.uint8Array ?? file.base64 ?? file.url;
   const dataUri =
     typeof data === "string" ? /^data:([^;,]*)(;base64)?,(.*)$/s.exec(data) : undefined;
@@ -133,12 +133,12 @@ function parseModelPart(value: unknown): ModelPart | undefined {
         : mimeType?.startsWith("video/")
           ? "video"
           : "document";
-  const source = mediaSource(data, dataUri);
+  const source = parseMediaSource(data, dataUri);
 
   return source ? { type: "media", modality, mimeType, source } : undefined;
 }
 
-function mediaSource(
+function parseMediaSource(
   value: unknown,
   dataUri: RegExpExecArray | null | undefined,
 ): Extract<ModelPart, { type: "media" }>["source"] | undefined {
@@ -178,18 +178,18 @@ function mediaSource(
   }
 }
 
-function toolArguments(value: unknown): JsonValue | undefined {
+function parseToolArguments(value: unknown): JsonValue | undefined {
   if (typeof value === "string") {
     try {
-      return jsonValue(JSON.parse(value));
+      return toJsonValue(JSON.parse(value));
     } catch {
       return value;
     }
   }
 
-  return jsonValue(value);
+  return toJsonValue(value);
 }
 
-function record(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

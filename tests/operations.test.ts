@@ -19,7 +19,7 @@ afterEach(async () => {
 
 function setup(captureContent = true, spanAttributes: Record<string, string> = {}) {
   const spans: ReadableSpan[] = [];
-  const provider = new BasicTracerProvider({
+  const tracerProvider = new BasicTracerProvider({
     spanProcessors: [
       new SimpleSpanProcessor({
         export(batch, callback) {
@@ -31,8 +31,8 @@ function setup(captureContent = true, spanAttributes: Record<string, string> = {
     ],
   });
   const observer = createObserver({
-    provider,
-    scope: { name: "test" },
+    tracerProvider,
+    instrumentationScope: { name: "test" },
     captureContent,
     now: () => 9000,
     spanAttributes: {
@@ -874,7 +874,7 @@ test("direct contract rejects unknown parents and cannot use an ordinary tool as
     sessionID: "child",
     id: "child",
     startedAt: 1300,
-    parent: start,
+    parentTool: start,
     parentSessionID: "s1",
   });
   h.observer.finishTool({ ...start, endedAt: 1400 });

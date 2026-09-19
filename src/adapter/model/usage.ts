@@ -2,7 +2,7 @@ import type { AssistantMessage } from "@opencode-ai/sdk";
 import type { LlmFinish } from "../../contract/observer.js";
 import { nonNegativeInteger } from "../shared/number.js";
 
-export function parseModelUsage(
+export function normalizeOpenCodeUsage(
   tokens: AssistantMessage["tokens"] | undefined,
 ): NonNullable<LlmFinish["usage"]> {
   const input = nonNegativeInteger(tokens?.input);

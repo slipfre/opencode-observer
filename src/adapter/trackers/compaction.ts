@@ -8,9 +8,9 @@ import type {
 } from "../../contract/observer.js";
 import type { InteractionContext } from "./interaction.js";
 import { createRunScopedStore } from "../shared/runs.js";
-import { errorDetails } from "../shared/error.js";
+import { normalizeError } from "../shared/error.js";
 import { nonNegativeInteger } from "../shared/number.js";
-import { parseModelUsage } from "../model/usage.js";
+import { normalizeOpenCodeUsage } from "../model/usage.js";
 
 type Compaction = {
   messageID: string;
@@ -36,7 +36,7 @@ export function createCompactionTracker(options: {
     activeCompaction: undefined as Compaction | undefined,
   }));
 
-  function record(compaction: Compaction) {
+  function startObservation(compaction: Compaction) {
     if (compaction.reference || compaction.finished) {
       return;
     }
@@ -104,11 +104,11 @@ export function createCompactionTracker(options: {
 
       if (compaction && !compaction.reference && !compaction.finished) {
         compaction.interactionContext ??= context;
-        record(compaction);
+        startObservation(compaction);
       }
     },
-    active: (run: RunReference) => store.get(run)?.activeCompaction?.messageID,
-    completed: (run: RunReference, observedAt: number) => finish(run, observedAt),
+    activeMessageID: (run: RunReference) => store.get(run)?.activeCompaction?.messageID,
+    completeActive: (run: RunReference, observedAt: number) => finish(run, observedAt),
     part(
       run: RunReference,
       part: CompactionPart & { overflow?: boolean },
@@ -140,7 +140,7 @@ export function createCompactionTracker(options: {
       };
       state.activeCompaction = compaction;
       state.compactions.set(part.messageID, compaction);
-      record(compaction);
+      startObservation(compaction);
     },
     message(run: RunReference, info: UserMessage | AssistantMessage, observedAt: number) {
       const state = store.get(run);
@@ -161,17 +161,17 @@ export function createCompactionTracker(options: {
       }
 
       if (info.error && state.activeCompaction === compaction) {
-        const error = errorDetails(info.error);
+        const error = normalizeError(info.error);
         finish(run, observedAt, error);
         return error;
       }
 
       if (info.time.completed !== undefined) {
-        compaction.usage = parseModelUsage(info.tokens);
+        compaction.usage = normalizeOpenCodeUsage(info.tokens);
         compaction.summaryTokens = nonNegativeInteger(info.tokens?.output);
       }
     },
-    resolve(run: RunReference, messageID: string): InteractionContext | undefined {
+    resolveInteraction(run: RunReference, messageID: string): InteractionContext | undefined {
       const compaction = store.get(run)?.compactions.get(messageID);
       return compaction?.reference && compaction.interactionContext
         ? { ...compaction.interactionContext, userInputText: undefined }

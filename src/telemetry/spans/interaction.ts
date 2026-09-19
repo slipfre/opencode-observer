@@ -13,42 +13,42 @@ export function createInteractionSpans(
     parentContext: (run: RunReference) => Context | undefined;
   },
 ) {
-  const interactions = new Map<string, { reference: InteractionReference; span: Span }>();
+  const activeSpans = new Map<string, { reference: InteractionReference; span: Span }>();
 
   function finish(input: InteractionFinish) {
     const key = `${input.run.sessionID}:${input.run.id}:${input.id}`;
-    const interaction = interactions.get(key);
+    const spanState = activeSpans.get(key);
 
-    if (!interaction) {
+    if (!spanState) {
       return;
     }
 
-    interactions.delete(key);
+    activeSpans.delete(key);
     // Steer may end a parent before its model call is observed or completed.
-    options.history.add(
-      interaction.reference.run,
+    options.finishedSpanRegistry.add(
+      spanState.reference.run,
       "interaction",
       key,
-      trace.setSpanContext(options.rootContext, interaction.span.spanContext()),
+      trace.setSpanContext(options.rootContext, spanState.span.spanContext()),
     );
 
     if (input.status === "failed") {
-      interaction.span.setAttribute("error.type", input.error.type);
-      interaction.span.setStatus({ code: SpanStatusCode.ERROR, message: input.error.message });
+      spanState.span.setAttribute("error.type", input.error.type);
+      spanState.span.setStatus({ code: SpanStatusCode.ERROR, message: input.error.message });
     }
 
     if (options.captureContent && input.status === "superseded") {
-      interaction.span.setAttribute("gen_ai.output.messages", "[]");
+      spanState.span.setAttribute("gen_ai.output.messages", "[]");
     }
 
     if (options.captureContent && input.status === "completed" && input.output !== undefined) {
-      interaction.span.setAttribute(
+      spanState.span.setAttribute(
         "gen_ai.output.messages",
         encodeTextMessage("assistant", input.output),
       );
     }
 
-    interaction.span.end(new Date(input.endedAt));
+    spanState.span.end(new Date(input.endedAt));
   }
 
   return {
@@ -57,14 +57,18 @@ export function createInteractionSpans(
       const key = `${input.run.sessionID}:${input.run.id}:${input.id}`;
       const parent = options.parentContext(input.run);
 
-      if (!parent || interactions.has(key) || options.history.has(input.run, "interaction", key)) {
+      if (
+        !parent ||
+        activeSpans.has(key) ||
+        options.finishedSpanRegistry.has(input.run, "interaction", key)
+      ) {
         return;
       }
 
-      interactions.set(key, {
+      activeSpans.set(key, {
         reference: { run: { sessionID: input.run.sessionID, id: input.run.id }, id: input.id },
         span: options.tracer.startSpan(
-          `${options.tracePrefix}interaction`,
+          `${options.spanNamePrefix}interaction`,
           {
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
@@ -88,19 +92,19 @@ export function createInteractionSpans(
     },
     context(reference: InteractionReference) {
       const key = `${reference.run.sessionID}:${reference.run.id}:${reference.id}`;
-      const interaction = interactions.get(key);
-      return interaction
-        ? trace.setSpan(options.rootContext, interaction.span)
-        : options.history.context(reference.run, "interaction", key);
+      const spanState = activeSpans.get(key);
+      return spanState
+        ? trace.setSpan(options.rootContext, spanState.span)
+        : options.finishedSpanRegistry.context(reference.run, "interaction", key);
     },
-    closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
-      interactions.forEach((interaction) => {
+    finishPendingForRun(run: RunReference, endedAt: number, error?: ObservationError) {
+      activeSpans.forEach((spanState) => {
         if (
-          interaction.reference.run.sessionID === run.sessionID &&
-          interaction.reference.run.id === run.id
+          spanState.reference.run.sessionID === run.sessionID &&
+          spanState.reference.run.id === run.id
         ) {
           finish({
-            ...interaction.reference,
+            ...spanState.reference,
             endedAt,
             status: "failed",
             error: error ?? { type: "_OTHER", message: "run ended before interaction completed" },
@@ -108,10 +112,10 @@ export function createInteractionSpans(
         }
       });
     },
-    close(endedAt: number) {
-      interactions.forEach((interaction) =>
+    finishAllOnShutdown(endedAt: number) {
+      activeSpans.forEach((spanState) =>
         finish({
-          ...interaction.reference,
+          ...spanState.reference,
           endedAt,
           status: "failed",
           error: { type: "_OTHER", message: "plugin disposed before interaction completed" },

@@ -100,7 +100,7 @@ test("lint applies the same SDK and telemetry import boundaries to every tracker
         `import type { UserMessage } from "@opencode-ai/sdk";
 import { nonNegativeNumber } from "../shared/number.js";
 export type { Observer } from "../../contract/observer.js";
-export { parseModelUsage } from "../model/usage.js";
+export { normalizeOpenCodeUsage } from "../model/usage.js";
 export function observedTime(input: UserMessage) {
   return nonNegativeNumber(input.time.created);
 }

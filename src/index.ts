@@ -40,12 +40,12 @@ export const ObserverPlugin: Plugin = async (input, options) => {
       .catch(() => undefined);
   };
 
-  const adapter = createCoordinator({
+  const coordinator = createCoordinator({
     observer,
     captureContent: config.captureContent,
     userIdentity: { enabled: userIDEnabled, id: user?.id },
     log,
   });
-  await adapter.startModelMessageCapture().catch(log);
-  return adapter.hooks;
+  await coordinator.startSdkModelCapture().catch(log);
+  return coordinator.hooks;
 };

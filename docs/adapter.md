@@ -52,7 +52,7 @@ LLM span 记录 assistant 消息生命周期，包含请求准备、重试退避
 
 同一 assistant message 对应的 step 和重试归入同一个逻辑 LLM 调用。进入新的 step 时更新当前快照，清除前一步遗留的数据；同一 step 的重复通知不清空快照，旧尝试的迟到内容也不能覆盖新结果。观察到 step part 更新的时间不代表精确的网络请求或重试起点。
 
-首块近似计时独立于内容快照：SDK `onStepStart` 同步记录首次请求起点，异步设置补充不更新时间。首次 `step-start` 优先使用事件携带的有效发布时间，缺失时使用接收时间。tracker 通过 `LlmUpdate.firstChunk` 提交两个时间戳，telemetry 换算为秒并标记来源。重试重新绑定不清除起点，重复和后续 step 不替换首次终点；没有初始 SDK 起点、终点早于起点或调用已结束时不补造数据。完整口径见 [Trace Schema §8.1](schemas/trace.md#81-身份模型和用量)。
+首块近似计时独立于内容快照：SDK `onStepStart` 同步记录首次请求起点，异步设置补充不更新时间。首次 `step-start` 优先使用事件携带的有效发布时间，缺失时使用接收时间。tracker 通过 `LlmUpdate.firstChunkEstimate` 提交两个时间戳，telemetry 换算为秒并标记来源。重试重新绑定不清除起点，重复和后续 step 不替换首次终点；没有初始 SDK 起点、终点早于起点或调用已结束时不补造数据。完整口径见 [Trace Schema §8.1](schemas/trace.md#81-身份模型和用量)。
 
 `session.status` 的 retry 和 busy 由 coordinator 转交 LLM tracker。tracker 将 retry 计划绑定到唯一活动 assistant，直到后续 busy 才提交重试历史快照；重复及较旧序号忽略，归属歧义时丢弃候选调用的待确认计划，等待期间终止也丢弃计划。已确认历史独立于 SDK 内容快照保存，摘要调用同样采集，不依赖正文开关。契约传递序号、原因、预计时间和观察时间，遥测层只编码偏移量及 JSON，不自行推断重试。
 

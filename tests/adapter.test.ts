@@ -12,7 +12,7 @@ import type {
   RunUpdate,
 } from "../src/contract/observer.js";
 import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
-import type { LlmRequest } from "../src/adapter/model/request.js";
+import type { ChatParamsHookArgs } from "../src/adapter/model/request.js";
 import { createCoordinatorHarness } from "./support/coordinator.js";
 
 function recording() {
@@ -133,7 +133,7 @@ function modelMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessa
   };
 }
 
-function modelRequest(): LlmRequest {
+function modelRequest(): ChatParamsHookArgs {
   const modalities = { text: true, audio: false, image: false, video: false, pdf: false };
 
   return [
@@ -218,7 +218,7 @@ test("chat.params observes compatible API settings without mutating the hook out
       temperature: 0,
       topP: 0.9,
       topK: undefined,
-      maxTokens: undefined,
+      maxOutputTokens: undefined,
     },
   });
   await adapter.hooks.dispose();
@@ -322,8 +322,8 @@ test("request preparation starts one logical LLM before steps and preserves its 
     interaction: { id: "u1", run: { sessionID: "s1", id: "u1" } },
     startedAt: 1050,
     model: "gemini-request-model",
-    input: undefined,
-    parameters: { temperature: 0, topP: 0.9, topK: 8, maxTokens: 100 },
+    fallbackInputText: undefined,
+    parameters: { temperature: 0, topP: 0.9, topK: 8, maxOutputTokens: 100 },
   });
   expect(h.observer.llmTraceHeaders).toHaveBeenLastCalledWith({
     id: "a1",
@@ -420,7 +420,7 @@ test.each([false, true])(
 
     expect(output.headers).toEqual({ "X-Test": "kept", ...headers });
     expect(h.llms).toHaveLength(1);
-    expect(h.llms[0]?.input).toBe(captureContent ? "question" : undefined);
+    expect(h.llms[0]?.fallbackInputText).toBe(captureContent ? "question" : undefined);
     expect(failures).toEqual([]);
 
     await adapter.hooks.event?.({
@@ -486,7 +486,7 @@ test.each([
     expect(output.headers).toEqual(expected);
     expect(headers.tracestate).toBe("vendor=value");
     expect(h.llms[0]).not.toHaveProperty("userID");
-    expect(h.llms[0]?.input).toBeUndefined();
+    expect(h.llms[0]?.fallbackInputText).toBeUndefined();
     expect(failures).toEqual([]);
 
     const title = { headers: {} };
@@ -537,7 +537,7 @@ test("source messages become run operations with explicit unsupported associatio
       sessionID: "s1",
       id: "u1",
       startedAt: 1000,
-      parent: undefined,
+      parentTool: undefined,
       parentSessionID: undefined,
     },
   ]);
@@ -823,7 +823,7 @@ test.each(["throw", "reject"])(
         return Promise.reject(new Error("logging failed"));
       },
     });
-    await adapter.startModelMessageCapture();
+    await adapter.startSdkModelCapture();
     const output = { message: user(), parts: [text()] };
     await adapter.hooks["chat.message"]?.({ sessionID: "s1" }, output);
     const request = modelRequest();
@@ -997,7 +997,7 @@ test.each(["synthetic", "ignored"] as const)(
     expect(h.interactions).toHaveLength(1);
     expect(h.interactions[0]?.input).toBe("question");
     expect(h.llms).toHaveLength(1);
-    expect(h.llms[0]).toMatchObject({ interaction: { id: "u1" }, input: "question" });
+    expect(h.llms[0]).toMatchObject({ interaction: { id: "u1" }, fallbackInputText: "question" });
     expect(h.completed).toHaveLength(1);
     expect(h.completed[0]).toMatchObject({
       id: "u1",
@@ -1136,16 +1136,16 @@ test("LLM spans use assistant timestamps while steps supply evidence and normali
     model: "gemini-request-model",
     operation: "generate_content",
     stream: true,
-    input: "question",
+    fallbackInputText: "question",
     agentName: "build",
-    parameters: { temperature: 0, topP: 0.9, topK: 8, maxTokens: 100 },
+    parameters: { temperature: 0, topP: 0.9, topK: 8, maxOutputTokens: 100 },
     agentType: undefined,
     parentSessionID: undefined,
     compactionID: undefined,
   });
   expect(h.llmFinishes[0]).toMatchObject({
     endedAt: 1350,
-    output: "answer",
+    fallbackOutputText: "answer",
     finishReason: "stop",
     cost: 0.02,
     usage: {
@@ -1363,9 +1363,9 @@ test("LLM step events can precede metadata and late synthetic ownership stays wi
   expect(h.llms[0]).toMatchObject({
     startedAt: 1550,
     interaction: { id: "u1" },
-    input: "question",
+    fallbackInputText: "question",
   });
-  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1750, output: "old answer" });
+  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1750, fallbackOutputText: "old answer" });
 });
 
 test("OpenCode retries retain one span and distinguish scheduled and observed execution", async () => {
@@ -1424,7 +1424,7 @@ test("OpenCode retries retain one span and distinguish scheduled and observed ex
   expect(h.llms).toHaveLength(1);
   expect(h.llms[0]?.startedAt).toBe(1050);
   expect(h.llmFinishes).toHaveLength(1);
-  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1850, output: "recovered" });
+  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1850, fallbackOutputText: "recovered" });
   expect(h.llmFinishes[0]?.error).toBeUndefined();
 });
 
@@ -1524,8 +1524,8 @@ test.each([true, false])(
       properties: { info: modelMessage({ time: { created: 1050, completed: 1350 } }) },
     });
 
-    expect(h.llms[0]?.input).toBe(captureContent ? "secret" : undefined);
-    expect(h.llmFinishes[0]?.output).toBe(captureContent ? "" : undefined);
+    expect(h.llms[0]?.fallbackInputText).toBe(captureContent ? "secret" : undefined);
+    expect(h.llmFinishes[0]?.fallbackOutputText).toBe(captureContent ? "" : undefined);
     expect(h.llmFinishes[0]?.usage).toEqual({
       inputTokens: undefined,
       outputTokens: undefined,

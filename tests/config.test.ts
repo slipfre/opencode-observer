@@ -10,7 +10,7 @@ test("enabled defaults use OTLP HTTP and leave content capture off", () => {
   expect(loadConfig({ enabled: true }, {})).toMatchObject({
     enabled: true,
     endpoint: "http://localhost:4318/v1/traces",
-    tracePrefix: "opencode.",
+    spanNamePrefix: "opencode.",
     captureContent: false,
     spanAttributeCountLimit: 4096,
   });
@@ -34,7 +34,7 @@ test("options take precedence over environment variables, including explicit fal
   ).toMatchObject({
     enabled: true,
     captureContent: false,
-    tracePrefix: "",
+    spanNamePrefix: "",
     endpoint: "https://collector/otel/v1/traces",
   });
 });

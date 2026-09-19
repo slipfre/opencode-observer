@@ -1,7 +1,7 @@
 import { expect, mock, test } from "bun:test";
 import type { AssistantMessage, ToolPart, UserMessage } from "@opencode-ai/sdk";
 import type { Observer, RunReference } from "../src/contract/observer.js";
-import type { LlmRequest } from "../src/adapter/model/request.js";
+import type { ChatParamsHookArgs } from "../src/adapter/model/request.js";
 import { createLlmTracker } from "../src/adapter/trackers/llm.js";
 import { createToolTracker } from "../src/adapter/trackers/tool.js";
 import { createCompactionTracker } from "../src/adapter/trackers/compaction.js";
@@ -55,19 +55,21 @@ test("interaction ownership survives steer and late messages until its run is re
   tracker.message(first, { ...user, id: "continuation", time: { created: 1500 } });
   tracker.message(first, { ...user, id: "continuation", time: { created: 2500 } });
 
-  expect(tracker.resolve(first, "continuation")).toEqual({
+  expect(tracker.resolveByUserMessage(first, "continuation")).toEqual({
     reference: { run: first, id: "input" },
     userInputText: "question",
     agentName: "build",
   });
-  expect(tracker.resolve(first, "input")).toEqual(tracker.resolve(first, "continuation"));
-  expect(tracker.at(first, 999)).toBeUndefined();
-  expect(tracker.at(first, 1000)).toEqual(tracker.resolve(first, "input"));
-  expect(tracker.at(first, 1999)).toEqual(tracker.resolve(first, "input"));
-  expect(tracker.at(first, 2000)).toEqual(tracker.resolve(first, "steer"));
-  expect(tracker.at(first, 2500)?.userInputText).toBe("follow-up");
-  expect(tracker.resolve(next, "continuation")).toBeUndefined();
-  expect(tracker.resolve(other, "continuation")).toBeUndefined();
+  expect(tracker.resolveByUserMessage(first, "input")).toEqual(
+    tracker.resolveByUserMessage(first, "continuation"),
+  );
+  expect(tracker.resolveAt(first, 999)).toBeUndefined();
+  expect(tracker.resolveAt(first, 1000)).toEqual(tracker.resolveByUserMessage(first, "input"));
+  expect(tracker.resolveAt(first, 1999)).toEqual(tracker.resolveByUserMessage(first, "input"));
+  expect(tracker.resolveAt(first, 2000)).toEqual(tracker.resolveByUserMessage(first, "steer"));
+  expect(tracker.resolveAt(first, 2500)?.userInputText).toBe("follow-up");
+  expect(tracker.resolveByUserMessage(next, "continuation")).toBeUndefined();
+  expect(tracker.resolveByUserMessage(other, "continuation")).toBeUndefined();
   expect(observer.finishInteraction).toHaveBeenCalledTimes(1);
   expect(observer.finishInteraction).toHaveBeenCalledWith({
     run: first,
@@ -81,13 +83,13 @@ test("interaction ownership survives steer and late messages until its run is re
   tracker.start(first, user, "stale", {});
   tracker.message(first, { ...user, id: "late", time: { created: 3000 } });
 
-  expect(tracker.resolve(first, "input")).toBeUndefined();
-  expect(tracker.resolve(first, "continuation")).toBeUndefined();
-  expect(tracker.resolve(first, "late")).toBeUndefined();
-  expect(tracker.at(first, 3000)).toBeUndefined();
+  expect(tracker.resolveByUserMessage(first, "input")).toBeUndefined();
+  expect(tracker.resolveByUserMessage(first, "continuation")).toBeUndefined();
+  expect(tracker.resolveByUserMessage(first, "late")).toBeUndefined();
+  expect(tracker.resolveAt(first, 3000)).toBeUndefined();
   expect(observer.startInteraction).toHaveBeenCalledTimes(4);
   [next, other].forEach((run) => {
-    expect(tracker.resolve(run, "input")).toEqual({
+    expect(tracker.resolveByUserMessage(run, "input")).toEqual({
       reference: { run, id: "input" },
       userInputText: "question",
       agentName: "build",
@@ -95,9 +97,9 @@ test("interaction ownership survives steer and late messages until its run is re
   });
 
   tracker.open(first);
-  expect(tracker.resolve(first, "input")).toBeUndefined();
-  expect(tracker.resolve(first, "continuation")).toBeUndefined();
-  expect(tracker.at(first, 3000)).toBeUndefined();
+  expect(tracker.resolveByUserMessage(first, "input")).toBeUndefined();
+  expect(tracker.resolveByUserMessage(first, "continuation")).toBeUndefined();
+  expect(tracker.resolveAt(first, 3000)).toBeUndefined();
 });
 
 test("tool partitions isolate full run identities and release parts waiting for ownership", () => {
@@ -105,7 +107,7 @@ test("tool partitions isolate full run identities and release parts waiting for 
   const tracker = createToolTracker({
     observer,
     captureContent: true,
-    onTask() {},
+    onChildSessionObserved() {},
     onFinish() {},
   });
   function associate(run: RunReference) {
@@ -159,7 +161,7 @@ test("tool partitions isolate full run identities and release parts waiting for 
   tracker.part(next, part, 1400);
   expect(observer.startTool).toHaveBeenCalledTimes(2);
   expect(observer.finishTool).toHaveBeenCalledTimes(1);
-  expect(tracker.active(other, "assistant", "call")).toBeDefined();
+  expect(tracker.activeStart(other, "assistant", "call")).toBeDefined();
 });
 
 test("LLM bindings expire on release even when the same run and message are registered again", () => {
@@ -196,15 +198,15 @@ test("LLM bindings expire on release even when the same run and message are regi
         model: { providerID: "test", modelID: "test" },
         time: { created: 900 },
       },
-      model: { id: "test", providerID: "test" } as LlmRequest[0]["model"],
-      provider: {} as LlmRequest[0]["provider"],
-    } satisfies LlmRequest[0];
+      model: { id: "test", providerID: "test" } as ChatParamsHookArgs[0]["model"],
+      provider: {} as ChatParamsHookArgs[0]["provider"],
+    } satisfies ChatParamsHookArgs[0];
     const starts = observer.startLlm.mock.calls.length;
     tracker.open(run);
     tracker.message(run, { ...message, sessionID: run.sessionID }, 1000);
-    tracker.prepare(run, request);
+    tracker.prepareTraceHeaders(run, request);
     expect(tracker.bind(run, request)).toBeUndefined();
-    expect(tracker.activeRequest(run)).toBeUndefined();
+    expect(tracker.activeAssistant(run)).toBeUndefined();
     expect(observer.startLlm).toHaveBeenCalledTimes(starts);
     expect(tracker.unresolved(run)).toEqual([
       { id: "assistant", parentID: "input", summary: undefined },
@@ -225,7 +227,7 @@ test("LLM bindings expire on release even when the same run and message are regi
       userInputText: "must not replace the established owner",
     });
     expect(observer.startLlm).toHaveBeenCalledTimes(starts + 1);
-    expect(tracker.activeRequest(run)).toEqual({
+    expect(tracker.activeAssistant(run)).toEqual({
       messageID: "assistant",
       parentMessageID: "input",
     });
@@ -244,7 +246,7 @@ test("LLM bindings expire on release even when the same run and message are regi
   const concurrent = bind(other);
 
   tracker.release(first);
-  expect(tracker.activeRequest(first)).toBeUndefined();
+  expect(tracker.activeAssistant(first)).toBeUndefined();
   const replacement = bind(first);
   old.input({ input: { messages: [{ role: "user", parts: [{ type: "text", text: "stale" }] }] } });
   old.output({ output: [{ role: "assistant", parts: [{ type: "text", text: "stale" }] }] });
@@ -260,8 +262,8 @@ test("LLM bindings expire on release even when the same run and message are regi
   expect(second.active()).toBe(false);
   expect(concurrent.active()).toBe(true);
   expect(observer.finishLlm).toHaveBeenCalledTimes(1);
-  expect(tracker.activeRequest(next)).toBeUndefined();
-  expect(tracker.activeRequest(other)).toEqual({
+  expect(tracker.activeAssistant(next)).toBeUndefined();
+  expect(tracker.activeAssistant(other)).toEqual({
     messageID: "assistant",
     parentMessageID: "input",
   });
@@ -284,24 +286,27 @@ test("compaction waits for resolved ownership and retains it for summary queries
   );
 
   expect(observer.startCompaction).not.toHaveBeenCalled();
-  expect(tracker.active(run)).toBe("marker");
-  expect(tracker.resolve(run, "marker")).toBeUndefined();
+  expect(tracker.activeMessageID(run)).toBe("marker");
+  expect(tracker.resolveInteraction(run, "marker")).toBeUndefined();
   expect(tracker.unresolved(run)).toEqual([{ id: "marker", startedAt: 1200 }]);
 
   tracker.associate(run, "marker", context);
   tracker.associate(run, "marker", { ...context, reference: { run, id: "u2" } });
-  tracker.completed(run, 1500);
-  tracker.completed(run, 1600);
-  expect(tracker.active(run)).toBeUndefined();
+  tracker.completeActive(run, 1500);
+  tracker.completeActive(run, 1600);
+  expect(tracker.activeMessageID(run)).toBeUndefined();
   expect(observer.startCompaction).toHaveBeenCalledTimes(1);
   expect(observer.finishCompaction).toHaveBeenCalledTimes(1);
   expect(onFinish).toHaveBeenCalledTimes(1);
   expect(tracker.unresolved(run)).toEqual([]);
-  expect(tracker.resolve(run, "marker")).toEqual({ ...context, userInputText: undefined });
+  expect(tracker.resolveInteraction(run, "marker")).toEqual({
+    ...context,
+    userInputText: undefined,
+  });
 
   tracker.release(run);
   tracker.associate(run, "marker", context);
-  expect(tracker.resolve(run, "marker")).toBeUndefined();
+  expect(tracker.resolveInteraction(run, "marker")).toBeUndefined();
   expect(observer.startCompaction).toHaveBeenCalledTimes(1);
 });
 
@@ -328,8 +333,8 @@ test("compaction replacement ignores old markers and removals while retaining th
   tracker.remove(run, "marker1", 1400);
   tracker.remove(run, "marker2", 1400, "part1");
 
-  expect(tracker.active(run)).toBe("marker2");
-  expect(tracker.resolve(run, "marker1")).toEqual(context);
+  expect(tracker.activeMessageID(run)).toBe("marker2");
+  expect(tracker.resolveInteraction(run, "marker1")).toEqual(context);
   expect(observer.startCompaction).toHaveBeenCalledTimes(2);
   expect(observer.finishCompaction).toHaveBeenCalledTimes(1);
   expect(onFinish).toHaveBeenCalledWith(
@@ -342,17 +347,17 @@ test("compaction replacement ignores old markers and removals while retaining th
   );
 
   tracker.remove(run, "marker2", 1500, "part2");
-  tracker.completed(run, 1600);
-  expect(tracker.active(run)).toBeUndefined();
-  expect(tracker.resolve(run, "marker2")).toEqual(context);
+  tracker.completeActive(run, 1600);
+  expect(tracker.activeMessageID(run)).toBeUndefined();
+  expect(tracker.resolveInteraction(run, "marker2")).toEqual(context);
   expect(observer.finishCompaction).toHaveBeenCalledTimes(2);
   expect(onFinish).toHaveBeenCalledTimes(2);
 
   tracker.release(run);
   tracker.open(run);
-  expect(tracker.active(run)).toBeUndefined();
-  expect(tracker.resolve(run, "marker1")).toBeUndefined();
-  expect(tracker.resolve(run, "marker2")).toBeUndefined();
+  expect(tracker.activeMessageID(run)).toBeUndefined();
+  expect(tracker.resolveInteraction(run, "marker1")).toBeUndefined();
+  expect(tracker.resolveInteraction(run, "marker2")).toBeUndefined();
 });
 
 test("permission requests and deduplication remain isolated across run release and cleanup", () => {
@@ -371,7 +376,7 @@ test("permission requests and deduplication remain isolated across run release a
     };
   }
   function ask(run: RunReference) {
-    tracker.asked(
+    tracker.observeRequest(
       run,
       {
         id: "permission",
@@ -393,27 +398,27 @@ test("permission requests and deduplication remain isolated across run release a
   });
   expect(observer.startPermission).toHaveBeenCalledTimes(3);
 
-  tracker.closeTool(tool(first), 1200);
+  tracker.finishPendingForTool(tool(first), 1200);
   tracker.release(first);
   ask(first);
-  expect(tracker.replied(first, "permission", "reject", 1300)).toBeUndefined();
+  expect(tracker.observeReply(first, "permission", "reject", 1300)).toBeUndefined();
   tracker.close(next, 1400);
   tracker.close(next, 1500);
   ask(next);
   expect(observer.startPermission).toHaveBeenCalledTimes(3);
   expect(observer.finishPermission).toHaveBeenCalledTimes(2);
 
-  expect(tracker.replied(other, "permission", "reject", 1600)).toEqual({
+  expect(tracker.observeReply(other, "permission", "reject", 1600)).toEqual({
     interaction: { run: other, id: "input" },
     messageID: "assistant",
     callID: "call",
   });
   expect(observer.finishPermission).toHaveBeenCalledTimes(3);
-  expect(tracker.replied(other, "permission", "reject", 1700)).toBeUndefined();
+  expect(tracker.observeReply(other, "permission", "reject", 1700)).toBeUndefined();
 
   tracker.open(first);
   ask(first);
   expect(observer.startPermission).toHaveBeenCalledTimes(4);
-  tracker.replied(first, "permission", "once", 1800);
+  tracker.observeReply(first, "permission", "once", 1800);
   expect(observer.finishPermission).toHaveBeenCalledTimes(4);
 });

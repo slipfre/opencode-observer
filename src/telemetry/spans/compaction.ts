@@ -20,26 +20,26 @@ export function createCompactionSpans(
     parentContext(reference: InteractionReference): Context | undefined;
   },
 ) {
-  const compactions = new Map<string, { reference: CompactionReference; span: Span }>();
+  const activeSpans = new Map<string, { reference: CompactionReference; span: Span }>();
 
   function finish(input: CompactionFinish) {
     const key = operationKey(input);
-    const compaction = compactions.get(key);
+    const spanState = activeSpans.get(key);
 
-    if (!compaction) {
+    if (!spanState) {
       return;
     }
 
-    compactions.delete(key);
-    options.history.add(
-      compaction.reference.interaction.run,
+    activeSpans.delete(key);
+    options.finishedSpanRegistry.add(
+      spanState.reference.interaction.run,
       "compaction",
       key,
-      trace.setSpanContext(options.rootContext, compaction.span.spanContext()),
+      trace.setSpanContext(options.rootContext, spanState.span.spanContext()),
     );
 
     if (!input.error) {
-      compaction.span.setAttributes({
+      spanState.span.setAttributes({
         "opencode.compaction.prompt_tokens": input.promptTokens,
         "opencode.compaction.summary_tokens": input.summaryTokens,
         "gen_ai.usage.input_tokens": input.usage?.inputTokens,
@@ -50,7 +50,7 @@ export function createCompactionSpans(
       });
     }
 
-    endSpan(compaction.span, input.endedAt, input.error);
+    endSpan(spanState.span, input.endedAt, input.error);
   }
 
   return {
@@ -61,19 +61,19 @@ export function createCompactionSpans(
 
       if (
         !parent ||
-        compactions.has(key) ||
-        options.history.has(input.interaction.run, "compaction", key)
+        activeSpans.has(key) ||
+        options.finishedSpanRegistry.has(input.interaction.run, "compaction", key)
       ) {
         return;
       }
 
-      compactions.set(key, {
+      activeSpans.set(key, {
         reference: {
           interaction: { run: { ...input.interaction.run }, id: input.interaction.id },
           id: input.id,
         },
         span: options.tracer.startSpan(
-          `${options.tracePrefix}compaction`,
+          `${options.spanNamePrefix}compaction`,
           {
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
@@ -92,16 +92,16 @@ export function createCompactionSpans(
     },
     context(reference: CompactionReference) {
       const key = operationKey(reference);
-      const compaction = compactions.get(key);
-      return compaction
-        ? trace.setSpan(options.rootContext, compaction.span)
-        : options.history.context(reference.interaction.run, "compaction", key);
+      const spanState = activeSpans.get(key);
+      return spanState
+        ? trace.setSpan(options.rootContext, spanState.span)
+        : options.finishedSpanRegistry.context(reference.interaction.run, "compaction", key);
     },
-    closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
-      compactions.forEach((compaction) => {
-        if (sameRun(compaction.reference.interaction.run, run)) {
+    finishPendingForRun(run: RunReference, endedAt: number, error?: ObservationError) {
+      activeSpans.forEach((spanState) => {
+        if (sameRun(spanState.reference.interaction.run, run)) {
           finish({
-            ...compaction.reference,
+            ...spanState.reference,
             endedAt,
             error: error ?? {
               type: "_OTHER",
@@ -111,10 +111,10 @@ export function createCompactionSpans(
         }
       });
     },
-    close(endedAt: number) {
-      compactions.forEach((compaction) =>
+    finishAllOnShutdown(endedAt: number) {
+      activeSpans.forEach((spanState) =>
         finish({
-          ...compaction.reference,
+          ...spanState.reference,
           endedAt,
           error: { type: "_OTHER", message: "plugin disposed before compaction completed" },
         }),

@@ -6,7 +6,7 @@ import {
   type TelemetryIntegration,
 } from "ai";
 import type { LlmUpdate } from "../../contract/observer.js";
-import type { LlmRequest } from "./request.js";
+import type { ChatParamsHookArgs } from "./request.js";
 import { parseModelInput, parseModelOutput } from "./messages.js";
 import { createGuard, reportError } from "../shared/guard.js";
 import { parseModelHeaders } from "./headers.js";
@@ -30,16 +30,16 @@ type ModelCaptureListener = {
 
 type ModelCaptureBroker = { listeners: Set<ModelCaptureListener> };
 
-export function createModelMessageCapture(options: {
-  bind(input: LlmRequest[0]): ModelCapture | undefined;
+export function createSdkModelCapture(options: {
+  bind(input: ChatParamsHookArgs[0]): ModelCapture | undefined;
   captureContent: boolean;
   now?: () => number;
   log(error: unknown): unknown;
 }) {
-  const pending = new Map<string, ModelCapture>();
+  const pendingCaptures = new Map<string, ModelCapture>();
   const bindings = new WeakMap<
     object,
-    { capture: ModelCapture; step: number; responded: boolean }
+    { capture: ModelCapture; step: number; stepFinished: boolean }
   >();
 
   function activeBinding(event: OnStartEvent | OnStepStartEvent | OnStepFinishEvent) {
@@ -56,16 +56,16 @@ export function createModelMessageCapture(options: {
     log: options.log,
     start(event) {
       const id = event.headers?.[correlationHeader];
-      const binding = id ? pending.get(id) : undefined;
+      const binding = id ? pendingCaptures.get(id) : undefined;
 
       if (!id || !binding) {
         return;
       }
 
-      pending.delete(id);
+      pendingCaptures.delete(id);
 
       if (event.functionId === "session.llm" && event.metadata && binding.active()) {
-        bindings.set(event.metadata, { capture: binding, step: 0, responded: false });
+        bindings.set(event.metadata, { capture: binding, step: 0, stepFinished: false });
       }
     },
     input(event) {
@@ -79,7 +79,7 @@ export function createModelMessageCapture(options: {
           request: options.captureContent ? { headers: parseModelHeaders(event.headers) } : {},
         };
         binding.capture.input(snapshot, startedAt);
-        binding.responded = false;
+        binding.stepFinished = false;
 
         if (event.output || (options.captureContent && event.tools)) {
           // Schema promises must never hold up the host or hide an observed response.
@@ -93,7 +93,7 @@ export function createModelMessageCapture(options: {
               broker.listeners.has(listener) &&
               binding.capture.active() &&
               binding.step === step &&
-              !binding.responded
+              !binding.stepFinished
             ) {
               binding.capture.input({ ...snapshot, request: { ...snapshot.request, ...settings } });
             }
@@ -105,7 +105,7 @@ export function createModelMessageCapture(options: {
       const binding = activeBinding(event);
 
       if (binding) {
-        binding.responded = true;
+        binding.stepFinished = true;
         const snapshot = options.captureContent
           ? {
               output: parseModelOutput(event),
@@ -116,11 +116,14 @@ export function createModelMessageCapture(options: {
       }
     },
   };
-  const broker = modelCaptureBroker();
+  const broker = getModelCaptureBroker();
   broker.listeners.add(listener);
 
   return {
-    attachCorrelationHeader(input: LlmRequest[0], output: { headers: Record<string, string> }) {
+    attachCorrelationHeader(
+      input: ChatParamsHookArgs[0],
+      output: { headers: Record<string, string> },
+    ) {
       if (Object.keys(output.headers).some((key) => key.toLowerCase() === correlationHeader)) {
         return;
       }
@@ -131,19 +134,19 @@ export function createModelMessageCapture(options: {
         return;
       }
 
-      pending.forEach((value, key) => {
+      pendingCaptures.forEach((value, key) => {
         if (!value.active()) {
-          pending.delete(key);
+          pendingCaptures.delete(key);
         }
       });
       const id = crypto.randomUUID();
-      pending.set(id, binding);
+      pendingCaptures.set(id, binding);
 
-      if (pending.size > 1024) {
-        const oldest = pending.keys().next().value;
+      if (pendingCaptures.size > 1024) {
+        const oldest = pendingCaptures.keys().next().value;
 
         if (oldest) {
-          pending.delete(oldest);
+          pendingCaptures.delete(oldest);
         }
       }
 
@@ -155,7 +158,7 @@ export function createModelMessageCapture(options: {
   };
 }
 
-function modelCaptureBroker() {
+function getModelCaptureBroker() {
   const root = globalThis as typeof globalThis & {
     __opencodeObserverModelCapture?: ModelCaptureBroker;
   };

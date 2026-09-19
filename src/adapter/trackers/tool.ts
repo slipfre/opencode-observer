@@ -9,7 +9,7 @@ import type {
 } from "../../contract/observer.js";
 import type { InteractionContext } from "./interaction.js";
 import { createRunScopedStore } from "../shared/runs.js";
-import { jsonObject } from "../shared/json.js";
+import { toJsonObject } from "../shared/json.js";
 
 type ToolCall = {
   partID: string;
@@ -28,7 +28,7 @@ export function createToolTracker(options: {
   observer: Observer;
   captureContent?: boolean;
   onFinish(reference: ToolReference, observedAt: number, error?: ObservationError): void;
-  onTask(sessionID: string, reference: ToolReference): void;
+  onChildSessionObserved(sessionID: string, reference: ToolReference): void;
 }) {
   const store = createRunScopedStore(() => ({
     toolCalls: new Map<string, ToolCall>(),
@@ -82,7 +82,7 @@ export function createToolTracker(options: {
     options.observer.updateTool({ ...call.startSnapshot, arguments: call.arguments });
 
     if (!call.completion && call.toolName === "task" && call.childSessionID) {
-      options.onTask(call.childSessionID, call.startSnapshot);
+      options.onChildSessionObserved(call.childSessionID, call.startSnapshot);
     }
 
     if (call.completion) {
@@ -140,7 +140,7 @@ export function createToolTracker(options: {
         startedAt,
       };
       state.toolCalls.set(callKey, call);
-      call.arguments = options.captureContent ? jsonObject(part.state.input) : undefined;
+      call.arguments = options.captureContent ? toJsonObject(part.state.input) : undefined;
       call.childSessionID =
         part.state.status === "running" &&
         typeof part.state.metadata?.sessionId === "string" &&
@@ -178,10 +178,10 @@ export function createToolTracker(options: {
         record(run, call, context);
       }
     },
-    active(run: RunReference, messageID: string, callID: string) {
+    activeStart(run: RunReference, messageID: string, callID: string) {
       return store.get(run)?.toolCalls.get(`${messageID}:${callID}`)?.startSnapshot;
     },
-    reject(reference: ToolReference) {
+    markPermissionRejected(reference: ToolReference) {
       const call = store
         .get(reference.interaction.run)
         ?.toolCalls.get(`${reference.messageID}:${reference.callID}`);

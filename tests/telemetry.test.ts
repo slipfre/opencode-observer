@@ -11,7 +11,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import type { InteractionStart, LlmStart, Observer, RunStart } from "../src/contract/observer.js";
 import { createObserver, type ObserverOptions } from "../src/telemetry/observer.js";
-import { createSpanHistory } from "../src/telemetry/spans/common.js";
+import { createFinishedSpanRegistry } from "../src/telemetry/spans/common.js";
 import type { ModelInput, ModelMessage } from "../src/contract/messages.js";
 
 const observers: Observer[] = [];
@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 function setup(
-  options: Partial<Omit<ObserverOptions, "provider" | "scope">> = {},
+  options: Partial<Omit<ObserverOptions, "tracerProvider" | "instrumentationScope">> = {},
   exporting?: SpanExporter["export"],
   sampler?: Sampler,
 ) {
@@ -42,15 +42,15 @@ function setup(
     },
     shutdown,
   };
-  const provider = new BasicTracerProvider({
+  const tracerProvider = new BasicTracerProvider({
     sampler,
     spanProcessors: [
       new BatchSpanProcessor(exporter, { scheduledDelayMillis: 60_000, exportTimeoutMillis: 1000 }),
     ],
   });
   const observer = createObserver({
-    provider,
-    scope: { name: "test" },
+    tracerProvider,
+    instrumentationScope: { name: "test" },
     captureContent: true,
     now: () => 3000,
     ...options,
@@ -61,7 +61,7 @@ function setup(
 }
 
 function start(id = "u1", sessionID = "s1"): RunStart {
-  return { id, sessionID, startedAt: 1000, parent: undefined, parentSessionID: undefined };
+  return { id, sessionID, startedAt: 1000, parentTool: undefined, parentSessionID: undefined };
 }
 
 function interaction(id = "u1", run = start()): InteractionStart {
@@ -87,7 +87,7 @@ function llm(id = "a1", parent = interaction()): LlmStart {
     operation: "generate_content",
     stream: true,
     agentName: "build",
-    input: "question",
+    fallbackInputText: "question",
     agentType: undefined,
     parentSessionID: undefined,
     compactionID: undefined,
@@ -105,18 +105,18 @@ test.each([true, false])(
     h.observer.updateLlm({
       id: "a1",
       interaction: llm().interaction,
-      firstChunk: { requestStartedAt: 1200, observedAt: 1550 },
+      firstChunkEstimate: { firstSdkStepStartedAt: 1200, observedAt: 1550 },
     });
     h.observer.updateLlm({
       id: "a1",
       interaction: llm().interaction,
       request: {},
-      firstChunk: { requestStartedAt: 1600, observedAt: 2300 },
+      firstChunkEstimate: { firstSdkStepStartedAt: 1600, observedAt: 2300 },
     });
     h.observer.finishLlm({
       ...llm(),
       endedAt: 2400,
-      output: undefined,
+      fallbackOutputText: undefined,
       error: { type: "APIError" },
     });
     await h.observer.flush();
@@ -131,18 +131,18 @@ test.each([true, false])(
 );
 
 test.each([
-  { requestStartedAt: 1200, observedAt: 1200, expected: 0 },
-  { requestStartedAt: 1200, observedAt: 1100, expected: undefined },
-  { requestStartedAt: -1, observedAt: 1300, expected: undefined },
-  { requestStartedAt: Number.NaN, observedAt: 1300, expected: undefined },
-  { requestStartedAt: 1200, observedAt: Number.POSITIVE_INFINITY, expected: undefined },
+  { firstSdkStepStartedAt: 1200, observedAt: 1200, expected: 0 },
+  { firstSdkStepStartedAt: 1200, observedAt: 1100, expected: undefined },
+  { firstSdkStepStartedAt: -1, observedAt: 1300, expected: undefined },
+  { firstSdkStepStartedAt: Number.NaN, observedAt: 1300, expected: undefined },
+  { firstSdkStepStartedAt: 1200, observedAt: Number.POSITIVE_INFINITY, expected: undefined },
 ])("first chunk timestamps are validated: %j", async (timing) => {
   const h = setup();
   h.observer.startRun(start());
   h.observer.startInteraction(interaction());
   h.observer.startLlm(llm());
-  h.observer.updateLlm({ id: "a1", interaction: llm().interaction, firstChunk: timing });
-  h.observer.finishLlm({ ...llm(), endedAt: 1400, output: undefined });
+  h.observer.updateLlm({ id: "a1", interaction: llm().interaction, firstChunkEstimate: timing });
+  h.observer.finishLlm({ ...llm(), endedAt: 1400, fallbackOutputText: undefined });
   await h.observer.flush();
 
   expect(h.spans[0]?.attributes["gen_ai.response.time_to_first_chunk"]).toBe(timing.expected);
@@ -151,44 +151,46 @@ test.each([
   );
 });
 
-test("shared span history isolates types and releases all child records when a run closes", () => {
-  const history = createSpanHistory();
+test("finished span registry isolates types and releases all child records when a run closes", () => {
+  const finishedSpanRegistry = createFinishedSpanRegistry();
   const runs = [start(), start("u2"), start("u1", "s2")];
   const types = ["interaction", "llm", "tool", "compaction", "permission"] as const;
   runs.forEach((run) => {
-    history.add(run, "interaction", "same-child-id", ROOT_CONTEXT);
-    expect(history.has(run, "llm", "same-child-id")).toBe(false);
-    types.slice(1).forEach((type) => history.add(run, type, "same-child-id"));
-    expect(history.context(run, "interaction", "same-child-id")).toBe(ROOT_CONTEXT);
-    expect(history.context(run, "llm", "same-child-id")).toBeUndefined();
+    finishedSpanRegistry.add(run, "interaction", "same-child-id", ROOT_CONTEXT);
+    expect(finishedSpanRegistry.has(run, "llm", "same-child-id")).toBe(false);
+    types.slice(1).forEach((type) => finishedSpanRegistry.add(run, type, "same-child-id"));
+    expect(finishedSpanRegistry.context(run, "interaction", "same-child-id")).toBe(ROOT_CONTEXT);
+    expect(finishedSpanRegistry.context(run, "llm", "same-child-id")).toBeUndefined();
   });
 
-  history.closeRun({ ...start() });
-  history.closeRun({ ...start() });
-  history.add(start(), "interaction", "late", ROOT_CONTEXT);
+  finishedSpanRegistry.markRunClosed({ ...start() });
+  finishedSpanRegistry.markRunClosed({ ...start() });
+  finishedSpanRegistry.add(start(), "interaction", "late", ROOT_CONTEXT);
 
   types.forEach((type) => {
-    expect(runs.map((run) => history.has(run, type, "same-child-id"))).toEqual([false, true, true]);
+    expect(runs.map((run) => finishedSpanRegistry.has(run, type, "same-child-id"))).toEqual([
+      false,
+      true,
+      true,
+    ]);
   });
-  expect(runs.map((run) => history.context(run, "interaction", "same-child-id"))).toEqual([
-    undefined,
-    ROOT_CONTEXT,
-    ROOT_CONTEXT,
-  ]);
-  expect(runs.map((run) => history.isRunClosed(run))).toEqual([true, false, false]);
-  expect(history.has(start(), "interaction", "late")).toBe(false);
-  expect(history.context(start(), "interaction", "late")).toBeUndefined();
+  expect(
+    runs.map((run) => finishedSpanRegistry.context(run, "interaction", "same-child-id")),
+  ).toEqual([undefined, ROOT_CONTEXT, ROOT_CONTEXT]);
+  expect(runs.map((run) => finishedSpanRegistry.isRunClosed(run))).toEqual([true, false, false]);
+  expect(finishedSpanRegistry.has(start(), "interaction", "late")).toBe(false);
+  expect(finishedSpanRegistry.context(start(), "interaction", "late")).toBeUndefined();
 
-  history.closeRun(start("u2"));
-  history.closeRun(start("u1", "s2"));
+  finishedSpanRegistry.markRunClosed(start("u2"));
+  finishedSpanRegistry.markRunClosed(start("u1", "s2"));
 
   types.forEach((type) => {
-    expect(runs.some((run) => history.has(run, type, "same-child-id"))).toBe(false);
+    expect(runs.some((run) => finishedSpanRegistry.has(run, type, "same-child-id"))).toBe(false);
   });
-  expect(runs.every((run) => history.isRunClosed(run))).toBe(true);
+  expect(runs.every((run) => finishedSpanRegistry.isRunClosed(run))).toBe(true);
 });
 
-test("shared history keeps matching interaction and LLM IDs independent after steer", async () => {
+test("finished span registry keeps matching interaction and LLM IDs independent after steer", async () => {
   const h = setup();
   const parent = interaction("same-id");
   const call = llm("same-id", parent);
@@ -197,7 +199,7 @@ test("shared history keeps matching interaction and LLM IDs independent after st
   h.observer.finishInteraction({ ...parent, endedAt: 1100, status: "superseded" });
 
   h.observer.startLlm(call);
-  h.observer.finishLlm({ ...call, endedAt: 1500, output: "answer" });
+  h.observer.finishLlm({ ...call, endedAt: 1500, fallbackOutputText: "answer" });
   h.observer.startInteraction(parent);
   h.observer.startLlm(call);
   h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
@@ -248,7 +250,7 @@ test("run cleanup preserves child deduplication in live runs and rejects closed-
 
     h.observer.startInteraction(parent);
     h.observer.startLlm(llm("a1", parent));
-    h.observer.finishLlm({ ...llm("a1", parent), endedAt: 1200, output: undefined });
+    h.observer.finishLlm({ ...llm("a1", parent), endedAt: 1200, fallbackOutputText: undefined });
     h.observer.startTool(tool);
     h.observer.startPermission(permission);
     h.observer.finishPermission({ ...permission, endedAt: 1400, reply: "once" });
@@ -256,7 +258,7 @@ test("run cleanup preserves child deduplication in live runs and rejects closed-
     h.observer.finishTool({ ...tool, endedAt: 1500 });
     h.observer.startCompaction(compaction);
     h.observer.startLlm(summary);
-    h.observer.finishLlm({ ...summary, endedAt: 1700, output: undefined });
+    h.observer.finishLlm({ ...summary, endedAt: 1700, fallbackOutputText: undefined });
     h.observer.finishCompaction({ ...compaction, endedAt: 1800 });
     h.observer.finishInteraction({ ...parent, endedAt: 1900, status: "superseded" });
   }
@@ -382,7 +384,7 @@ test.each([
   expect(h.observer.llmTraceHeaders(llm())).toEqual(headers);
   expect(h.observer.llmTraceHeaders(llm())).not.toBe(headers);
 
-  h.observer.finishLlm({ ...llm(), endedAt: 1500, output: undefined });
+  h.observer.finishLlm({ ...llm(), endedAt: 1500, fallbackOutputText: undefined });
   expect(h.observer.llmTraceHeaders(llm())).toBeUndefined();
   await h.observer.flush();
 
@@ -471,7 +473,7 @@ test("structured LLM messages encode GenAI parts and take precedence over fallba
   h.observer.updateLlm({ ...llm(), input, output });
   input.messages.length = 0;
   output.length = 0;
-  h.observer.finishLlm({ ...llm(), endedAt: 2000, output: "fallback output" });
+  h.observer.finishLlm({ ...llm(), endedAt: 2000, fallbackOutputText: "fallback output" });
   h.observer.updateLlm({ ...llm(), input: { messages: [] }, output: [] });
   await h.observer.flush();
 
@@ -518,7 +520,7 @@ test("a new LLM input clears previous step instructions/output and a known empty
     input: { messages: [{ role: "user", parts: [{ type: "text", text: "retry" }] }] },
   });
   h.observer.updateLlm({ ...llm(), input: undefined, output: [] });
-  h.observer.finishLlm({ ...llm(), endedAt: 2000, output: "fallback" });
+  h.observer.finishLlm({ ...llm(), endedAt: 2000, fallbackOutputText: "fallback" });
   await h.observer.flush();
 
   expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toContain("retry");
@@ -538,7 +540,7 @@ test("disabled content capture never reads structured LLM message payloads", asy
       throw new Error("must not read body");
     },
   });
-  h.observer.finishLlm({ ...llm(), endedAt: 2000, output: "secret" });
+  h.observer.finishLlm({ ...llm(), endedAt: 2000, fallbackOutputText: "secret" });
   await h.observer.flush();
 
   expect(h.spans[0]?.attributes["gen_ai.input.messages"]).toBeUndefined();
@@ -757,7 +759,7 @@ test("failed export rejects flush but does not poison later flushes or shutdown"
 });
 
 test("interaction spans use explicit run ancestry and keep completed and superseded output distinct", async () => {
-  const h = setup({ tracePrefix: "custom." });
+  const h = setup({ spanNamePrefix: "custom." });
 
   h.observer.startRun(start());
   h.observer.startInteraction(interaction());
@@ -985,7 +987,7 @@ test.each([false, true])(
     h.observer.finishLlm({
       ...llm(),
       endedAt: 1500,
-      output: undefined,
+      fallbackOutputText: undefined,
       error: failed ? { type: "APIError" } : undefined,
     });
     await h.observer.flush();
@@ -1002,18 +1004,18 @@ test.each([false, true])(
 );
 
 test("LLM contract maps client spans, request parameters and successful usage under an interaction", async () => {
-  const h = setup({ tracePrefix: "custom." });
+  const h = setup({ spanNamePrefix: "custom." });
   h.observer.startRun(start());
   h.observer.startInteraction(interaction());
   h.observer.startLlm({
     ...llm(),
-    parameters: { temperature: 0, topP: 0.9, topK: 10, maxTokens: 100 },
+    parameters: { temperature: 0, topP: 0.9, topK: 10, maxOutputTokens: 100 },
   });
   h.observer.startLlm({ ...llm(), model: "duplicate" });
   h.observer.finishLlm({
     ...llm(),
     endedAt: 1300,
-    output: "answer",
+    fallbackOutputText: "answer",
     finishReason: "stop",
     cost: 0,
     usage: {
@@ -1024,7 +1026,12 @@ test("LLM contract maps client spans, request parameters and successful usage un
       cacheWriteTokens: 1,
     },
   });
-  h.observer.finishLlm({ ...llm(), endedAt: 9999, output: "late", error: { type: "late" } });
+  h.observer.finishLlm({
+    ...llm(),
+    endedAt: 9999,
+    fallbackOutputText: "late",
+    error: { type: "late" },
+  });
   h.observer.startLlm(llm());
   h.observer.finishInteraction({
     ...interaction(),
@@ -1094,9 +1101,13 @@ test("LLM ancestry survives steer and unknown or mismatched identities cannot at
   h.observer.finishInteraction({ ...interaction(), endedAt: 1500, status: "superseded" });
   h.observer.startInteraction({ ...interaction("u2"), startedAt: 1500 });
   h.observer.startLlm({ ...llm("late-start"), startedAt: 1600 });
-  h.observer.finishLlm({ ...llm("a1", interaction("u2")), endedAt: 1700, output: "wrong owner" });
-  h.observer.finishLlm({ ...llm(), endedAt: 1800, output: "old answer" });
-  h.observer.finishLlm({ ...llm("late-start"), endedAt: 1900, output: undefined });
+  h.observer.finishLlm({
+    ...llm("a1", interaction("u2")),
+    endedAt: 1700,
+    fallbackOutputText: "wrong owner",
+  });
+  h.observer.finishLlm({ ...llm(), endedAt: 1800, fallbackOutputText: "old answer" });
+  h.observer.finishLlm({ ...llm("late-start"), endedAt: 1900, fallbackOutputText: undefined });
   h.observer.finishRun({ ...start(), endedAt: 2000, output: undefined });
   h.observer.startLlm(llm("closed-run"));
   await h.observer.flush();
@@ -1135,8 +1146,8 @@ test.each([true, false])(
     h.observer.startInteraction(interaction());
     h.observer.startLlm(llm());
     h.observer.startLlm(llm("a2"));
-    h.observer.finishLlm({ ...llm(), endedAt: 1200, output: undefined });
-    h.observer.finishLlm({ ...llm("a2"), endedAt: 1300, output: "" });
+    h.observer.finishLlm({ ...llm(), endedAt: 1200, fallbackOutputText: undefined });
+    h.observer.finishLlm({ ...llm("a2"), endedAt: 1300, fallbackOutputText: "" });
     await h.observer.flush();
 
     expect(h.spans[0]?.attributes["gen_ai.output.messages"]).toBeUndefined();
@@ -1178,7 +1189,7 @@ test.each([true, false])(
     h.observer.updateLlm({ ...llm(), input: undefined, request });
     h.observer.updateLlm({ ...llm(), input: undefined, responseHeaders });
     responseHeaders["set-cookie"].push("later=3");
-    h.observer.finishLlm({ ...llm(), endedAt: 1500, output: undefined });
+    h.observer.finishLlm({ ...llm(), endedAt: 1500, fallbackOutputText: undefined });
     await h.observer.flush();
 
     const attributes = h.spans[0]!.attributes;
@@ -1221,7 +1232,7 @@ test("new request snapshots clear stale tools, output types and both header dire
   h.observer.finishLlm({
     ...llm(),
     endedAt: 1500,
-    output: undefined,
+    fallbackOutputText: undefined,
     error: { type: "APIError" },
     responseHeaders: { "x-error": ["terminal"] },
   });
@@ -1247,7 +1258,7 @@ test("LLM failures omit time source and successful usage, and cleanup stays scop
   h.observer.finishLlm({
     ...llm(),
     endedAt: 1200,
-    output: undefined,
+    fallbackOutputText: undefined,
     error: { type: "APIError", message: "failed" },
     cost: 99,
     usage: { inputTokens: 99 },
@@ -1275,7 +1286,7 @@ test("LLM failures omit time source and successful usage, and cleanup stays scop
   h.observer.finishLlm({
     ...llm("a1", interaction("u1", start("u1", "s2"))),
     endedAt: 2500,
-    output: "isolated",
+    fallbackOutputText: "isolated",
   });
   await h.observer.flush();
 
@@ -1292,7 +1303,7 @@ test("shutdown ends LLMs before interactions and runs and rejects all late model
   const closing = h.observer.shutdown();
   expect(h.observer.shutdown()).toBe(closing);
   h.observer.startLlm(llm("late"));
-  h.observer.finishLlm({ ...llm(), endedAt: 9999, output: "late" });
+  h.observer.finishLlm({ ...llm(), endedAt: 9999, fallbackOutputText: "late" });
   await closing;
 
   expect(h.spans.map((span) => span.name)).toEqual([

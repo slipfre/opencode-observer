@@ -20,27 +20,27 @@ export function createPermissionSpans(
     parentContext(reference: ToolReference): Context | undefined;
   },
 ) {
-  const permissions = new Map<string, { reference: PermissionReference; span: Span }>();
+  const activeSpans = new Map<string, { reference: PermissionReference; span: Span }>();
 
   function finish(input: PermissionFinish) {
     const key = `${operationKey(input.tool)}:${input.requestID}`;
-    const permission = permissions.get(key);
+    const spanState = activeSpans.get(key);
 
-    if (!permission) {
+    if (!spanState) {
       return;
     }
 
-    permissions.delete(key);
-    options.history.add(permission.reference.tool.interaction.run, "permission", key);
+    activeSpans.delete(key);
+    options.finishedSpanRegistry.add(spanState.reference.tool.interaction.run, "permission", key);
 
     if (input.reply !== undefined) {
-      permission.span.setAttributes({
+      spanState.span.setAttributes({
         "opencode.permission.reply": input.reply,
         "opencode.permission.granted": input.reply !== "reject",
       });
     }
 
-    endSpan(permission.span, input.endedAt, input.error);
+    endSpan(spanState.span, input.endedAt, input.error);
   }
 
   return {
@@ -51,13 +51,13 @@ export function createPermissionSpans(
 
       if (
         !parent ||
-        permissions.has(key) ||
-        options.history.has(input.tool.interaction.run, "permission", key)
+        activeSpans.has(key) ||
+        options.finishedSpanRegistry.has(input.tool.interaction.run, "permission", key)
       ) {
         return;
       }
 
-      permissions.set(key, {
+      activeSpans.set(key, {
         reference: {
           requestID: input.requestID,
           tool: {
@@ -67,7 +67,7 @@ export function createPermissionSpans(
           },
         },
         span: options.tracer.startSpan(
-          `${options.tracePrefix}permission.check`,
+          `${options.spanNamePrefix}permission.check`,
           {
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
@@ -84,32 +84,32 @@ export function createPermissionSpans(
         ),
       });
     },
-    closeTool(tool: ToolReference, endedAt: number, error?: ObservationError) {
-      permissions.forEach((permission) => {
-        if (operationKey(permission.reference.tool) === operationKey(tool)) {
+    finishPendingForTool(tool: ToolReference, endedAt: number, error?: ObservationError) {
+      activeSpans.forEach((spanState) => {
+        if (operationKey(spanState.reference.tool) === operationKey(tool)) {
           finish({
-            ...permission.reference,
+            ...spanState.reference,
             endedAt,
             error: error ?? { type: "_OTHER", message: "tool ended before permission replied" },
           });
         }
       });
     },
-    closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
-      permissions.forEach((permission) => {
-        if (sameRun(permission.reference.tool.interaction.run, run)) {
+    finishPendingForRun(run: RunReference, endedAt: number, error?: ObservationError) {
+      activeSpans.forEach((spanState) => {
+        if (sameRun(spanState.reference.tool.interaction.run, run)) {
           finish({
-            ...permission.reference,
+            ...spanState.reference,
             endedAt,
             error: error ?? { type: "_OTHER", message: "session ended before permission replied" },
           });
         }
       });
     },
-    close(endedAt: number) {
-      permissions.forEach((permission) =>
+    finishAllOnShutdown(endedAt: number) {
+      activeSpans.forEach((spanState) =>
         finish({
-          ...permission.reference,
+          ...spanState.reference,
           endedAt,
           error: { type: "_OTHER", message: "plugin disposed before permission replied" },
         }),

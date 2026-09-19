@@ -10,7 +10,7 @@ export type TelemetryOptions = {
   serviceVersion?: string;
   endpoint: string;
   captureContent: boolean;
-  tracePrefix: string;
+  spanNamePrefix: string;
   otlpHeaders: Record<string, string>;
   resourceAttributes: Record<string, string>;
   spanAttributes: Record<string, string>;
@@ -18,7 +18,7 @@ export type TelemetryOptions = {
 };
 
 export function createTelemetry(config: TelemetryOptions): Observer {
-  const architectures: Record<string, string> = {
+  const hostArchByMachine: Record<string, string> = {
     x86_64: "amd64",
     AMD64: "amd64",
     aarch64: "arm64",
@@ -27,11 +27,11 @@ export function createTelemetry(config: TelemetryOptions): Observer {
     i686: "x86",
     armv7l: "arm32",
   };
-  const hostArch = architectures[machine()];
+  const hostArch = hostArchByMachine[machine()];
   const osType =
     platform() === "win32" ? "windows" : platform() === "sunos" ? "solaris" : platform();
 
-  const provider = new BasicTracerProvider({
+  const tracerProvider = new BasicTracerProvider({
     resource: resourceFromAttributes({
       "service.name": "opencode",
       ...(config.serviceVersion ? { "service.version": config.serviceVersion } : {}),
@@ -53,9 +53,9 @@ export function createTelemetry(config: TelemetryOptions): Observer {
   });
 
   return createObserver({
-    provider,
-    scope: { name, version },
-    tracePrefix: config.tracePrefix,
+    tracerProvider,
+    instrumentationScope: { name, version },
+    spanNamePrefix: config.spanNamePrefix,
     captureContent: config.captureContent,
     spanAttributes: config.spanAttributes,
   });

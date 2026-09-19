@@ -19,11 +19,12 @@ afterEach(async () => {
 
 function setup(
   options: Partial<
-    Omit<CoordinatorOptions, "observer"> & Omit<ObserverOptions, "provider" | "scope">
+    Omit<CoordinatorOptions, "observer"> &
+      Omit<ObserverOptions, "tracerProvider" | "instrumentationScope">
   > = {},
 ) {
   const spans: ReadableSpan[] = [];
-  const provider = new BasicTracerProvider({
+  const tracerProvider = new BasicTracerProvider({
     spanLimits: { attributeCountLimit: 4096 },
     spanProcessors: [
       new SimpleSpanProcessor({
@@ -37,8 +38,8 @@ function setup(
   });
 
   const observer = createObserver({
-    provider,
-    scope: { name: "test" },
+    tracerProvider,
+    instrumentationScope: { name: "test" },
     captureContent: true,
     now: () => 2000,
     ...options,
@@ -524,7 +525,7 @@ test("errors without a session do not affect runs; unknown error types use _OTHE
 
 test("custom attributes allow user.id but cannot override other derived or error attributes", async () => {
   const h = setup({
-    tracePrefix: "custom.",
+    spanNamePrefix: "custom.",
     spanAttributes: {
       "tenant.id": "test",
       "session.id": "fake",

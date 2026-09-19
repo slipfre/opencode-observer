@@ -1,13 +1,13 @@
 import { asSchema, type OnStepStartEvent } from "ai";
-import type { ModelRequest, ToolDefinition } from "../../contract/observer.js";
-import { jsonValue } from "../shared/json.js";
+import type { ModelRequestMetadata, ToolDefinition } from "../../contract/observer.js";
+import { toJsonValue } from "../shared/json.js";
 
 export async function parseModelSettings(
   event: Pick<OnStepStartEvent, "output" | "tools" | "activeTools">,
   captureContent: boolean,
   log: (error: unknown) => void,
-): Promise<Pick<ModelRequest, "outputType" | "toolDefinitions">> {
-  const [output, tools] = await Promise.allSettled([
+): Promise<Pick<ModelRequestMetadata, "outputType" | "toolDefinitions">> {
+  const [outputFormatResult, toolDefinitionsResult] = await Promise.allSettled([
     event.output?.responseFormat,
     captureContent && event.tools
       ? Promise.all(
@@ -29,12 +29,12 @@ export async function parseModelSettings(
                   log(error);
                 });
 
-              return { ...definition, parameters: jsonValue(schema) };
+              return { ...definition, parameters: toJsonValue(schema) };
             }),
         )
       : undefined,
   ]);
-  [output, tools].forEach((result) => {
+  [outputFormatResult, toolDefinitionsResult].forEach((result) => {
     if (result.status === "rejected") {
       log(result.reason);
     }
@@ -42,10 +42,11 @@ export async function parseModelSettings(
 
   return {
     outputType:
-      output.status === "fulfilled" &&
-      (output.value?.type === "text" || output.value?.type === "json")
-        ? output.value.type
+      outputFormatResult.status === "fulfilled" &&
+      (outputFormatResult.value?.type === "text" || outputFormatResult.value?.type === "json")
+        ? outputFormatResult.value.type
         : undefined,
-    toolDefinitions: tools.status === "fulfilled" ? tools.value : undefined,
+    toolDefinitions:
+      toolDefinitionsResult.status === "fulfilled" ? toolDefinitionsResult.value : undefined,
   };
 }

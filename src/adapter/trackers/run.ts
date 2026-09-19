@@ -10,12 +10,12 @@ export function createRunTracker(options: RunOptions) {
   const seenUserMessageKeys = new Set<string>();
 
   return {
-    userInput(input: {
+    observeUserInput(input: {
       sessionID: string;
       id: string;
       createdAt: number;
       text: string | undefined;
-      parent?: ToolReference;
+      parentTool?: ToolReference;
       parentSessionID?: string;
     }) {
       const userMessageKey = `${input.sessionID}:${input.id}`;
@@ -31,7 +31,7 @@ export function createRunTracker(options: RunOptions) {
         options.observer.startRun({
           ...reference,
           startedAt: input.createdAt,
-          parent: input.parent,
+          parentTool: input.parentTool,
           parentSessionID: input.parentSessionID,
         });
         activeRuns.set(input.sessionID, reference);

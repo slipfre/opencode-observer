@@ -22,10 +22,10 @@ test("run tracker accepts recognized inputs, deduplicates them and preserves ses
   const h = setup();
   const input = { sessionID: "s1", id: "u1", createdAt: 1000, text: "question" };
 
-  const first = h.tracker.userInput(input);
-  const duplicate = h.tracker.userInput({ ...input, text: "replay" });
-  const steer = h.tracker.userInput({ ...input, id: "u2", createdAt: 1200, text: "steer" });
-  const other = h.tracker.userInput({ ...input, sessionID: "s2" });
+  const first = h.tracker.observeUserInput(input);
+  const duplicate = h.tracker.observeUserInput({ ...input, text: "replay" });
+  const steer = h.tracker.observeUserInput({ ...input, id: "u2", createdAt: 1200, text: "steer" });
+  const other = h.tracker.observeUserInput({ ...input, sessionID: "s2" });
 
   expect(first?.reference).toEqual({ sessionID: "s1", id: "u1" });
   expect(duplicate).toBeUndefined();
@@ -40,12 +40,12 @@ test("run tracker rejects stale finishes and replays across consecutive runs", (
   const h = setup();
   const input = { sessionID: "s1", id: "u1", createdAt: 1000, text: "question" };
   const finish = { sessionID: "s1", id: "u1", endedAt: 2000, output: "answer" };
-  h.tracker.userInput(input);
+  h.tracker.observeUserInput(input);
   h.tracker.finish(finish);
   h.tracker.finish(finish);
 
-  expect(h.tracker.userInput(input)).toBeUndefined();
-  h.tracker.userInput({ ...input, id: "u2", createdAt: 3000 });
+  expect(h.tracker.observeUserInput(input)).toBeUndefined();
+  h.tracker.observeUserInput({ ...input, id: "u2", createdAt: 3000 });
   h.tracker.finish({ ...finish, endedAt: 3500 });
   h.tracker.finish({ ...finish, id: "u2", endedAt: 4000 });
 
@@ -55,7 +55,7 @@ test("run tracker rejects stale finishes and replays across consecutive runs", (
 
 test("run tracker enforces capture policy on recognized input and completion", () => {
   const h = setup(false);
-  const accepted = h.tracker.userInput({
+  const accepted = h.tracker.observeUserInput({
     sessionID: "s1",
     id: "u1",
     createdAt: 1000,
@@ -72,11 +72,11 @@ test("run release preserves input deduplication without affecting the next run",
   const h = setup();
   const first = { sessionID: "s1", id: "u1", createdAt: 1000, text: "first" };
   const next = { ...first, id: "u2", createdAt: 2000 };
-  h.tracker.userInput(first);
+  h.tracker.observeUserInput(first);
 
   h.tracker.release(first);
-  expect(h.tracker.userInput(first)).toBeUndefined();
-  h.tracker.userInput(next);
+  expect(h.tracker.observeUserInput(first)).toBeUndefined();
+  h.tracker.observeUserInput(next);
   h.tracker.release(first);
   h.tracker.finish({ ...next, endedAt: 3000, output: undefined });
   expect(h.starts).toHaveLength(2);

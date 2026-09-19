@@ -7,12 +7,12 @@ import { createLlmSpans } from "./spans/llm.js";
 import { createToolSpans } from "./spans/tool.js";
 import { createCompactionSpans } from "./spans/compaction.js";
 import { createPermissionSpans } from "./spans/permission.js";
-import { createSpanHistory, operationKey, sameRun } from "./spans/common.js";
+import { createFinishedSpanRegistry, operationKey, sameRun } from "./spans/common.js";
 
 export type ObserverOptions = {
-  provider: BasicTracerProvider;
-  scope: { name: string; version?: string };
-  tracePrefix?: string;
+  tracerProvider: BasicTracerProvider;
+  instrumentationScope: { name: string; version?: string };
+  spanNamePrefix?: string;
   captureContent?: boolean;
   spanAttributes?: Record<string, string>;
   now?: () => number;
@@ -30,12 +30,15 @@ const reservedAttributes = new Set([
 ]);
 
 export function createObserver(options: ObserverOptions): Observer {
-  const history = createSpanHistory();
+  const finishedSpanRegistry = createFinishedSpanRegistry();
   const spanOptions = {
-    history,
-    tracer: options.provider.getTracer(options.scope.name, options.scope.version),
+    finishedSpanRegistry,
+    tracer: options.tracerProvider.getTracer(
+      options.instrumentationScope.name,
+      options.instrumentationScope.version,
+    ),
     rootContext: ROOT_CONTEXT,
-    tracePrefix: options.tracePrefix ?? "opencode.",
+    spanNamePrefix: options.spanNamePrefix ?? "opencode.",
     captureContent: options.captureContent ?? false,
     spanAttributes: Object.fromEntries(
       Object.entries(options.spanAttributes ?? {}).filter(
@@ -56,27 +59,36 @@ export function createObserver(options: ObserverOptions): Observer {
       ),
     ),
   };
-  const runs = createRunSpans({
+  const runSpans = createRunSpans({
     ...spanOptions,
-    parentContext: (reference) => tools.context(reference, true),
+    parentContext: (reference) => toolSpans.context(reference, true),
   });
-  const interactions = createInteractionSpans({ ...spanOptions, parentContext: runs.context });
-  const tools = createToolSpans({ ...spanOptions, parentContext: interactions.context });
-  const permissions = createPermissionSpans({ ...spanOptions, parentContext: tools.context });
-  const compactions = createCompactionSpans({
+  const interactionSpans = createInteractionSpans({
     ...spanOptions,
-    parentContext: interactions.context,
+    parentContext: runSpans.context,
   });
-  const llms = createLlmSpans({
+  const toolSpans = createToolSpans({ ...spanOptions, parentContext: interactionSpans.context });
+  const permissionSpans = createPermissionSpans({
+    ...spanOptions,
+    parentContext: toolSpans.context,
+  });
+  const compactionSpans = createCompactionSpans({
+    ...spanOptions,
+    parentContext: interactionSpans.context,
+  });
+  const llmSpans = createLlmSpans({
     ...spanOptions,
     parentContext: (input) =>
       input.compactionID
-        ? compactions.context({ interaction: input.interaction, id: input.compactionID })
-        : interactions.context(input.interaction),
+        ? compactionSpans.context({ interaction: input.interaction, id: input.compactionID })
+        : interactionSpans.context(input.interaction),
   });
-  const activeRuns = new Map<string, { reference: RunReference; parent: RunStart["parent"] }>();
+  const activeRuns = new Map<
+    string,
+    { reference: RunReference; parentTool: RunStart["parentTool"] }
+  >();
   const state = {
-    shutdown: undefined as Promise<void> | undefined,
+    shutdownPromise: undefined as Promise<void> | undefined,
   };
 
   function endRun(input: RunFinish, disposing = false) {
@@ -87,7 +99,7 @@ export function createObserver(options: ObserverOptions): Observer {
     }
 
     activeRuns.forEach((run) => {
-      if (run.parent && sameRun(run.parent.interaction.run, input)) {
+      if (run.parentTool && sameRun(run.parentTool.interaction.run, input)) {
         endRun(
           {
             ...run.reference,
@@ -102,50 +114,50 @@ export function createObserver(options: ObserverOptions): Observer {
         );
       }
     });
-    const error = (kind: string) =>
+    const resolveFinishError = (kind: string) =>
       disposing
         ? { type: "_OTHER", message: `plugin disposed before ${kind} completed` }
         : input.error;
-    permissions.closeRun(
+    permissionSpans.finishPendingForRun(
       input,
       input.endedAt,
       disposing
         ? { type: "_OTHER", message: "plugin disposed before permission replied" }
         : input.error,
     );
-    llms.closeRun(input, input.endedAt, error("message"));
-    compactions.closeRun(input, input.endedAt, error("compaction"));
-    tools.closeRun(input, input.endedAt, error("tool"));
-    interactions.closeRun(input, input.endedAt, error("interaction"));
-    history.closeRun(input);
-    runs.finish(input);
+    llmSpans.finishPendingForRun(input, input.endedAt, resolveFinishError("message"));
+    compactionSpans.finishPendingForRun(input, input.endedAt, resolveFinishError("compaction"));
+    toolSpans.finishPendingForRun(input, input.endedAt, resolveFinishError("tool"));
+    interactionSpans.finishPendingForRun(input, input.endedAt, resolveFinishError("interaction"));
+    finishedSpanRegistry.markRunClosed(input);
+    runSpans.finish(input);
   }
 
   return {
     startRun(input) {
-      if (history.isRunClosed(input) || !runs.start(input)) {
+      if (finishedSpanRegistry.isRunClosed(input) || !runSpans.start(input)) {
         return;
       }
 
       activeRuns.set(`${input.sessionID}:${input.id}`, {
         reference: { sessionID: input.sessionID, id: input.id },
-        parent: input.parent
+        parentTool: input.parentTool
           ? {
-              callID: input.parent.callID,
-              messageID: input.parent.messageID,
+              callID: input.parentTool.callID,
+              messageID: input.parentTool.messageID,
               interaction: {
-                id: input.parent.interaction.id,
-                run: { ...input.parent.interaction.run },
+                id: input.parentTool.interaction.id,
+                run: { ...input.parentTool.interaction.run },
               },
             }
           : undefined,
       });
     },
-    updateRun: runs.update,
+    updateRun: runSpans.update,
     finishRun: endRun,
     finishTool(input) {
       activeRuns.forEach((run) => {
-        if (run.parent && operationKey(run.parent) === operationKey(input)) {
+        if (run.parentTool && operationKey(run.parentTool) === operationKey(input)) {
           endRun({
             ...run.reference,
             endedAt: input.endedAt,
@@ -157,30 +169,30 @@ export function createObserver(options: ObserverOptions): Observer {
           });
         }
       });
-      permissions.closeTool(input, input.endedAt, input.error);
-      tools.finish(input);
+      permissionSpans.finishPendingForTool(input, input.endedAt, input.error);
+      toolSpans.finish(input);
     },
-    startTool: tools.start,
-    updateTool: tools.update,
-    startCompaction: compactions.start,
+    startTool: toolSpans.start,
+    updateTool: toolSpans.update,
+    startCompaction: compactionSpans.start,
     finishCompaction(input) {
-      llms.closeCompaction(input.interaction, input.id, input.endedAt, input.error);
-      compactions.finish(input);
+      llmSpans.finishForCompaction(input.interaction, input.id, input.endedAt, input.error);
+      compactionSpans.finish(input);
     },
-    startPermission: permissions.start,
-    finishPermission: permissions.finish,
-    startInteraction: interactions.start,
-    finishInteraction: interactions.finish,
-    startLlm: llms.start,
-    llmTraceHeaders: llms.traceHeaders,
-    updateLlm: llms.update,
-    finishLlm: llms.finish,
+    startPermission: permissionSpans.start,
+    finishPermission: permissionSpans.finish,
+    startInteraction: interactionSpans.start,
+    finishInteraction: interactionSpans.finish,
+    startLlm: llmSpans.start,
+    llmTraceHeaders: llmSpans.traceHeaders,
+    updateLlm: llmSpans.update,
+    finishLlm: llmSpans.finish,
     flush() {
-      return state.shutdown ?? options.provider.forceFlush();
+      return state.shutdownPromise ?? options.tracerProvider.forceFlush();
     },
     shutdown() {
-      if (state.shutdown) {
-        return state.shutdown;
+      if (state.shutdownPromise) {
+        return state.shutdownPromise;
       }
 
       const endedAt = (options.now ?? Date.now)();
@@ -195,14 +207,14 @@ export function createObserver(options: ObserverOptions): Observer {
           true,
         ),
       );
-      permissions.close(endedAt);
-      llms.close(endedAt);
-      compactions.close(endedAt);
-      tools.close(endedAt);
-      interactions.close(endedAt);
-      runs.close(endedAt);
-      state.shutdown = options.provider.shutdown();
-      return state.shutdown;
+      permissionSpans.finishAllOnShutdown(endedAt);
+      llmSpans.finishAllOnShutdown(endedAt);
+      compactionSpans.finishAllOnShutdown(endedAt);
+      toolSpans.finishAllOnShutdown(endedAt);
+      interactionSpans.finishAllOnShutdown(endedAt);
+      runSpans.finishAllOnShutdown(endedAt);
+      state.shutdownPromise = options.tracerProvider.shutdown();
+      return state.shutdownPromise;
     },
   };
 }

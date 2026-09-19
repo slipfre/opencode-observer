@@ -10,10 +10,13 @@ import type {
 export type SpanOptions = {
   tracer: Tracer;
   rootContext: Context;
-  tracePrefix: string;
+  spanNamePrefix: string;
   captureContent: boolean;
   spanAttributes: Record<string, string>;
-  history: Pick<ReturnType<typeof createSpanHistory>, "add" | "has" | "context">;
+  finishedSpanRegistry: Pick<
+    ReturnType<typeof createFinishedSpanRegistry>,
+    "add" | "has" | "context"
+  >;
 };
 
 type SpanType = "interaction" | "llm" | "tool" | "compaction" | "permission";
@@ -33,7 +36,7 @@ export function sameRun(first: RunReference, second: RunReference) {
   return first.sessionID === second.sessionID && first.id === second.id;
 }
 
-export function createSpanHistory() {
+export function createFinishedSpanRegistry() {
   // A null entry retains only the closed run identity, releasing every child record.
   const runs = new Map<string, Map<string, Context | undefined> | null>();
 
@@ -58,7 +61,7 @@ export function createSpanHistory() {
     isRunClosed(run: RunReference) {
       return runs.get(`${run.sessionID}:${run.id}`) === null;
     },
-    closeRun(run: RunReference) {
+    markRunClosed(run: RunReference) {
       runs.set(`${run.sessionID}:${run.id}`, null);
     },
   };

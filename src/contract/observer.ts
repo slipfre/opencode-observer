@@ -14,7 +14,7 @@ export type RunStart = RunReference & {
   /** Source creation time, in Unix epoch milliseconds. */
   startedAt: number;
   /** Exact task tool association, when known before the run starts. */
-  parent: ToolReference | undefined;
+  parentTool: ToolReference | undefined;
   parentSessionID: string | undefined;
 };
 
@@ -62,7 +62,7 @@ export type LlmParameters = {
   temperature?: number;
   topP?: number;
   topK?: number;
-  maxTokens?: number;
+  maxOutputTokens?: number;
 };
 
 export type ModelHeaders = Record<string, string[]>;
@@ -74,7 +74,7 @@ export type ToolDefinition = {
   parameters?: JsonValue;
 };
 
-export type ModelRequest = {
+export type ModelRequestMetadata = {
   outputType?: "text" | "json";
   toolDefinitions?: ToolDefinition[];
   headers?: ModelHeaders;
@@ -90,7 +90,7 @@ export type LlmStart = LlmReference & {
   stream: boolean;
   agentName?: string;
   /** Owner text fallback; this is not the full model request. */
-  input: string | undefined;
+  fallbackInputText: string | undefined;
   parameters?: LlmParameters;
   agentType: AgentContext["agentType"];
   parentSessionID: string | undefined;
@@ -101,7 +101,7 @@ export type LlmFinish = LlmReference & {
   /** Assistant completion time, or terminal observation time when unavailable, in epoch milliseconds. */
   endedAt: number;
   /** Observed assistant text snapshot, with undefined distinct from known empty text. */
-  output: string | undefined;
+  fallbackOutputText: string | undefined;
   responseHeaders?: ModelHeaders;
   finishReason?: string;
   usage?: {
@@ -127,16 +127,16 @@ export type LlmRetry = {
 
 export type LlmUpdate = LlmReference & {
   /** First step-start estimates first chunk arrival; retain the first valid observation. */
-  firstChunk?: {
+  firstChunkEstimate?: {
     /** First SDK model-step start, in epoch milliseconds; never reset by retries. */
-    requestStartedAt: number;
+    firstSdkStepStartedAt: number;
     /** Step-start publication time, or local receipt time when unavailable, in epoch milliseconds. */
     observedAt: number;
   };
   /** Replace the history of confirmed OpenCode execution retries. */
   retries?: LlmRetry[];
   /** Replace the SDK request snapshot and clear the previous step's response. */
-  request?: ModelRequest;
+  request?: ModelRequestMetadata;
   responseHeaders?: ModelHeaders;
   /** Replace the request snapshot and clear the previous attempt's output. */
   input?: ModelInput;

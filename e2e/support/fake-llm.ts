@@ -5,7 +5,7 @@ export type LlmReply =
   | { type: "tool"; name: string; input: Record<string, unknown>; usage?: Usage }
   | { type: "error"; message: string; code: string; status?: number; retryAfterMs?: number };
 
-function completion(delta: Record<string, unknown>, finish?: string, usage?: Usage) {
+function completionChunk(delta: Record<string, unknown>, finish?: string, usage?: Usage) {
   return {
     id: "chatcmpl-observer-e2e",
     object: "chat.completion.chunk",
@@ -30,7 +30,7 @@ export function startFakeLlm(replies: LlmReply[]) {
   const hits: Array<{
     body: Record<string, unknown>;
     headers: Headers;
-    title: boolean;
+    isTitleRequest: boolean;
     receivedAt: number;
   }> = [];
   const errors: string[] = [];
@@ -45,11 +45,13 @@ export function startFakeLlm(replies: LlmReply[]) {
       }
 
       const body = (await request.json()) as Record<string, unknown>;
-      const title = JSON.stringify(body.messages).includes(
+      const isTitleRequest = JSON.stringify(body.messages).includes(
         "Generate a title for this conversation",
       );
-      hits.push({ body, headers: new Headers(request.headers), title, receivedAt });
-      const reply = title ? { type: "text" as const, text: "Observer E2E" } : pending.shift();
+      hits.push({ body, headers: new Headers(request.headers), isTitleRequest, receivedAt });
+      const reply = isTitleRequest
+        ? { type: "text" as const, text: "Observer E2E" }
+        : pending.shift();
 
       if (!reply) {
         errors.push("Model reply queue exhausted");
@@ -70,14 +72,14 @@ export function startFakeLlm(replies: LlmReply[]) {
       }
 
       const chunks = [
-        completion({ role: "assistant" }),
+        completionChunk({ role: "assistant" }),
         ...(reply.type === "text"
           ? [
-              ...(reply.reasoning ? [completion({ reasoning_content: reply.reasoning })] : []),
-              completion({ content: reply.text }),
+              ...(reply.reasoning ? [completionChunk({ reasoning_content: reply.reasoning })] : []),
+              completionChunk({ content: reply.text }),
             ]
           : [
-              completion({
+              completionChunk({
                 tool_calls: [
                   {
                     index: 0,
@@ -87,11 +89,11 @@ export function startFakeLlm(replies: LlmReply[]) {
                   },
                 ],
               }),
-              completion({
+              completionChunk({
                 tool_calls: [{ index: 0, function: { arguments: JSON.stringify(reply.input) } }],
               }),
             ]),
-        completion({}, reply.type === "text" ? "stop" : "tool_calls", reply.usage),
+        completionChunk({}, reply.type === "text" ? "stop" : "tool_calls", reply.usage),
       ];
 
       return new Response(
@@ -110,8 +112,8 @@ export function startFakeLlm(replies: LlmReply[]) {
     url: `http://127.0.0.1:${server.port}/v1`,
     hits,
     errors,
-    pending: () => pending.length,
-    mainHits: () => hits.filter((hit) => !hit.title),
+    remainingReplyCount: () => pending.length,
+    mainHits: () => hits.filter((hit) => !hit.isTitleRequest),
     [Symbol.dispose]: () => server.stop(true),
   };
 }

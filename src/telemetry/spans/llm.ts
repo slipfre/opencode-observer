@@ -25,18 +25,18 @@ export function createLlmSpans(
     parentContext: (input: LlmStart) => Context | undefined;
   },
 ) {
-  const calls = new Map<
+  const activeSpans = new Map<
     string,
     {
       reference: LlmReference;
       compactionID?: string;
       span: Span;
-      startedAt: number;
-      timeToFirstChunk?: number;
-      messages?: { input: string; system: string | undefined };
-      output?: string;
+      spanStartedAt: number;
+      timeToFirstChunkSeconds?: number;
+      inputSnapshot?: { messagesJson: string; systemInstructionsJson: string | undefined };
+      outputMessagesJson?: string;
       outputType?: string;
-      toolDefinitions?: string;
+      toolDefinitionsJson?: string;
       requestHeaders?: ModelHeaders;
       responseHeaders?: ModelHeaders;
     }
@@ -45,19 +45,19 @@ export function createLlmSpans(
 
   function finish(input: LlmFinish) {
     const key = `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`;
-    const call = calls.get(key);
+    const spanState = activeSpans.get(key);
 
-    if (!call || call.reference.interaction.id !== input.interaction.id) {
+    if (!spanState || spanState.reference.interaction.id !== input.interaction.id) {
       return;
     }
 
-    calls.delete(key);
-    options.history.add(call.reference.interaction.run, "llm", key);
-    call.span.setAttributes({
-      "gen_ai.response.time_to_first_chunk": call.timeToFirstChunk,
+    activeSpans.delete(key);
+    options.finishedSpanRegistry.add(spanState.reference.interaction.run, "llm", key);
+    spanState.span.setAttributes({
+      "gen_ai.response.time_to_first_chunk": spanState.timeToFirstChunkSeconds,
       "opencode.llm.time_to_first_chunk.source":
-        call.timeToFirstChunk === undefined ? undefined : "step-start",
-      "gen_ai.output.type": call.outputType,
+        spanState.timeToFirstChunkSeconds === undefined ? undefined : "step-start",
+      "gen_ai.output.type": spanState.outputType,
       "gen_ai.response.finish_reasons": input.finishReason
         ? [input.finishReason]
         : input.error
@@ -76,49 +76,51 @@ export function createLlmSpans(
     });
 
     if (options.captureContent) {
-      call.span.setAttributes({
-        "gen_ai.tool.definitions": call.toolDefinitions,
+      spanState.span.setAttributes({
+        "gen_ai.tool.definitions": spanState.toolDefinitionsJson,
         ...Object.fromEntries(
-          Object.entries(call.requestHeaders ?? {}).map(([key, value]) => [
+          Object.entries(spanState.requestHeaders ?? {}).map(([key, value]) => [
             `http.request.header.${key}`,
             value,
           ]),
         ),
         ...Object.fromEntries(
-          Object.entries(input.responseHeaders ?? call.responseHeaders ?? {}).map(
+          Object.entries(input.responseHeaders ?? spanState.responseHeaders ?? {}).map(
             ([key, value]) => [`http.response.header.${key}`, value],
           ),
         ),
-        "gen_ai.input.messages": call.messages?.input,
-        "gen_ai.system_instructions": call.messages?.system,
+        "gen_ai.input.messages": spanState.inputSnapshot?.messagesJson,
+        "gen_ai.system_instructions": spanState.inputSnapshot?.systemInstructionsJson,
         "gen_ai.output.messages":
-          call.output ??
-          (input.output !== undefined ? encodeTextMessage("assistant", input.output) : undefined),
+          spanState.outputMessagesJson ??
+          (input.fallbackOutputText !== undefined
+            ? encodeTextMessage("assistant", input.fallbackOutputText)
+            : undefined),
       });
     }
 
     if (input.error) {
-      call.span.setAttribute("error.type", input.error.type);
-      call.span.setStatus({ code: SpanStatusCode.ERROR, message: input.error.message });
+      spanState.span.setAttribute("error.type", input.error.type);
+      spanState.span.setStatus({ code: SpanStatusCode.ERROR, message: input.error.message });
     }
 
-    call.span.end(new Date(input.endedAt));
+    spanState.span.end(new Date(input.endedAt));
   }
 
   return {
     finish,
     traceHeaders(input: LlmReference): TraceHeaders | undefined {
-      const call = calls.get(
+      const spanState = activeSpans.get(
         `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`,
       );
 
-      if (!call || call.reference.interaction.id !== input.interaction.id) {
+      if (!spanState || spanState.reference.interaction.id !== input.interaction.id) {
         return;
       }
 
       const headers: Record<string, string> = {};
       propagator.inject(
-        trace.setSpan(options.rootContext, call.span),
+        trace.setSpan(options.rootContext, spanState.span),
         headers,
         defaultTextMapSetter,
       );
@@ -130,40 +132,47 @@ export function createLlmSpans(
         : undefined;
     },
     update(input: LlmUpdate) {
-      const call = calls.get(
+      const spanState = activeSpans.get(
         `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`,
       );
 
-      if (!call || call.reference.interaction.id !== input.interaction.id) {
+      if (!spanState || spanState.reference.interaction.id !== input.interaction.id) {
         return;
       }
 
-      if (input.firstChunk && call.timeToFirstChunk === undefined) {
-        const elapsed = input.firstChunk.observedAt - input.firstChunk.requestStartedAt;
-        if (input.firstChunk.requestStartedAt >= 0 && Number.isFinite(elapsed) && elapsed >= 0) {
-          call.timeToFirstChunk = elapsed / 1000;
+      if (input.firstChunkEstimate && spanState.timeToFirstChunkSeconds === undefined) {
+        const elapsedMs =
+          input.firstChunkEstimate.observedAt - input.firstChunkEstimate.firstSdkStepStartedAt;
+        if (
+          input.firstChunkEstimate.firstSdkStepStartedAt >= 0 &&
+          Number.isFinite(elapsedMs) &&
+          elapsedMs >= 0
+        ) {
+          spanState.timeToFirstChunkSeconds = elapsedMs / 1000;
         }
       }
 
       if (input.retries) {
-        call.span.setAttributes({
+        spanState.span.setAttributes({
           "opencode.llm.retry_count": input.retries.length,
           "opencode.llm.retry_history": JSON.stringify(
             input.retries.map((retry) => ({
               attempt: retry.attempt,
               reason: retry.reason,
               scheduled_start_offset_ms:
-                retry.scheduledAt === undefined ? undefined : retry.scheduledAt - call.startedAt,
-              observed_start_offset_ms: retry.observedAt - call.startedAt,
+                retry.scheduledAt === undefined
+                  ? undefined
+                  : retry.scheduledAt - spanState.spanStartedAt,
+              observed_start_offset_ms: retry.observedAt - spanState.spanStartedAt,
             })),
           ),
         });
       }
 
       if (input.request) {
-        call.outputType = input.request.outputType;
-        delete call.output;
-        delete call.responseHeaders;
+        spanState.outputType = input.request.outputType;
+        delete spanState.outputMessagesJson;
+        delete spanState.responseHeaders;
       }
 
       if (!options.captureContent) {
@@ -171,43 +180,47 @@ export function createLlmSpans(
       }
 
       if (input.request) {
-        call.toolDefinitions =
+        spanState.toolDefinitionsJson =
           input.request.toolDefinitions === undefined
             ? undefined
             : JSON.stringify(input.request.toolDefinitions);
-        call.requestHeaders =
+        spanState.requestHeaders =
           input.request.headers === undefined ? undefined : structuredClone(input.request.headers);
       }
 
       if (input.responseHeaders !== undefined) {
-        call.responseHeaders = structuredClone(input.responseHeaders);
+        spanState.responseHeaders = structuredClone(input.responseHeaders);
       }
 
       if (input.input) {
-        call.messages = {
-          input: encodeModelMessages(input.input.messages),
-          system:
+        spanState.inputSnapshot = {
+          messagesJson: encodeModelMessages(input.input.messages),
+          systemInstructionsJson:
             input.input.systemInstructions === undefined
               ? undefined
               : encodeSystemInstructions(input.input.systemInstructions),
         };
-        delete call.output;
+        delete spanState.outputMessagesJson;
       }
 
       if (input.output !== undefined) {
-        call.output = encodeModelMessages(input.output);
+        spanState.outputMessagesJson = encodeModelMessages(input.output);
       }
     },
     start(input: LlmStart) {
       const key = `${input.interaction.run.sessionID}:${input.interaction.run.id}:${input.id}`;
       const parent = options.parentContext(input);
 
-      if (!parent || calls.has(key) || options.history.has(input.interaction.run, "llm", key)) {
+      if (
+        !parent ||
+        activeSpans.has(key) ||
+        options.finishedSpanRegistry.has(input.interaction.run, "llm", key)
+      ) {
         return;
       }
 
-      calls.set(key, {
-        startedAt: input.startedAt,
+      activeSpans.set(key, {
+        spanStartedAt: input.startedAt,
         compactionID: input.compactionID,
         reference: {
           id: input.id,
@@ -217,7 +230,7 @@ export function createLlmSpans(
           },
         },
         span: options.tracer.startSpan(
-          `${options.tracePrefix}llm`,
+          `${options.spanNamePrefix}llm`,
           {
             kind: SpanKind.CLIENT,
             startTime: new Date(input.startedAt),
@@ -238,11 +251,11 @@ export function createLlmSpans(
               "gen_ai.request.temperature": input.parameters?.temperature,
               "gen_ai.request.top_p": input.parameters?.topP,
               "gen_ai.request.top_k": input.parameters?.topK,
-              "gen_ai.request.max_tokens": input.parameters?.maxTokens,
+              "gen_ai.request.max_tokens": input.parameters?.maxOutputTokens,
               "opencode.llm.retry_count": 0,
               "opencode.llm.retry_history": "[]",
-              ...(options.captureContent && input.input !== undefined
-                ? { "gen_ai.input.messages": encodeTextMessage("user", input.input) }
+              ...(options.captureContent && input.fallbackInputText !== undefined
+                ? { "gen_ai.input.messages": encodeTextMessage("user", input.fallbackInputText) }
                 : {}),
             },
           },
@@ -250,38 +263,38 @@ export function createLlmSpans(
         ),
       });
     },
-    closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
-      calls.forEach((call) => {
+    finishPendingForRun(run: RunReference, endedAt: number, error?: ObservationError) {
+      activeSpans.forEach((spanState) => {
         if (
-          call.reference.interaction.run.sessionID === run.sessionID &&
-          call.reference.interaction.run.id === run.id
+          spanState.reference.interaction.run.sessionID === run.sessionID &&
+          spanState.reference.interaction.run.id === run.id
         ) {
           finish({
-            ...call.reference,
+            ...spanState.reference,
             endedAt,
-            output: undefined,
+            fallbackOutputText: undefined,
             error: error ?? { type: "_OTHER", message: "session ended before message completed" },
           });
         }
       });
     },
-    closeCompaction(
+    finishForCompaction(
       interaction: LlmReference["interaction"],
-      id: string,
+      compactionID: string,
       endedAt: number,
       error?: ObservationError,
     ) {
-      calls.forEach((call) => {
+      activeSpans.forEach((spanState) => {
         if (
-          call.compactionID === id &&
-          call.reference.interaction.id === interaction.id &&
-          call.reference.interaction.run.id === interaction.run.id &&
-          call.reference.interaction.run.sessionID === interaction.run.sessionID
+          spanState.compactionID === compactionID &&
+          spanState.reference.interaction.id === interaction.id &&
+          spanState.reference.interaction.run.id === interaction.run.id &&
+          spanState.reference.interaction.run.sessionID === interaction.run.sessionID
         ) {
           finish({
-            ...call.reference,
+            ...spanState.reference,
             endedAt,
-            output: undefined,
+            fallbackOutputText: undefined,
             error: error ?? {
               type: "_OTHER",
               message: "compaction ended before message completed",
@@ -290,12 +303,12 @@ export function createLlmSpans(
         }
       });
     },
-    close(endedAt: number) {
-      calls.forEach((call) =>
+    finishAllOnShutdown(endedAt: number) {
+      activeSpans.forEach((spanState) =>
         finish({
-          ...call.reference,
+          ...spanState.reference,
           endedAt,
-          output: undefined,
+          fallbackOutputText: undefined,
           error: { type: "_OTHER", message: "plugin disposed before message completed" },
         }),
       );

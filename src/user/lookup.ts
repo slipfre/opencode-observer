@@ -2,9 +2,9 @@ export type User = { id: string };
 
 export type UserLookupOptions = {
   endpoint: string;
-  authHeader?: string;
+  blackboxAuthHeaderValue?: string;
   timeoutMs?: number;
-  retryCount?: number;
+  maxRetries?: number;
 };
 
 export async function lookupUser(
@@ -17,16 +17,16 @@ export async function lookupUser(
     return;
   }
 
-  const retryCount = options.retryCount ?? 2;
+  const maxRetries = options.maxRetries ?? 2;
 
-  for (let attempt = 0; attempt <= retryCount; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const user = await queryUserByToken(normalizedToken, options).catch(() => undefined);
 
     if (user) {
       return user;
     }
 
-    if (attempt < retryCount) {
+    if (attempt < maxRetries) {
       await Bun.sleep(250 * 2 ** attempt);
     }
   }
@@ -37,7 +37,9 @@ async function queryUserByToken(token: string, options: UserLookupOptions) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      ...(options.authHeader ? { "X-Blackbox-Auth": options.authHeader } : {}),
+      ...(options.blackboxAuthHeaderValue
+        ? { "X-Blackbox-Auth": options.blackboxAuthHeaderValue }
+        : {}),
     },
     body: JSON.stringify({ token }),
     signal: AbortSignal.timeout(options.timeoutMs ?? 3000),
