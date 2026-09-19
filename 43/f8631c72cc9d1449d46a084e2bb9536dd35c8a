@@ -1,0 +1,153 @@
+src/adapter/model/ai-sdk.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 9,33-34,39,42,59,65,68,82,96,108,119,137,139,143,145-146,149,161
+  s_2b3bdbe8864985::t_cf66eb513182de 123-126
+tests/plugin.test.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 996
+src/adapter/trackers/run.ts
+  s_2b3bdbe8864985::t_9641bdf89d371a 13,18,34
+src/user/lookup.ts
+  s_2b3bdbe8864985::t_cf66eb513182de 40-42
+  s_2b3bdbe8864985::t_48a1e64343e5cf 5,7,20,22,29
+src/adapter/model/messages.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 3,17,19,66,84,97,108,123,136,141,181,184,190,193
+src/contract/observer.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 17,65,77,93,104,130,132,139
+tests/adapter.test.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 15,136,423,489,540,1527-1528
+  s_2b3bdbe8864985::t_9641bdf89d371a 826
+  s_2b3bdbe8864985::t_d51da34e0af350 221,325-326,1000,1139,1141,1148,1366,1368,1427
+src/adapter/trackers/compaction.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 11,13,164,170
+  s_2b3bdbe8864985::t_9641bdf89d371a 39,107,110-111,143,174
+src/adapter/opencode/session.ts
+  s_2b3bdbe8864985::t_cf66eb513182de 13-14,17-21
+  s_2b3bdbe8864985::t_9641bdf89d371a 4-5,9,24-25,27,33-34,38-39,47,52-53,55-56,61
+src/adapter/trackers/permission.ts
+  s_2b3bdbe8864985::t_9641bdf89d371a 32,86,108
+e2e/support/assertions.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 2,31,43,65
+e2e/support/fixture.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 18,63
+src/telemetry/factory.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 13,58
+src/telemetry/spans/tool.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 38,62,117
+tests/user-attributes.test.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 80
+  s_2b3bdbe8864985::t_cf29c60d096596 16
+tests/run-tracker.test.ts
+  s_2b3bdbe8864985::t_9641bdf89d371a 25-28,43,47-48,58,75,78-79
+docs/adapter.md
+  s_2b3bdbe8864985::t_cf29c60d096596 55
+src/config.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 36-37,40,73
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 35
+src/telemetry/spans/common.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 13,16,36,61
+docs/architecture.md
+  s_2b3bdbe8864985::t_cf29c60d096596 63,67
+tests/config.test.ts
+  s_2b3bdbe8864985::t_cf29c60d096596 13,37
+tests/user-lookup.test.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 6,69,76
+  s_2b3bdbe8864985::t_cf66eb513182de 16-18
+src/adapter/shared/json.ts
+  s_2b3bdbe8864985::t_cf66eb513182de 3-6
+  s_2b3bdbe8864985::t_48a1e64343e5cf 33,36,45-46
+tests/run.test.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 527
+tests/boundaries.test.ts
+  s_2b3bdbe8864985::t_cf29c60d096596 103
+src/adapter/trackers/tool.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 12,143
+  s_2b3bdbe8864985::t_9641bdf89d371a 31,85,181,184
+e2e/support/fake-llm.ts
+  s_2b3bdbe8864985::t_cf66eb513182de 52-54
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 8,33,48,51,75,78-79,82,92,96,115-116
+src/index.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 43,50
+  s_2b3bdbe8864985::t_9641bdf89d371a 49
+src/telemetry/spans/llm.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 35,37,39,57,59,80,95,143,151,172,181,196,201,205,227,275
+  s_2b3bdbe8864985::t_48a1e64343e5cf 248,251-252,269,291,305
+  s_2b3bdbe8864985::t_f54718c743d8fd 36,92-93,194-195
+  s_2b3bdbe8864985::t_cf66eb513182de 96-98,144-150
+tests/telemetry.test.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 64,90,108,114,119,144-145,200,251,259,385,474,521,541,988,1010,1016,1107-1108,1147-1148,1190,1233,1259,1287,1304
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 14,155,166-167,182-183,760,1005
+  s_2b3bdbe8864985::t_cf66eb513182de 1027-1032,1102-1106
+  s_2b3bdbe8864985::t_226af138a0813b 134-138
+src/adapter/model/settings.ts
+  s_2b3bdbe8864985::t_cf66eb513182de 49-50
+  s_2b3bdbe8864985::t_48a1e64343e5cf 2-3,9-10,32,37,45-47
+tests/ai-sdk.test.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 8,57,68-69,220-221,234-235,266,293
+  s_2b3bdbe8864985::t_9641bdf89d371a 56,521,526,540
+  s_2b3bdbe8864985::t_cf66eb513182de 252-255
+tests/tracker-lifecycle.test.ts
+  s_2b3bdbe8864985::t_9641bdf89d371a 66,70,89,102,110,164,207,209,230,249,265-266,289-290,295-297,309,336-337,350-352,358-360,379,401,404,411,417,422
+  s_2b3bdbe8864985::t_48a1e64343e5cf 4,201-203
+  s_2b3bdbe8864985::t_226af138a0813b 58,67-69,71-72,86-88,92,100-101
+  s_2b3bdbe8864985::t_cf66eb513182de 63-65,302-305
+src/adapter/trackers/interaction.ts
+  s_2b3bdbe8864985::t_cf66eb513182de 38-41
+  s_2b3bdbe8864985::t_9641bdf89d371a 55-56,60,62,64,178
+  s_2b3bdbe8864985::t_48a1e64343e5cf 10,215
+src/adapter/shared/error.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 3
+src/telemetry/spans/compaction.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 76
+src/telemetry/spans/permission.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 70,87
+src/adapter/model/trace-state.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 1
+src/telemetry/spans/interaction.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 67
+src/adapter/trackers/llm.ts
+  s_2b3bdbe8864985::t_cf66eb513182de 193-197,293-296,373-377,505-508
+  s_2b3bdbe8864985::t_226af138a0813b 36
+  s_2b3bdbe8864985::t_9641bdf89d371a 34,40-41,48,73,114,118,121,144,172,210-211,254,259,281,300,318,350-351,358,363,371,500,503,526
+  s_2b3bdbe8864985::t_48a1e64343e5cf 13,16-17,57,106,136,362,387,444,534
+src/adapter/model/usage.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 5
+src/telemetry/observer.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 10,15,33,93,123,135,151,163,170
+  s_2b3bdbe8864985::t_48a1e64343e5cf 137-138,140-141
+  s_2b3bdbe8864985::t_226af138a0813b 38
+  s_2b3bdbe8864985::t_cf66eb513182de 77-80
+tests/trace-state.test.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 2,5,7,12,15,34,39,42
+src/adapter/opencode/coordinator.ts
+  s_2b3bdbe8864985::t_226af138a0813b 323,377,482
+  s_2b3bdbe8864985::t_f54718c743d8fd 111,113,131,133-134,143-145,148,174,176,179,191,199,217-219,235,237,243,245-247,258,261,263,271-272,274,285,287-289,306,308,312,320,329,332,334-337,347,349,355-357,363,367,374,380,394,396-400,415-416,420-421,460,467-470,520,524,526,530,532,541,550-555,557-563
+  s_2b3bdbe8864985::t_cf66eb513182de 123-124,182-184,200-205,249-252,461-466,504-505
+  s_2b3bdbe8864985::t_48a1e64343e5cf 10,13,15,152,242,318,409
+  s_2b3bdbe8864985::t_9641bdf89d371a 45,47-49,60-61,68,77,79-80,82-86,88,95,101-102,108,110,155,169,178,207-208,224,227,279,295,299,340,408,412,429,444,448-449,475,481,485,491,493,501,514,522,529,536,538,540,543,569,579-580
+src/user/resolve.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 25-27,36
+tests/support/coordinator.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 8,42,45
+tests/operations.test.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 877
+src/adapter/model/request.ts
+  s_2b3bdbe8864985::t_48a1e64343e5cf 5,7-9,21
+src/telemetry/spans/run.ts
+  s_2b3bdbe8864985::t_ba32a0f69b8f06 75
+  s_2b3bdbe8864985::t_cf66eb513182de 63-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "43f8631c72cc9d1449d46a084e2bb9536dd35c8a",
+  "prompts": {},
+  "sessions": {
+    "s_2b3bdbe8864985": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ba4c-b514-7990-b1a6-7877792b4931",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
