@@ -1,0 +1,144 @@
+docs/adapter.md
+  s_6a9bdceb91a55b::t_8d239b62d8fb7b 24,73
+  s_6a9bdceb91a55b::t_aea50faf56e8ac 29,57
+  s_6a9bdceb91a55b::t_24e938d40b1ee9 19-23,25
+  s_6a9bdceb91a55b::t_c946cc83737fe2 55
+  s_6a9bdceb91a55b::t_4d4961d7050b69 51,69-72,74,91
+src/adapter/model/fetch.ts
+  s_6a9bdceb91a55b::t_08bbee1dc46986 1,115,117-120,123-125,132-134,161-178
+  s_6a9bdceb91a55b::t_8a2a0a3533430d 64-65,121-122
+  s_6a9bdceb91a55b::t_49cd0ee15f7122 94-105
+  s_6a9bdceb91a55b::t_551511946d4c25 2-63,66-93,106-114,116,126-131,135-160,179
+src/adapter/trackers/llm.ts
+  s_6a9bdceb91a55b::t_0e092b083ae337 40,123,127-129,132,241,550-551
+  s_6a9bdceb91a55b::t_3cded39900eb9b 46,302,326
+  s_6a9bdceb91a55b::t_08bbee1dc46986 53,418,420
+  s_6a9bdceb91a55b::t_8d239b62d8fb7b 391-394
+  s_6a9bdceb91a55b::t_e805e590da23f9 15,47-52,54,57-61,384-390,395-417,419,421-423
+  s_6a9bdceb91a55b::t_49cd0ee15f7122 154-155
+  s_6a9bdceb91a55b::t_f7c9519cb71d7a 303-306,317-321,325
+  s_6a9bdceb91a55b::t_8a2a0a3533430d 147-153,156-171
+  s_6a9bdceb91a55b::t_bb70a9996a9377 424
+src/adapter/opencode/coordinator.ts
+  s_6a9bdceb91a55b::t_8a2a0a3533430d 77-80
+  s_6a9bdceb91a55b::t_e805e590da23f9 14,41,75,116,164-169
+  s_6a9bdceb91a55b::t_3cded39900eb9b 233
+src/telemetry/spans/llm.ts
+  s_6a9bdceb91a55b::t_3cded39900eb9b 176-177
+  s_6a9bdceb91a55b::t_e805e590da23f9 26,59-63,66-69,82,89,140
+  s_6a9bdceb91a55b::t_0e092b083ae337 36,70-80,90,92,172-173
+  s_6a9bdceb91a55b::t_8a2a0a3533430d 57-58,64-65,83-88
+tests/telemetry.test.ts
+  s_6a9bdceb91a55b::t_61f4b229c3ec78 107-111,117,121-130,136,140-143,145-151,153-158,160-161,241
+  s_6a9bdceb91a55b::t_bf69837254090a 137-139
+  s_6a9bdceb91a55b::t_9f7c8f8fcb216c 50-56,112-113,116,118-120,131-132
+  s_6a9bdceb91a55b::t_f56ec20f89ff00 115,133-134,144,152,159,173,179,189,199-204,210-213,223-240
+  s_6a9bdceb91a55b::t_c6d20cdc9cfcc2 14,32,64
+  s_6a9bdceb91a55b::t_3cded39900eb9b 106,114,135,1140,1149,1161-1163,1305
+  s_6a9bdceb91a55b::t_55a12e835727b7 242
+src/contract/observer.ts
+  s_6a9bdceb91a55b::t_3cded39900eb9b 132
+  s_6a9bdceb91a55b::t_f7c9519cb71d7a 131
+  s_6a9bdceb91a55b::t_551511946d4c25 103-111
+  s_6a9bdceb91a55b::t_0e092b083ae337 128-130
+README.md
+  s_6a9bdceb91a55b::t_c8a3a6823f3d7a 35-38,40-45
+  s_6a9bdceb91a55b::t_c946cc83737fe2 39,79
+  s_6a9bdceb91a55b::t_aea50faf56e8ac 80
+  s_6a9bdceb91a55b::t_4d4961d7050b69 47-49
+  s_6a9bdceb91a55b::t_6706374006269b 46
+tests/llm-timing.test.ts
+  s_6a9bdceb91a55b::t_9f7c8f8fcb216c 17-25,31-33,41-45,49-67,120-125,132-140,144-153,162-167,176-177,183-186
+  s_6a9bdceb91a55b::t_04c0f84ecd618d 46-47,79-95
+  s_6a9bdceb91a55b::t_0e092b083ae337 101
+  s_6a9bdceb91a55b::t_8d239b62d8fb7b 131,141-143
+  s_6a9bdceb91a55b::t_61f4b229c3ec78 1-16,26-30,34-40,48,68-78,96-100,102-119,126-130,154-161,168-175,178-182,187-188
+e2e/fetch-timing.e2e.test.ts
+  s_6a9bdceb91a55b::t_d313e4cfa2d216 106-109
+  s_6a9bdceb91a55b::t_27449f62ca281f 1-2,4-5,9-39,41-54,60-66,69-87,89-105,110-112,114-115,117-119,127-129
+  s_6a9bdceb91a55b::t_8d239b62d8fb7b 6-8,67-68,113,116,176,179
+  s_6a9bdceb91a55b::t_34670fba9b3c5f 132-151,156-158,161-172,175,177-178,180-182
+  s_6a9bdceb91a55b::t_2f41d94c79e18d 3,130-131,159-160
+  s_6a9bdceb91a55b::t_0dbb9cefaaf62b 40,55-59,88,120-126,152-155,173-174
+tests/ai-sdk.test.ts
+  s_6a9bdceb91a55b::t_f56ec20f89ff00 220,232,248,252,259,263,286
+  s_6a9bdceb91a55b::t_04c0f84ecd618d 343,351-357,361,851,855-861,977,981-987
+tests/config.test.ts
+  s_6a9bdceb91a55b::t_8fa5eef8d97bdd 15,20,27-30
+  s_6a9bdceb91a55b::t_49cd0ee15f7122 21-26
+  s_6a9bdceb91a55b::t_1dba22c9872eb4 31-32
+src/telemetry/observer.ts
+  s_6a9bdceb91a55b::t_e805e590da23f9 19,82
+tests/fetch.test.ts
+  s_6a9bdceb91a55b::t_8fa5eef8d97bdd 1-12,16,18-21,26-33,35-52,73-87,91-97,101-109,115-120,135-137,147-175,179-195,197-204,206
+  s_6a9bdceb91a55b::t_49cd0ee15f7122 22-25,53-72,88-90,98-100,121-134,138-146,176-178
+  s_6a9bdceb91a55b::t_9f7c8f8fcb216c 110-114
+  s_6a9bdceb91a55b::t_c6d20cdc9cfcc2 13-15,17,34,196,205
+docs/schemas/trace.md
+  s_6a9bdceb91a55b::t_5e3f3f65347aa8 345-346
+  s_6a9bdceb91a55b::t_d6bb43fb8a949a 353
+  s_6a9bdceb91a55b::t_24e938d40b1ee9 379-388
+  s_6a9bdceb91a55b::t_c243fadd284c26 359
+  s_6a9bdceb91a55b::t_4d4961d7050b69 358,360-362,367,377
+  s_6a9bdceb91a55b::t_c946cc83737fe2 236,238-240,363,375
+  s_6a9bdceb91a55b::t_1c7159b93f10a0 369-373
+  s_6a9bdceb91a55b::t_c8a3a6823f3d7a 210-230
+  s_6a9bdceb91a55b::t_aea50faf56e8ac 347,349,351,364
+  s_6a9bdceb91a55b::t_7d243efcc91244 355,357,365
+docs/architecture.md
+  s_6a9bdceb91a55b::t_4d4961d7050b69 80
+  s_6a9bdceb91a55b::t_d6bb43fb8a949a 79
+e2e/propagation.e2e.test.ts
+  s_6a9bdceb91a55b::t_0dbb9cefaaf62b 19-21
+tests/llm-retry.test.ts
+  s_6a9bdceb91a55b::t_b773494cadec91 70-72,76-79,88-90,106,116,118,137,139-140,142,144-145,159-162,173-174
+  s_6a9bdceb91a55b::t_d313e4cfa2d216 93,170,178-188
+  s_6a9bdceb91a55b::t_f7c9519cb71d7a 66,92,103,121-129,134,152,163-167
+  s_6a9bdceb91a55b::t_5e3f3f65347aa8 74,120,148
+  s_6a9bdceb91a55b::t_bf69837254090a 82-86,94-98
+  s_6a9bdceb91a55b::t_f57a9d2baaca28 87,91
+src/telemetry/timing.ts
+  s_6a9bdceb91a55b::t_8a2a0a3533430d 21-36
+  s_6a9bdceb91a55b::t_e805e590da23f9 1-20,37-41
+e2e/support/fake-llm.ts
+  s_6a9bdceb91a55b::t_8587454abc2fc0 4-11,41,58-63
+  s_6a9bdceb91a55b::t_321c2386b0479e 64-65,76,113-117,120-131
+src/config.ts
+  s_6a9bdceb91a55b::t_551511946d4c25 31-35
+  s_6a9bdceb91a55b::t_08bbee1dc46986 40
+e2e/support/fetch-timing-plugin.ts
+  s_6a9bdceb91a55b::t_2f41d94c79e18d 6,15-20
+  s_6a9bdceb91a55b::t_0dbb9cefaaf62b 4,12,39-50,62-66
+  s_6a9bdceb91a55b::t_4d4961d7050b69 1-3,5,10-11,13-14,21-38,51-61,67-70
+  s_6a9bdceb91a55b::t_1c7159b93f10a0 7-9
+src/telemetry/factory.ts
+  s_6a9bdceb91a55b::t_e805e590da23f9 8,22,66
+  s_6a9bdceb91a55b::t_8a2a0a3533430d 46-55
+src/index.ts
+  s_6a9bdceb91a55b::t_551511946d4c25 46
+src/adapter/model/ai-sdk.ts
+  s_6a9bdceb91a55b::t_0e092b083ae337 19,79
+tests/adapter.test.ts
+  s_6a9bdceb91a55b::t_3cded39900eb9b 1395
+  s_6a9bdceb91a55b::t_f7c9519cb71d7a 1371,1393,1396,1403
+  s_6a9bdceb91a55b::t_c946cc83737fe2 1394,1430
+e2e/run.e2e.test.ts
+  s_6a9bdceb91a55b::t_f7c9519cb71d7a 230
+  s_6a9bdceb91a55b::t_d313e4cfa2d216 214-216,247-249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6fca0c272870f543972be31c9f043532a05b1ed5",
+  "prompts": {},
+  "sessions": {
+    "s_6a9bdceb91a55b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bc8b-0591-7692-954a-5153307235bb",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
