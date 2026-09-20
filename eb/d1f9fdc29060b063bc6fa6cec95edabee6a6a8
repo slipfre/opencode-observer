@@ -1,0 +1,56 @@
+src/telemetry/spans/common.ts
+  s_2aeded11dba509::t_c7b7622bf224f7 83-87
+tests/error.test.ts
+  s_2aeded11dba509::t_54daeadafa43a8 1-9,14-16,21,26-54
+  s_2aeded11dba509::t_801925ea703671 10-13,17-20,22-25
+docs/schemas/trace.md
+  s_2aeded11dba509::t_801925ea703671 347-349,351-352
+  s_2aeded11dba509::t_d7f4bced335062 350,353-354
+tests/run.test.ts
+  s_2aeded11dba509::t_54daeadafa43a8 526-549
+e2e/run.e2e.test.ts
+  s_2aeded11dba509::t_801925ea703671 281-289,297-302
+  s_2aeded11dba509::t_54daeadafa43a8 293,303
+  s_2aeded11dba509::t_f0d87d723e6312 290-292,294-296
+src/telemetry/spans/run.ts
+  s_2aeded11dba509::t_40786d8cacb7e6 1,9,54
+e2e/support/assertions.ts
+  s_2aeded11dba509::t_c7b7622bf224f7 21
+  s_2aeded11dba509::t_40786d8cacb7e6 14,22
+src/telemetry/spans/interaction.ts
+  s_2aeded11dba509::t_40786d8cacb7e6 1,9,46
+tests/telemetry.test.ts
+  s_2aeded11dba509::t_801925ea703671 864-867,869-872
+  s_2aeded11dba509::t_c01c58b2cb7237 924
+  s_2aeded11dba509::t_f62662d7c5a616 858-859,877,899,916,934
+  s_2aeded11dba509::t_7e1d0d8425ba64 860,878,881-898,900-915,917-923,925-927,929,931-933
+  s_2aeded11dba509::t_54daeadafa43a8 861-863,868,873-876,879-880,928,930
+src/adapter/shared/error.ts
+  s_2aeded11dba509::t_c7b7622bf224f7 5-8,17-24
+docs/schemas/trace-opencode.md
+  s_2aeded11dba509::t_d7f4bced335062 441-443
+  s_2aeded11dba509::t_801925ea703671 436-440
+src/contract/observer.ts
+  s_2aeded11dba509::t_c7b7622bf224f7 11-15
+src/telemetry/spans/llm.ts
+  s_2aeded11dba509::t_7e1d0d8425ba64 1
+  s_2aeded11dba509::t_40786d8cacb7e6 13,128
+src/telemetry/observer.ts
+  s_2aeded11dba509::t_40786d8cacb7e6 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ebd1f9fdc29060b063bc6fa6cec95edabee6a6a8",
+  "prompts": {},
+  "sessions": {
+    "s_2aeded11dba509": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd98-0bdd-7000-bd49-e4f6c4ee1157",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
