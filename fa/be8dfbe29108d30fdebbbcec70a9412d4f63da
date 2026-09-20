@@ -1,0 +1,74 @@
+src/telemetry/spans/llm.ts
+  s_e6e1ae1ca4ad52::t_f1024c550304c9 18,105-116,187-189,192
+tests/ai-sdk.test.ts
+  s_e6e1ae1ca4ad52::t_f5e29ac0203e36 16-21,57,854,1241-1250,1328-1330
+  s_e6e1ae1ca4ad52::t_da0ddc78e2acd1 934-938
+  s_e6e1ae1ca4ad52::t_7679cc15b07e7d 939-1012
+  s_e6e1ae1ca4ad52::t_721522a58d597b 1332
+src/adapter/opencode/coordinator.ts
+  s_e6e1ae1ca4ad52::t_f1024c550304c9 41,76,283,445
+tests/config.test.ts
+  s_e6e1ae1ca4ad52::t_f5e29ac0203e36 15,21-39,41-42,62,69,76
+  s_e6e1ae1ca4ad52::t_da0ddc78e2acd1 40
+AGENTS.md
+  s_e6e1ae1ca4ad52::t_4a0d9dbe094967 10
+docs/adapter.md
+  s_e6e1ae1ca4ad52::t_4a0d9dbe094967 32
+docs/schemas/trace.md
+  s_e6e1ae1ca4ad52::t_4a0d9dbe094967 22
+README.md
+  s_e6e1ae1ca4ad52::t_da0ddc78e2acd1 35-37,40-46
+  s_e6e1ae1ca4ad52::t_4a0d9dbe094967 38-39,48,84
+  s_e6e1ae1ca4ad52::t_d9ffc847f7e728 47
+tests/telemetry.test.ts
+  s_e6e1ae1ca4ad52::t_f5e29ac0203e36 1507-1510,1520,1522-1525,1531-1541,1544,1547-1558,1569,1572-1575,1582
+  s_e6e1ae1ca4ad52::t_da0ddc78e2acd1 1502-1506,1526-1529
+src/adapter/trackers/llm.ts
+  s_e6e1ae1ca4ad52::t_da0ddc78e2acd1 513-516
+  s_e6e1ae1ca4ad52::t_f1024c550304c9 60,226-230
+src/config.ts
+  s_e6e1ae1ca4ad52::t_f1024c550304c9 40-43
+src/adapter/model/ai-sdk.ts
+  s_4959805f3a4fa1::t_90bcbf968c3fc1 146-147
+  s_e6e1ae1ca4ad52::t_f1024c550304c9 92-94,143-145
+  s_4959805f3a4fa1::t_70db47dc6b7eea 148
+  s_e6e1ae1ca4ad52::t_8dac2bd73be294 39
+e2e/run.e2e.test.ts
+  s_e6e1ae1ca4ad52::t_7679cc15b07e7d 295
+  s_e6e1ae1ca4ad52::t_da0ddc78e2acd1 7-24,26-115,117-123,125-139,141-161,163-181,183,186-203,278-292,294,296-317
+src/telemetry/observer.ts
+  s_e6e1ae1ca4ad52::t_f1024c550304c9 18,88
+docs/schemas/trace-opencode.md
+  s_e6e1ae1ca4ad52::t_4a0d9dbe094967 255
+  s_e6e1ae1ca4ad52::t_da0ddc78e2acd1 266-267
+src/telemetry/factory.ts
+  s_e6e1ae1ca4ad52::t_f1024c550304c9 14,66
+src/index.ts
+  s_e6e1ae1ca4ad52::t_f1024c550304c9 46
+docs/architecture.md
+  s_e6e1ae1ca4ad52::t_3b5120567159da 108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "fabe8dfbe29108d30fdebbbcec70a9412d4f63da",
+  "prompts": {},
+  "sessions": {
+    "s_4959805f3a4fa1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0be05-c56e-7602-bd05-4ae6001ab072",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    },
+    "s_e6e1ae1ca4ad52": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0be30-6223-79e0-9cea-96397b701c11",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
