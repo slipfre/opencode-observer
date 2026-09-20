@@ -1,0 +1,92 @@
+src/adapter/opencode/coordinator.ts
+  s_9a28c5bdb3873f::t_205100dc6711b5 85-89
+docs/schemas/trace-opencode.md
+  s_9a28c5bdb3873f::t_226fb6b0c0e3bb 76-77,86-88,126,365,380-395,404-405,416-417
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 5,62,116,396-398,413,421,443,455
+  s_9a28c5bdb3873f::t_c2e03d0ee482b0 172,419,423-431,459-471
+  s_9a28c5bdb3873f::t_4666b7864f889f 118-125,369-379
+  s_9a28c5bdb3873f::t_cdd56516eec44d 399
+e2e/skills.e2e.test.ts
+  s_9a28c5bdb3873f::t_39dfe60d44e114 10-13,21-54,56-76,78-99,101-128
+  s_9a28c5bdb3873f::t_95dd00e7be30c5 1-9,14-20,55,77,100
+tests/operations.test.ts
+  s_9a28c5bdb3873f::t_39dfe60d44e114 227-261,263-294,299-309,325-334,337-351,353-363,365-407
+  s_9a28c5bdb3873f::t_2ff4347771a567 262,295-298,310-324,335-336,352,364,408
+  s_9a28c5bdb3873f::t_49b0433f00ae6c 433,447-455,469-471,475-476
+  s_9a28c5bdb3873f::t_15b7257d31877b 636-642
+  s_9a28c5bdb3873f::t_90600f39e10eeb 409-432,434-446,456-468,472-474
+  s_9a28c5bdb3873f::t_5f2fa7d22f5095 632
+src/contract/observer.ts
+  s_9a28c5bdb3873f::t_f203b33fb61915 163-184,242-244
+src/adapter/trackers/tool.ts
+  s_9a28c5bdb3873f::t_f203b33fb61915 9,22,72-76,82,91,94,97-98,108-112,114,117-118,177,180-204
+  s_9a28c5bdb3873f::t_daa13888132995 266-272,291-294
+  s_9a28c5bdb3873f::t_205100dc6711b5 32,100
+  s_9a28c5bdb3873f::t_3c2fd49de9cdfa 92-93
+  s_9a28c5bdb3873f::t_fdfe6fe0c9dbda 95-96
+  s_9a28c5bdb3873f::t_483e62f683fea7 99
+  s_9a28c5bdb3873f::t_f081e0e3e765ca 107
+  s_9a28c5bdb3873f::t_1a5adf25b7cb9d 113
+  s_9a28c5bdb3873f::t_7b59f101c8666f 115-116
+tests/llm-retry.test.ts
+  s_9a28c5bdb3873f::t_c1681c7763868d 23-25
+src/adapter/trackers/permission.ts
+  s_9a28c5bdb3873f::t_205100dc6711b5 7,16-26,29,41-66,88-89,91-92,96-100,106-113,117-123,136,138,143-151,154-162,164-169,173-179,181,184-185
+docs/architecture.md
+  s_9a28c5bdb3873f::t_f3edd6d6181591 66-67,108
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 3,118
+docs/schemas/trace.md
+  s_9a28c5bdb3873f::t_226fb6b0c0e3bb 66-67,74-76,108,307-310,322-326,335-336,342
+  s_9a28c5bdb3873f::t_4666b7864f889f 102-107,109-110,311-321,331-334,337-340
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 5,327,344,354,362
+src/telemetry/observer.ts
+  s_9a28c5bdb3873f::t_f203b33fb61915 8,58,74,77,136,183-188,226
+tests/ai-sdk.test.ts
+  s_9a28c5bdb3873f::t_c1681c7763868d 24-26
+README.md
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 5,70
+  s_9a28c5bdb3873f::t_f3edd6d6181591 87-88
+AGENTS.md
+  s_9a28c5bdb3873f::t_f3edd6d6181591 3
+tests/tracker-lifecycle.test.ts
+  s_9a28c5bdb3873f::t_39dfe60d44e114 308-320,323-325
+  s_9a28c5bdb3873f::t_c1681c7763868d 25-27,272-307,321-322,326-346
+  s_9a28c5bdb3873f::t_49b0433f00ae6c 544-547,555-556,571-579,586-587
+  s_9a28c5bdb3873f::t_90600f39e10eeb 548-554,557-570,580-585
+  s_9a28c5bdb3873f::t_7ba17375ff0546 347
+tests/telemetry.test.ts
+  s_9a28c5bdb3873f::t_39dfe60d44e114 282-312,314-330
+  s_9a28c5bdb3873f::t_95dd00e7be30c5 246,313
+  s_9a28c5bdb3873f::t_2b2c1266652bd4 331
+src/telemetry/spans/skill.ts
+  s_9a28c5bdb3873f::t_39dfe60d44e114 96-99
+  s_9a28c5bdb3873f::t_daa13888132995 1-95,100-122
+docs/adapter.md
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 123
+  s_9a28c5bdb3873f::t_f3edd6d6181591 32-34,102-104,146
+  s_9a28c5bdb3873f::t_4666b7864f889f 108-115,137-145,147-151
+  s_9a28c5bdb3873f::t_c2e03d0ee482b0 133,153
+  s_9a28c5bdb3873f::t_0f0f2908627072 152
+tests/user-attributes.test.ts
+  s_9a28c5bdb3873f::t_c1681c7763868d 59,86,110
+tests/adapter.test.ts
+  s_9a28c5bdb3873f::t_c1681c7763868d 31-33
+src/telemetry/spans/common.ts
+  s_9a28c5bdb3873f::t_f203b33fb61915 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "219326636b6d8ae86a6467655a3ef40d3fdd59bc",
+  "prompts": {},
+  "sessions": {
+    "s_9a28c5bdb3873f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd6a-1e95-7be1-a98b-e1d46952d495",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
