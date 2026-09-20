@@ -1,0 +1,101 @@
+tests/user-attributes.test.ts
+  s_9a28c5bdb3873f::t_c1681c7763868d 59,86,110
+tests/ai-sdk.test.ts
+  s_9a28c5bdb3873f::t_c1681c7763868d 24-26
+src/telemetry/spans/skill.ts
+  s_9a28c5bdb3873f::t_daa13888132995 1-95,100-118,120-123
+  s_9a28c5bdb3873f::t_fa2caa6b896869 119
+  s_9a28c5bdb3873f::t_39dfe60d44e114 96-99
+src/adapter/trackers/tool.ts
+  s_9a28c5bdb3873f::t_483e62f683fea7 99
+  s_9a28c5bdb3873f::t_fdfe6fe0c9dbda 95-96
+  s_9a28c5bdb3873f::t_f081e0e3e765ca 107
+  s_9a28c5bdb3873f::t_daa13888132995 266-272,291-294
+  s_9a28c5bdb3873f::t_f203b33fb61915 9,22,72-76,82,91,94,97-98,108-112,114,117-118,177,180-204
+  s_9a28c5bdb3873f::t_3c2fd49de9cdfa 92-93
+  s_9a28c5bdb3873f::t_205100dc6711b5 32,100
+  s_9a28c5bdb3873f::t_1a5adf25b7cb9d 113
+  s_9a28c5bdb3873f::t_7b59f101c8666f 115-116
+src/adapter/trackers/permission.ts
+  s_9a28c5bdb3873f::t_205100dc6711b5 7,16-26,29,41-66,88-89,91-92,96-100,106-113,117-123,136,138,143-151,154-162,164-169,173-179,181,184-185
+tests/adapter.test.ts
+  s_9a28c5bdb3873f::t_c1681c7763868d 31-33
+docs/schemas/trace-opencode.md
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 5,62,116,397-399,414,422,444,456
+  s_9a28c5bdb3873f::t_226fb6b0c0e3bb 76-77,86-88,126,365,381-396,405-406,417-418
+  s_9a28c5bdb3873f::t_c2e03d0ee482b0 172,420,424-432,460-472
+  s_9a28c5bdb3873f::t_cdd56516eec44d 400
+  s_9a28c5bdb3873f::t_4666b7864f889f 118-125
+  s_9a28c5bdb3873f::t_e88267798135b8 369-380
+src/telemetry/spans/common.ts
+  s_9a28c5bdb3873f::t_f203b33fb61915 23
+docs/schemas/trace.md
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 5,328,345,355,363
+  s_9a28c5bdb3873f::t_226fb6b0c0e3bb 66-67,74-76,108,307-310,323-327,336-337,343
+  s_9a28c5bdb3873f::t_4666b7864f889f 102-107,109-110,332-335,338-341
+  s_9a28c5bdb3873f::t_e88267798135b8 311-322
+e2e/skills.e2e.test.ts
+  s_9a28c5bdb3873f::t_39dfe60d44e114 10-13,21-47,49-55,57-77,79-95,97-101,103-126,128-131
+  s_9a28c5bdb3873f::t_fa2caa6b896869 48,96,127
+  s_9a28c5bdb3873f::t_95dd00e7be30c5 1-9,14-20,56,78,102
+AGENTS.md
+  s_9a28c5bdb3873f::t_f3edd6d6181591 3
+tests/operations.test.ts
+  s_9a28c5bdb3873f::t_fa2caa6b896869 232,276,330
+  s_9a28c5bdb3873f::t_2ff4347771a567 263,302-305,317-329,331-332,343-344,360,372,416
+  s_9a28c5bdb3873f::t_5f2fa7d22f5095 640
+  s_9a28c5bdb3873f::t_15b7257d31877b 644-650
+  s_9a28c5bdb3873f::t_39dfe60d44e114 227-231,233-262,264-275,277-288,294-301,306-316,333-342,345-359,361-371,373-415
+  s_9a28c5bdb3873f::t_49b0433f00ae6c 441,455-463,477-479,483-484
+  s_9a28c5bdb3873f::t_90600f39e10eeb 417-440,442-454,464-476,480-482
+  s_9a28c5bdb3873f::t_e88267798135b8 289-293
+tests/tracker-lifecycle.test.ts
+  s_9a28c5bdb3873f::t_90600f39e10eeb 548-554,557-570,580-585
+  s_9a28c5bdb3873f::t_49b0433f00ae6c 544-547,555-556,571-579,586-587
+  s_9a28c5bdb3873f::t_39dfe60d44e114 308-320,323-325
+  s_9a28c5bdb3873f::t_7ba17375ff0546 347
+  s_9a28c5bdb3873f::t_c1681c7763868d 25-27,272-307,321-322,326-346
+src/contract/observer.ts
+  s_9a28c5bdb3873f::t_f203b33fb61915 163-184,242-244
+docs/architecture.md
+  s_9a28c5bdb3873f::t_f3edd6d6181591 66-67,108
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 3,118
+src/telemetry/observer.ts
+  s_9a28c5bdb3873f::t_fa2caa6b896869 29
+  s_9a28c5bdb3873f::t_f203b33fb61915 8,59,75,78,137,184-189,227
+README.md
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 5,70
+  s_9a28c5bdb3873f::t_f3edd6d6181591 87-88
+src/adapter/opencode/coordinator.ts
+  s_9a28c5bdb3873f::t_205100dc6711b5 85-89
+docs/adapter.md
+  s_9a28c5bdb3873f::t_f3edd6d6181591 32-34,102-104,146
+  s_9a28c5bdb3873f::t_4057e3e6e1f2ad 123
+  s_9a28c5bdb3873f::t_c2e03d0ee482b0 133,153
+  s_9a28c5bdb3873f::t_4666b7864f889f 108-115,137-145,147-151
+  s_9a28c5bdb3873f::t_0f0f2908627072 152
+tests/llm-retry.test.ts
+  s_9a28c5bdb3873f::t_c1681c7763868d 23-25
+tests/telemetry.test.ts
+  s_9a28c5bdb3873f::t_e88267798135b8 327-329
+  s_9a28c5bdb3873f::t_39dfe60d44e114 282-284,290-301,308-320,323,331,334-344,348-349
+  s_9a28c5bdb3873f::t_fa2caa6b896869 285-289,302-307,321-322,325-326,330,332-333,345-347
+  s_9a28c5bdb3873f::t_95dd00e7be30c5 246,324
+  s_9a28c5bdb3873f::t_2b2c1266652bd4 350
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ddd359f99662bc7a3df8ba1fbde66baa6e71b0c8",
+  "prompts": {},
+  "sessions": {
+    "s_9a28c5bdb3873f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bd6a-1e95-7be1-a98b-e1d46952d495",
+        "model": "gpt-6-astra"
+      },
+      "human_author": null
+    }
+  }
+}
