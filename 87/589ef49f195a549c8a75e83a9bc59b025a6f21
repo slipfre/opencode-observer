@@ -1,0 +1,31 @@
+tests/telemetry.test.ts
+  s_699e06704a3796::t_2590d228b38711 163-165,219,247,1422
+e2e/run.e2e.test.ts
+  s_699e06704a3796::t_2590d228b38711 53-55,173-175,229
+e2e/fetch-timing.e2e.test.ts
+  s_699e06704a3796::t_2590d228b38711 59-61,156
+docs/schemas/trace-opencode.md
+  s_699e06704a3796::t_80432e28043175 204-220,303-306
+  s_699e06704a3796::t_2590d228b38711 297
+  s_699e06704a3796::t_0dfd823e47922c 470,477
+README.md
+  s_699e06704a3796::t_2590d228b38711 79
+e2e/propagation.e2e.test.ts
+  s_699e06704a3796::t_2590d228b38711 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "87589ef49f195a549c8a75e83a9bc59b025a6f21",
+  "prompts": {},
+  "sessions": {
+    "s_699e06704a3796": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0be2f-1976-74f2-8293-3d42d9848997",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
