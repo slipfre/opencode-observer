@@ -1,0 +1,62 @@
+e2e/compaction.e2e.test.ts
+  s_ca56813190ce0d::t_70e9f0a8600078 50-54,57-59,116-118
+tests/telemetry.test.ts
+  s_ca56813190ce0d::t_02da267f795969 682,727,750,761
+tests/ai-sdk.test.ts
+  s_ca56813190ce0d::t_040fa1208f5096 699,1207
+  s_ca56813190ce0d::t_02da267f795969 186-190,439-442,1302,1364
+  s_ca56813190ce0d::t_475c3a38f7f03e 904-907
+e2e/run.e2e.test.ts
+  s_ca56813190ce0d::t_e389a2ff6fc6ec 68-79
+tests/plugin.test.ts
+  s_ca56813190ce0d::t_02da267f795969 454,531,551
+tests/operations.test.ts
+  s_ca56813190ce0d::t_70e9f0a8600078 633,677-683
+  s_ca56813190ce0d::t_4036ec895a7db2 688-690,810-812
+src/adapter/trackers/compaction.ts
+  s_ca56813190ce0d::t_70e9f0a8600078 23,84,168
+docs/schemas/trace.md
+  s_ca56813190ce0d::t_475c3a38f7f03e 197-200
+  h_c0249eec84d377 3,5,51,93
+  s_ca56813190ce0d::t_70e9f0a8600078 165
+  s_ca56813190ce0d::t_e5b1d8f97e615e 171-189
+  s_ca56813190ce0d::t_4036ec895a7db2 154-163
+  s_ca56813190ce0d::t_bce6f0587207b6 193
+  s_ca56813190ce0d::t_e389a2ff6fc6ec 234
+  h_c0249eec84d377 13,22
+src/telemetry/spans/llm.ts
+  s_ca56813190ce0d::t_145ef98fa13903 14,31,105,196
+docs/schemas/trace-opencode.md
+  s_ca56813190ce0d::t_bce6f0587207b6 229
+  s_ca56813190ce0d::t_4036ec895a7db2 179-188
+  s_ca56813190ce0d::t_70e9f0a8600078 190
+  s_ca56813190ce0d::t_475c3a38f7f03e 233-236
+  s_ca56813190ce0d::t_e389a2ff6fc6ec 238,242
+  s_ca56813190ce0d::t_e5b1d8f97e615e 461-472
+  s_ca56813190ce0d::t_e27dabac0b19b9 189
+src/adapter/model/messages.ts
+  s_ca56813190ce0d::t_145ef98fa13903 5-6
+tests/messages.test.ts
+  s_ca56813190ce0d::t_02da267f795969 5,33-36,54,56-62,65-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "18417246da5a3aba7ba23e47ea77ceb3b2b8da0c",
+  "prompts": {},
+  "humans": {
+    "h_c0249eec84d377": {
+      "author": "shenxionghao <sxh139726845@163.com>"
+    }
+  },
+  "sessions": {
+    "s_ca56813190ce0d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0beda-8894-71e1-80b1-4bdaeb9fd10c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
