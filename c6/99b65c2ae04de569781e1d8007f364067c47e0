@@ -18,6 +18,7 @@ docs/adapter.md
 docs/schemas/trace-opencode.md
   s_699e06704a3796::t_80432e28043175 208
   s_4959805f3a4fa1::t_cd5f560486d454 224-225
+  s_749f0c60dc4728::t_c78fd7ff50bba6 469-470
 src/adapter/model/ai-sdk.ts
   s_4959805f3a4fa1::t_90bcbf968c3fc1 21,144
 ---
@@ -39,6 +40,14 @@ src/adapter/model/ai-sdk.ts
       "agent_id": {
         "tool": "codex",
         "id": "01a0be2f-1976-74f2-8293-3d42d9848997",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    },
+    "s_749f0c60dc4728": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c294-0a5b-7282-855c-a84363e8e3f0",
         "model": "gpt-6-astra"
       },
       "human_author": "happy <sxh139726845@163.com>"
