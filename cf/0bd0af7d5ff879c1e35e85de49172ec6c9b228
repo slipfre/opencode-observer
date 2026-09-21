@@ -1,0 +1,32 @@
+tests/telemetry.test.ts
+  s_5379c9d1fc3908::t_75b2ea45ffc454 588,595-596,599-602
+docs/schemas/trace-opencode.md
+  s_5379c9d1fc3908::t_75b2ea45ffc454 406,413
+  s_5379c9d1fc3908::t_31c53b13d90d6a 402-405,407-411
+  s_5379c9d1fc3908::t_e837f63205f0be 412
+e2e/skills.e2e.test.ts
+  s_5379c9d1fc3908::t_75b2ea45ffc454 121-122,127-129
+docs/schemas/trace.md
+  s_5379c9d1fc3908::t_31c53b13d90d6a 328-331,333-337
+  s_5379c9d1fc3908::t_75b2ea45ffc454 332,338-339
+e2e/tools.e2e.test.ts
+  s_5379c9d1fc3908::t_75b2ea45ffc454 204-205,214-215
+src/telemetry/spans/permission.ts
+  s_5379c9d1fc3908::t_75b2ea45ffc454 77-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "cf0bd0af7d5ff879c1e35e85de49172ec6c9b228",
+  "prompts": {},
+  "sessions": {
+    "s_5379c9d1fc3908": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c345-0595-79e3-8bf4-eeb12501a0ac",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
