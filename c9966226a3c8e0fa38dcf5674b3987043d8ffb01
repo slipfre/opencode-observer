@@ -1,0 +1,22 @@
+README.md
+  s_30c3d69d4abdd4::t_5f907604eb8c5e 3,5,7,9,27,29,31,33,50,52,54-59,61,64-67,70,72,74-82,84-86,88,90-92,94,96
+  s_30c3d69d4abdd4::t_59cc3902cfc882 35-39,41-46
+  s_30c3d69d4abdd4::t_85aa487bc4e353 40,48
+  s_30c3d69d4abdd4::t_06571fa5b7d6a3 83,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c9966226a3c8e0fa38dcf5674b3987043d8ffb01",
+  "prompts": {},
+  "sessions": {
+    "s_30c3d69d4abdd4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0beec-4d7c-7163-a10d-15cd78dedb0a",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}

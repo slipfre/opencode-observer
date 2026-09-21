@@ -1,0 +1,33 @@
+tests/ai-sdk.test.ts
+  s_9010e5196b5ff1::t_c7dffa847ef283 972-980,1246-1253
+tests/user-resolve.test.ts
+  s_9010e5196b5ff1::t_c7dffa847ef283 88
+tests/user-attributes.test.ts
+  s_9010e5196b5ff1::t_c7dffa847ef283 123,130-131,133-134,136,138,140-141
+  s_9010e5196b5ff1::t_623e43cc6fb60d 139
+tests/telemetry.test.ts
+  s_9010e5196b5ff1::t_623e43cc6fb60d 910,913,915-919,921-932,934-948,951-964
+  s_9010e5196b5ff1::t_1283abb4d2e89b 912
+  s_9010e5196b5ff1::t_98cf9b43caf862 836-845,854,861-862,895-900,902-909,1588,1591,1597-1601,1604-1612,1614,1633-1642
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "db214d513df66e917e196992ef048a8685c980a7",
+  "prompts": {},
+  "humans": {
+    "h_c0249eec84d377": {
+      "author": "shenxionghao <sxh139726845@163.com>"
+    }
+  },
+  "sessions": {
+    "s_9010e5196b5ff1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bec5-c327-7ca1-8f57-d393ff62abde",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
