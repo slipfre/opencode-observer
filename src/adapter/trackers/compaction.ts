@@ -1,75 +1,80 @@
 import type { AssistantMessage, CompactionPart, UserMessage } from "@opencode-ai/sdk";
 import type {
-  CompactionFinish,
   CompactionReference,
   Observer,
   ObservationError,
+  RunReference,
 } from "../../contract/observer.js";
-import type { InteractionOwner } from "./interaction.js";
-import { errorDetails } from "../shared/error.js";
+import type { InteractionContext } from "./interaction.js";
+import { createRunScopedStore } from "../shared/runs.js";
+import { normalizeError } from "../shared/error.js";
 import { nonNegativeInteger } from "../shared/number.js";
-import { parseModelUsage } from "../model/usage.js";
+import { normalizeOpenCodeUsage } from "../model/usage.js";
 
 type Compaction = {
-  id: string;
+  messageID: string;
   partID: string;
   startedAt: number;
   auto: boolean;
   overflow: boolean;
   triggerMessageID?: string;
-  owner?: InteractionOwner;
+  interactionContext?: InteractionContext;
   reference?: CompactionReference;
   promptTokens?: number;
   summaryTokens?: number;
-  usage?: CompactionFinish["usage"];
-  ended?: boolean;
+  finished?: boolean;
 };
 
 export function createCompactionTracker(options: {
   observer: Observer;
-  parent(id: string, time: number): InteractionOwner | undefined;
-  onFinish(id: string, endedAt: number, error?: ObservationError): void;
+  onFinish(run: RunReference, messageID: string, endedAt: number, error?: ObservationError): void;
 }) {
-  const records = new Map<string, Compaction>();
-  const users = new Map<string, number>();
-  const state = { active: undefined as string | undefined };
+  const store = createRunScopedStore(() => ({
+    compactions: new Map<string, Compaction>(),
+    userMessageCreationTimes: new Map<string, number>(),
+    activeCompaction: undefined as Compaction | undefined,
+  }));
 
-  function record(compaction: Compaction) {
-    if (compaction.reference || compaction.ended) {
+  function startObservation(compaction: Compaction) {
+    if (compaction.reference || compaction.finished) {
       return;
     }
 
-    const owner = compaction.owner ?? options.parent(compaction.id, compaction.startedAt);
+    const context = compaction.interactionContext;
 
-    if (!owner) {
+    if (!context) {
       return;
     }
 
-    compaction.owner = owner;
-    compaction.reference = { interaction: owner.reference, id: compaction.id };
+    compaction.reference = { interaction: context.reference, id: compaction.messageID };
     options.observer.startCompaction({
       ...compaction.reference,
       startedAt: compaction.startedAt,
       auto: compaction.auto,
       overflow: compaction.overflow,
       triggerMessageID: compaction.triggerMessageID,
-      agentName: owner.agentName,
-      agentType: owner.agentType,
-      parentSessionID: owner.parentSessionID,
-      userID: owner.userID,
+      agentName: context.agentName,
+      agentType: context.agentType,
+      parentSessionID: context.parentSessionID,
     });
   }
 
-  function finish(endedAt: number, error?: ObservationError) {
-    const compaction = state.active ? records.get(state.active) : undefined;
-    state.active = undefined;
+  function finish(run: RunReference, endedAt: number, error?: ObservationError) {
+    const state = store.get(run);
 
-    if (!compaction || compaction.ended) {
+    if (!state) {
       return false;
     }
 
-    compaction.ended = true;
-    options.onFinish(compaction.id, endedAt, error);
+    const compaction = state.activeCompaction;
+    state.activeCompaction = undefined;
+
+    if (!compaction || compaction.finished) {
+      return false;
+    }
+
+    compaction.finished = true;
+    options.onFinish(run, compaction.messageID, endedAt, error);
 
     if (compaction.reference) {
       options.observer.finishCompaction({
@@ -78,7 +83,6 @@ export function createCompactionTracker(options: {
         error,
         promptTokens: error ? undefined : compaction.promptTokens,
         summaryTokens: error ? undefined : compaction.summaryTokens,
-        usage: error ? undefined : compaction.usage,
       });
     }
 
@@ -86,72 +90,107 @@ export function createCompactionTracker(options: {
   }
 
   return {
-    active: () => state.active,
-    completed: (time: number) => finish(time),
+    open: store.open,
+    release: store.release,
+    unresolved(run: RunReference) {
+      return Array.from(store.get(run)?.compactions.values() ?? [])
+        .filter((compaction) => !compaction.reference && !compaction.finished)
+        .map((compaction) => ({ id: compaction.messageID, startedAt: compaction.startedAt }));
+    },
+    associate(run: RunReference, messageID: string, context: InteractionContext) {
+      const compaction = store.get(run)?.compactions.get(messageID);
+
+      if (compaction && !compaction.reference && !compaction.finished) {
+        compaction.interactionContext ??= context;
+        startObservation(compaction);
+      }
+    },
+    activeMessageID: (run: RunReference) => store.get(run)?.activeCompaction?.messageID,
+    completeActive: (run: RunReference, observedAt: number) => finish(run, observedAt),
     part(
+      run: RunReference,
       part: CompactionPart & { overflow?: boolean },
       observedAt: number,
-      trigger?: { messageID: string; owner?: InteractionOwner },
+      trigger?: { messageID: string; interactionContext?: InteractionContext },
     ) {
-      if (records.has(part.messageID)) {
+      const state = store.get(run);
+
+      if (!state) {
         return;
       }
 
-      finish(observedAt, {
+      if (state.compactions.has(part.messageID)) {
+        return;
+      }
+
+      finish(run, observedAt, {
         type: "_OTHER",
         message: "a new compaction started before the previous compaction completed",
       });
       const compaction: Compaction = {
-        id: part.messageID,
+        messageID: part.messageID,
         partID: part.id,
-        startedAt: users.get(part.messageID) ?? observedAt,
+        startedAt: state.userMessageCreationTimes.get(part.messageID) ?? observedAt,
         auto: part.auto,
         overflow: part.overflow === true,
         triggerMessageID: part.overflow === true ? trigger?.messageID : undefined,
-        owner: part.overflow === true ? trigger?.owner : undefined,
+        interactionContext: part.overflow === true ? trigger?.interactionContext : undefined,
       };
-      state.active = part.messageID;
-      records.set(part.messageID, compaction);
-      record(compaction);
+      state.activeCompaction = compaction;
+      state.compactions.set(part.messageID, compaction);
+      startObservation(compaction);
     },
-    message(info: UserMessage | AssistantMessage, observedAt: number) {
+    message(run: RunReference, info: UserMessage | AssistantMessage, observedAt: number) {
+      const state = store.get(run);
+
+      if (!state) {
+        return;
+      }
+
       if (info.role === "user") {
-        users.set(info.id, info.time.created);
-        records.forEach(record);
+        state.userMessageCreationTimes.set(info.id, info.time.created);
         return;
       }
 
-      const compaction = info.summary ? records.get(info.parentID) : undefined;
+      const compaction = info.summary ? state.compactions.get(info.parentID) : undefined;
 
-      if (!compaction || compaction.ended) {
+      if (!compaction || compaction.finished) {
         return;
       }
 
-      if (info.error && state.active === info.parentID) {
-        const error = errorDetails(info.error);
-        finish(observedAt, error);
+      if (info.error && state.activeCompaction === compaction) {
+        const error = normalizeError(info.error);
+        finish(run, observedAt, error);
         return error;
       }
 
       if (info.time.completed !== undefined) {
-        compaction.usage = parseModelUsage(info.tokens);
-        compaction.promptTokens = compaction.usage.inputTokens;
+        compaction.promptTokens = normalizeOpenCodeUsage(info.tokens).inputTokens;
         compaction.summaryTokens = nonNegativeInteger(info.tokens?.output);
       }
     },
-    resolve(id: string): InteractionOwner | undefined {
-      const compaction = records.get(id);
-      return compaction?.reference && compaction.owner
-        ? { ...compaction.owner, input: undefined }
+    resolveInteraction(run: RunReference, messageID: string): InteractionContext | undefined {
+      const compaction = store.get(run)?.compactions.get(messageID);
+      return compaction?.reference && compaction.interactionContext
+        ? { ...compaction.interactionContext, userInputText: undefined }
         : undefined;
     },
-    remove(id: string, observedAt: number, partID?: string) {
-      if (state.active === id && (partID === undefined || records.get(id)?.partID === partID)) {
-        finish(observedAt, { type: "_OTHER", message: "compaction removed before completion" });
+    remove(run: RunReference, messageID: string, observedAt: number, partID?: string) {
+      const compaction = store.get(run)?.activeCompaction;
+
+      if (
+        compaction?.messageID === messageID &&
+        (partID === undefined || compaction.partID === partID)
+      ) {
+        finish(run, observedAt, {
+          type: "_OTHER",
+          message: "compaction removed before completion",
+        });
       }
     },
-    close(observedAt: number, error?: ObservationError) {
+    close(run: RunReference, observedAt: number, error?: ObservationError) {
       finish(
+        run,
         observedAt,
         error ?? { type: "_OTHER", message: "session ended before compaction completed" },
       );

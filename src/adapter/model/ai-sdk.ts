@@ -3,10 +3,11 @@ import {
   type OnStartEvent,
   type OnStepStartEvent,
   type OnStepFinishEvent,
+  type OnToolCallStartEvent,
   type TelemetryIntegration,
 } from "ai";
 import type { LlmUpdate } from "../../contract/observer.js";
-import type { LlmRequest } from "./request.js";
+import type { ChatParamsHookArgs } from "./request.js";
 import { parseModelInput, parseModelOutput } from "./messages.js";
 import { createGuard, reportError } from "../shared/guard.js";
 import { parseModelHeaders } from "./headers.js";
@@ -17,31 +18,42 @@ const correlationHeader = "x-opencode-observer-request";
 export type ModelCapture = {
   active(): boolean;
   input(value: Pick<LlmUpdate, "input" | "request">): void;
-  output(value: Pick<LlmUpdate, "output" | "responseHeaders">): void;
+  output(value: Pick<LlmUpdate, "output" | "responseModel" | "responseHeaders">): void;
+  toolDescription(value: { callID: string; name: string; description: string }): void;
 };
 
 type ModelCaptureListener = {
   start(event: OnStartEvent | OnStepStartEvent): void;
   input(event: OnStepStartEvent): void;
   output(event: OnStepFinishEvent): void;
+  tool(event: OnToolCallStartEvent): void;
   guard: ReturnType<typeof createGuard>;
   log(error: unknown): unknown;
 };
 
 type ModelCaptureBroker = { listeners: Set<ModelCaptureListener> };
 
-export function createModelMessageCapture(options: {
-  bind(input: LlmRequest[0]): ModelCapture | undefined;
+export function createSdkModelCapture(options: {
+  bind(input: ChatParamsHookArgs[0]): ModelCapture | undefined;
   captureContent: boolean;
+  captureHttpHeaders: boolean;
   log(error: unknown): unknown;
 }) {
-  const pending = new Map<string, ModelCapture>();
+  const pendingCaptures = new Map<string, ModelCapture>();
   const bindings = new WeakMap<
     object,
-    { capture: ModelCapture; step: number; responded: boolean }
+    {
+      capture: ModelCapture;
+      step: number;
+      stepFinished: boolean;
+      stepNumber?: number;
+      toolDescriptions?: Map<string, string>;
+    }
   >();
 
-  function activeBinding(event: OnStartEvent | OnStepStartEvent | OnStepFinishEvent) {
+  function activeBinding(
+    event: OnStartEvent | OnStepStartEvent | OnStepFinishEvent | OnToolCallStartEvent,
+  ) {
     if (event.functionId !== "session.llm") {
       return;
     }
@@ -55,16 +67,16 @@ export function createModelMessageCapture(options: {
     log: options.log,
     start(event) {
       const id = event.headers?.[correlationHeader];
-      const binding = id ? pending.get(id) : undefined;
+      const binding = id ? pendingCaptures.get(id) : undefined;
 
       if (!id || !binding) {
         return;
       }
 
-      pending.delete(id);
+      pendingCaptures.delete(id);
 
       if (event.functionId === "session.llm" && event.metadata && binding.active()) {
-        bindings.set(event.metadata, { capture: binding, step: 0, responded: false });
+        bindings.set(event.metadata, { capture: binding, step: 0, stepFinished: false });
       }
     },
     input(event) {
@@ -74,10 +86,33 @@ export function createModelMessageCapture(options: {
         const step = ++binding.step;
         const snapshot = {
           ...(options.captureContent ? { input: parseModelInput(event) } : {}),
-          request: options.captureContent ? { headers: parseModelHeaders(event.headers) } : {},
+          request: {
+            // SDK text generation is known before any asynchronous tool schemas resolve.
+            outputType: event.output === undefined ? ("text" as const) : undefined,
+            ...(options.captureContent && options.captureHttpHeaders
+              ? { headers: parseModelHeaders(event.headers) }
+              : {}),
+          },
         };
         binding.capture.input(snapshot);
-        binding.responded = false;
+        binding.stepFinished = false;
+        binding.stepNumber = event.stepNumber;
+        binding.toolDescriptions = undefined;
+
+        if (options.captureContent) {
+          // Tool descriptions are available before asynchronous parameter schemas resolve.
+          void listener.guard(() => {
+            binding.toolDescriptions = new Map(
+              Object.entries(event.tools ?? {})
+                .filter(
+                  ([name]) => event.activeTools === undefined || event.activeTools.includes(name),
+                )
+                .flatMap(([name, tool]) =>
+                  typeof tool.description === "string" ? [[name, tool.description] as const] : [],
+                ),
+            );
+          });
+        }
 
         if (event.output || (options.captureContent && event.tools)) {
           // Schema promises must never hold up the host or hide an observed response.
@@ -87,7 +122,12 @@ export function createModelMessageCapture(options: {
               reportError(error, options.log),
             );
 
-            if (binding.capture.active() && binding.step === step && !binding.responded) {
+            if (
+              broker.listeners.has(listener) &&
+              binding.capture.active() &&
+              binding.step === step &&
+              !binding.stepFinished
+            ) {
               binding.capture.input({ ...snapshot, request: { ...snapshot.request, ...settings } });
             }
           });
@@ -98,22 +138,42 @@ export function createModelMessageCapture(options: {
       const binding = activeBinding(event);
 
       if (binding) {
-        binding.responded = true;
-        const snapshot = options.captureContent
-          ? {
-              output: parseModelOutput(event),
-              responseHeaders: parseModelHeaders(event.response?.headers),
-            }
-          : {};
+        binding.stepFinished = true;
+        binding.toolDescriptions = undefined;
+        const snapshot = {
+          responseModel: event.response?.modelId,
+          ...(options.captureContent ? { output: parseModelOutput(event) } : {}),
+          ...(options.captureContent && options.captureHttpHeaders
+            ? { responseHeaders: parseModelHeaders(event.response?.headers) }
+            : {}),
+        };
         binding.capture.output(snapshot);
       }
     },
+    tool(event) {
+      const binding = activeBinding(event);
+      if (!binding || binding.stepFinished || binding.stepNumber !== event.stepNumber) {
+        return;
+      }
+
+      const description = binding.toolDescriptions?.get(event.toolCall.toolName);
+      if (description !== undefined) {
+        binding.capture.toolDescription({
+          callID: event.toolCall.toolCallId,
+          name: event.toolCall.toolName,
+          description,
+        });
+      }
+    },
   };
-  const broker = modelCaptureBroker();
+  const broker = getModelCaptureBroker();
   broker.listeners.add(listener);
 
   return {
-    attachCorrelationHeader(input: LlmRequest[0], output: { headers: Record<string, string> }) {
+    attachCorrelationHeader(
+      input: ChatParamsHookArgs[0],
+      output: { headers: Record<string, string> },
+    ) {
       if (Object.keys(output.headers).some((key) => key.toLowerCase() === correlationHeader)) {
         return;
       }
@@ -124,19 +184,19 @@ export function createModelMessageCapture(options: {
         return;
       }
 
-      pending.forEach((value, key) => {
+      pendingCaptures.forEach((value, key) => {
         if (!value.active()) {
-          pending.delete(key);
+          pendingCaptures.delete(key);
         }
       });
       const id = crypto.randomUUID();
-      pending.set(id, binding);
+      pendingCaptures.set(id, binding);
 
-      if (pending.size > 1024) {
-        const oldest = pending.keys().next().value;
+      if (pendingCaptures.size > 1024) {
+        const oldest = pendingCaptures.keys().next().value;
 
         if (oldest) {
-          pending.delete(oldest);
+          pendingCaptures.delete(oldest);
         }
       }
 
@@ -148,7 +208,7 @@ export function createModelMessageCapture(options: {
   };
 }
 
-function modelCaptureBroker() {
+function getModelCaptureBroker() {
   const root = globalThis as typeof globalThis & {
     __opencodeObserverModelCapture?: ModelCaptureBroker;
   };
@@ -190,6 +250,9 @@ function modelCaptureBroker() {
     },
     onStepFinish(event) {
       broker.listeners.forEach((listener) => void listener.guard(() => listener.output(event)));
+    },
+    onToolCallStart(event) {
+      broker.listeners.forEach((listener) => void listener.guard(() => listener.tool(event)));
     },
   };
   registerTelemetryIntegration(integration);

@@ -2,9 +2,8 @@ import { expect, test } from "bun:test";
 import type { OnStepFinishEvent } from "ai";
 import { parseModelInput, parseModelOutput } from "../src/adapter/model/messages.js";
 
-test("model input preserves history, tool arguments/results and separately supplied system instructions", () => {
+test("model input preserves system messages, history and tool arguments/results", () => {
   const result = parseModelInput({
-    system: "Separate instructions",
     messages: [
       { role: "system", content: "History instructions" },
       { role: "user", content: "question" },
@@ -29,10 +28,12 @@ test("model input preserves history, tool arguments/results and separately suppl
       },
       { role: "user", content: "continue" },
     ],
-    providerOptions: { openai: { instructions: "Not a second copy" } },
   });
 
-  expect(result.systemInstructions).toEqual([{ type: "text", text: "Separate instructions" }]);
+  expect(result.messages[0]).toEqual({
+    role: "system",
+    parts: [{ type: "text", text: "History instructions" }],
+  });
   expect(result.messages.map((message) => message.role)).toEqual([
     "system",
     "user",
@@ -48,30 +49,29 @@ test("model input preserves history, tool arguments/results and separately suppl
   expect(result.messages[3]?.parts).toEqual([
     { type: "tool-result", id: "call1", response: { lines: [1, 2] } },
   ]);
-  expect(JSON.stringify(result)).not.toContain("Not a second copy");
 });
 
-test("provider instructions are separate only when not already in system history", () => {
+test("model input does not read separate system or provider instructions", () => {
   const event = {
-    system: undefined,
-    messages: [],
-    providerOptions: { openai: { instructions: "provider prompt" } },
+    messages: [{ role: "system" as const, content: "history" }],
+    get system() {
+      throw new Error("must not read separate system instructions");
+    },
+    get providerOptions() {
+      throw new Error("must not read provider instructions");
+    },
   };
 
-  expect(parseModelInput(event).systemInstructions).toEqual([
-    { type: "text", text: "provider prompt" },
-  ]);
-  expect(
-    parseModelInput({ ...event, messages: [{ role: "system", content: "history" }] })
-      .systemInstructions,
-  ).toBeUndefined();
+  expect(parseModelInput(event)).toEqual({
+    messages: [{ role: "system", parts: [{ type: "text", text: "history" }] }],
+  });
+  event.messages.length = 0;
+  expect(parseModelInput(event)).toEqual({ messages: [] });
 });
 
 test("model media snapshots copy bytes and preserve URI and MIME information", () => {
   const data = new Uint8Array([1, 2, 3]);
   const result = parseModelInput({
-    system: undefined,
-    providerOptions: undefined,
     messages: [
       {
         role: "user",
@@ -158,8 +158,6 @@ test("model output uses the current generated candidate and excludes history and
 test("tool payload conversion snapshots shared JSON, preserves null and tolerates malformed arguments", () => {
   const shared = { x: 1 };
   const result = parseModelInput({
-    system: undefined,
-    providerOptions: undefined,
     messages: [
       {
         role: "assistant",

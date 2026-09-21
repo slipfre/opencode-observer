@@ -21,6 +21,4 @@ export type ModelMessage = { role: string; parts: ModelPart[] };
 
 export type ModelInput = {
   messages: ModelMessage[];
-  /** Instructions supplied separately from chat history. */
-  systemInstructions?: ModelPart[];
 };

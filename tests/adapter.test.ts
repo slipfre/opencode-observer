@@ -12,7 +12,7 @@ import type {
   RunUpdate,
 } from "../src/contract/observer.js";
 import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
-import type { LlmRequest } from "../src/adapter/model/request.js";
+import type { ChatParamsHookArgs } from "../src/adapter/model/request.js";
 import { createCoordinatorHarness } from "./support/coordinator.js";
 
 function recording() {
@@ -28,6 +28,9 @@ function recording() {
     startTool() {},
     updateTool() {},
     finishTool() {},
+    startSkill() {},
+    updateSkill() {},
+    finishSkill() {},
     startCompaction() {},
     finishCompaction() {},
     startPermission() {},
@@ -133,7 +136,7 @@ function modelMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessa
   };
 }
 
-function modelRequest(): LlmRequest {
+function modelRequest(): ChatParamsHookArgs {
   const modalities = { text: true, audio: false, image: false, video: false, pdf: false };
 
   return [
@@ -218,10 +221,57 @@ test("chat.params observes compatible API settings without mutating the hook out
       temperature: 0,
       topP: 0.9,
       topK: undefined,
-      maxTokens: undefined,
+      maxOutputTokens: undefined,
     },
   });
   await adapter.hooks.dispose();
+});
+
+test("request keys isolate separators and escapes in provider, model and agent names", async () => {
+  const h = recording();
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  const requests = [
+    { providerID: "provider:region", modelID: "model", agent: "build" },
+    { providerID: "provider", modelID: "region:model", agent: "build" },
+    { providerID: "provider", modelID: "region", agent: "model:build" },
+    { providerID: "provider%3Aregion", modelID: "model", agent: "build" },
+  ].map((names, index) => {
+    const request = modelRequest();
+    request[0].model.providerID = names.providerID;
+    request[0].model.id = names.modelID;
+    request[0].model.api.id = `resolved-model-${index}`;
+    request[0].agent = names.agent;
+    request[1].temperature = index / 10;
+    return request;
+  });
+  await coordinator.message(user(), [text()]);
+  for (const request of requests) {
+    await coordinator.params(...request);
+  }
+
+  for (const [index, request] of requests.entries()) {
+    await coordinator.event({
+      type: "message.updated",
+      properties: {
+        info: modelMessage({
+          id: `a${index}`,
+          providerID: request[0].model.providerID,
+          modelID: request[0].model.id,
+          mode: request[0].agent,
+        }),
+      },
+    });
+    await modelPart(coordinator, "step-start", 1100, `a${index}`);
+    await modelPart(coordinator, "step-finish", 1200, `a${index}`);
+  }
+
+  expect(h.llms.map((call) => call.model)).toEqual(
+    requests.map((request) => request[0].model.api.id),
+  );
+  expect(h.llms.map((call) => call.parameters?.temperature)).toEqual(
+    requests.map((request) => request[1].temperature),
+  );
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } });
 });
 
 async function modelPart(
@@ -273,10 +323,10 @@ test("request preparation starts one logical LLM before steps and preserves its 
   expect(h.llms[0]).toMatchObject({
     id: "a1",
     interaction: { id: "u1", run: { sessionID: "s1", id: "u1" } },
-    startedAt: 1080,
+    startedAt: 1050,
     model: "gemini-request-model",
-    input: undefined,
-    parameters: { temperature: 0, topP: 0.9, topK: 8, maxTokens: 100 },
+    fallbackInputText: undefined,
+    parameters: { temperature: 0, topP: 0.9, topK: 8, maxOutputTokens: 100 },
   });
   expect(h.observer.llmTraceHeaders).toHaveBeenLastCalledWith({
     id: "a1",
@@ -284,6 +334,11 @@ test("request preparation starts one logical LLM before steps and preserves its 
   });
 
   await modelPart(coordinator, "step-finish", 1300);
+  expect(h.llmFinishes).toHaveLength(0);
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: modelMessage({ time: { created: 1050, completed: 1350 } }) },
+  });
   expect(h.llmFinishes).toHaveLength(1);
   expect(await coordinator.headers(request[0])).toEqual({});
   await coordinator.hooks.dispose();
@@ -368,7 +423,7 @@ test.each([false, true])(
 
     expect(output.headers).toEqual({ "X-Test": "kept", ...headers });
     expect(h.llms).toHaveLength(1);
-    expect(h.llms[0]?.input).toBe(captureContent ? "question" : undefined);
+    expect(h.llms[0]?.fallbackInputText).toBe(captureContent ? "question" : undefined);
     expect(failures).toEqual([]);
 
     await adapter.hooks.event?.({
@@ -433,8 +488,8 @@ test.each([
     const expected = { ...headers, "X-Test": "kept", tracestate: input.expected };
     expect(output.headers).toEqual(expected);
     expect(headers.tracestate).toBe("vendor=value");
-    expect(h.llms[0]?.userID).toBeUndefined();
-    expect(h.llms[0]?.input).toBeUndefined();
+    expect(h.llms[0]).not.toHaveProperty("userID");
+    expect(h.llms[0]?.fallbackInputText).toBeUndefined();
     expect(failures).toEqual([]);
 
     const title = { headers: {} };
@@ -485,8 +540,7 @@ test("source messages become run operations with explicit unsupported associatio
       sessionID: "s1",
       id: "u1",
       startedAt: 1000,
-      userID: undefined,
-      parent: undefined,
+      parentTool: undefined,
       parentSessionID: undefined,
     },
   ]);
@@ -617,7 +671,7 @@ test("event hooks record synchronously with the coordinator clock and wait for f
   await coordinator.hooks.dispose();
 });
 
-test("dispose releases recording state and waits for one shared shutdown", async () => {
+test("dispose clears existing session state and waits for one shared shutdown", async () => {
   const h = recording();
   const shutdown = Promise.withResolvers<void>();
   const settled = { value: false };
@@ -649,7 +703,7 @@ test("dispose releases recording state and waits for one shared shutdown", async
   });
 
   expect(h.starts).toHaveLength(1);
-  expect(h.interactions).toHaveLength(1);
+  expect(h.interactions.map((input) => input.id)).toEqual(["u1"]);
   expect(h.llms).toHaveLength(0);
   expect(h.llmUpdates).toHaveLength(0);
   expect(h.finishes).toHaveLength(0);
@@ -749,6 +803,7 @@ test.each(["throw", "reject"])("hooks isolate %s from flush and disposal", async
 
   expect(failures).toEqual([exportError, disposeError]);
   expect(h.starts).toHaveLength(0);
+  expect(h.interactions).toHaveLength(0);
   expect(h.observer.shutdown).toHaveBeenCalledTimes(1);
 });
 
@@ -771,7 +826,7 @@ test.each(["throw", "reject"])(
         return Promise.reject(new Error("logging failed"));
       },
     });
-    await adapter.startModelMessageCapture();
+    await adapter.startSdkModelCapture();
     const output = { message: user(), parts: [text()] };
     await adapter.hooks["chat.message"]?.({ sessionID: "s1" }, output);
     const request = modelRequest();
@@ -818,37 +873,60 @@ test.each(["throw", "reject"])(
   },
 );
 
-test("interaction uses the owner agent and assistant completion time while run uses idle observation", async () => {
-  const h = recording();
-  const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
+test.each([true, false])(
+  "interaction and run end at idle with captureContent=%s",
+  async (captureContent) => {
+    const h = recording();
+    const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent });
 
-  await coordinator.message({ ...user(), agent: "review" }, [text()]);
-  await reply(coordinator, "final");
-  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2500);
+    await coordinator.message({ ...user(), agent: "review" }, [text()]);
+    await reply(coordinator, "final");
+    await coordinator.event(
+      {
+        type: "session.status",
+        properties: { sessionID: "s1", status: { type: "busy" } },
+      },
+      2000,
+    );
 
-  expect(h.interactions).toEqual([
-    {
-      run: { sessionID: "s1", id: "u1" },
-      id: "u1",
-      startedAt: 1000,
-      input: "question",
-      agentName: "review",
-      userID: undefined,
-      agentType: undefined,
-      parentSessionID: undefined,
-    },
-  ]);
-  expect(h.completed).toEqual([
-    {
-      run: { sessionID: "s1", id: "u1" },
-      id: "u1",
-      endedAt: 1200,
-      status: "completed",
-      output: "final",
-    },
-  ]);
-  expect(h.finishes[0]).toMatchObject({ endedAt: 2500, output: "final" });
-});
+    expect(h.completed).toHaveLength(0);
+
+    await coordinator.event(
+      {
+        type: "session.status",
+        properties: { sessionID: "s1", status: { type: "idle" } },
+      },
+      2500,
+    );
+    await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 3000);
+
+    expect(h.interactions).toEqual([
+      {
+        run: { sessionID: "s1", id: "u1" },
+        id: "u1",
+        startedAt: 1000,
+        input: captureContent ? "question" : undefined,
+        agentName: "review",
+        agentType: undefined,
+        parentSessionID: undefined,
+      },
+    ]);
+    expect(h.completed).toEqual([
+      {
+        run: { sessionID: "s1", id: "u1" },
+        id: "u1",
+        endedAt: 2500,
+        status: "completed",
+        output: captureContent ? "final" : undefined,
+      },
+    ]);
+    expect(h.finishes).toHaveLength(1);
+    expect(h.finishes[0]).toMatchObject({
+      endedAt: 2500,
+      output: captureContent ? "final" : undefined,
+    });
+  },
+);
 
 test("steer supersedes the old interaction exactly at the next input and ignores late old output", async () => {
   const h = recording();
@@ -880,7 +958,7 @@ test("steer supersedes the old interaction exactly at the next input and ignores
     {
       run: { sessionID: "s1", id: "u1" },
       id: "u2",
-      endedAt: 1700,
+      endedAt: 2500,
       status: "completed",
       output: "final",
     },
@@ -890,16 +968,52 @@ test("steer supersedes the old interaction exactly at the next input and ignores
   expect(h.finishes[0]?.output).toBe("final");
 });
 
-test("synthetic and compaction messages retain the interaction through successful recovery", async () => {
+test.each(["synthetic", "ignored"] as const)(
+  "%s prompt hooks and message events keep the original interaction",
+  async (flag) => {
+    const h = recording();
+    const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
+    const info = user("continue", 1400);
+    const part = { ...text("continue", "internal input"), [flag]: true };
+    await coordinator.message(user(), [text()]);
+
+    await coordinator.message(info, [part]);
+
+    expect(h.interactions).toHaveLength(1);
+    expect(h.completed).toHaveLength(0);
+
+    await coordinator.event({ type: "message.updated", properties: { info } });
+    await coordinator.event({ type: "message.part.updated", properties: { part } });
+    await coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ parentID: info.id, time: { created: 1500 } }) },
+    });
+    await modelPart(coordinator, "step-start", 1500);
+    await modelPart(coordinator, "step-finish", 1600);
+    await reply(coordinator, "continued answer", {
+      parentID: info.id,
+      time: { created: 1500, completed: 1600 },
+    });
+    await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 2000);
+
+    expect(h.starts).toHaveLength(1);
+    expect(h.interactions).toHaveLength(1);
+    expect(h.interactions[0]?.input).toBe("question");
+    expect(h.llms).toHaveLength(1);
+    expect(h.llms[0]).toMatchObject({ interaction: { id: "u1" }, fallbackInputText: "question" });
+    expect(h.completed).toHaveLength(1);
+    expect(h.completed[0]).toMatchObject({
+      id: "u1",
+      status: "completed",
+      output: "continued answer",
+    });
+    expect(h.finishes[0]?.output).toBe("continued answer");
+  },
+);
+
+test("compaction and continuation events retain the interaction through successful recovery", async () => {
   const h = recording();
   const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
-
-  await coordinator.message(user(), [{ ...text(), synthetic: true }]);
-  await coordinator.message(user(), [
-    { id: "c", sessionID: "s1", messageID: "u1", type: "compaction", auto: true },
-  ]);
-
-  expect(h.interactions).toHaveLength(0);
 
   await coordinator.message(user(), [
     { ...text(), ignored: true },
@@ -926,9 +1040,14 @@ test("synthetic and compaction messages retain the interaction through successfu
     time: { created: 1300, completed: 1350 },
   });
   await coordinator.event({ type: "session.compacted", properties: { sessionID: "s1" } });
-  await coordinator.message(user("continue", 1400), [
-    { ...text("continue", "continue"), synthetic: true },
-  ]);
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: user("continue", 1400) },
+  });
+  await coordinator.event({
+    type: "message.part.updated",
+    properties: { part: { ...text("continue", "continue"), synthetic: true } },
+  });
 
   expect(h.completed).toHaveLength(0);
 
@@ -941,7 +1060,7 @@ test("synthetic and compaction messages retain the interaction through successfu
 
   expect(h.interactions).toHaveLength(1);
   expect(h.interactions[0]?.input).toBe("real");
-  expect(h.completed[0]).toMatchObject({ status: "completed", endedAt: 1600, output: "recovered" });
+  expect(h.completed[0]).toMatchObject({ status: "completed", endedAt: 2000, output: "recovered" });
 });
 
 test("latest unfinished assistant causes observed-time cleanup instead of a fabricated completion", async () => {
@@ -979,23 +1098,7 @@ test("terminal assistant error fails its interaction without inventing a run-lev
   expect(h.finishes[0]?.output).toBeUndefined();
 });
 
-test("new interactions resolve user identity independently without altering the existing run", async () => {
-  const h = recording();
-  const identity: { value?: string } = {};
-  const coordinator = createCoordinatorHarness({
-    observer: h.observer,
-    userID: () => identity.value,
-  });
-
-  await coordinator.message(user(), [text()]);
-  identity.value = "alice";
-  await coordinator.message(user("u2", 1500), [text("u2", "steer")]);
-
-  expect(h.starts[0]?.userID).toBeUndefined();
-  expect(h.interactions.map((item) => item.userID)).toEqual([undefined, "alice"]);
-});
-
-test("LLM steps establish observed boundaries, request metadata and normalized usage", async () => {
+test("LLM spans use assistant timestamps while steps supply evidence and normalized usage", async () => {
   const h = recording();
   const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
   const request = modelRequest();
@@ -1016,25 +1119,36 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
   );
   await modelPart(coordinator, "step-finish", 1300);
 
+  expect(h.llmFinishes).toHaveLength(0);
+  await coordinator.event(
+    {
+      type: "message.updated",
+      properties: {
+        info: modelMessage({ time: { created: 1050, completed: 1350 }, finish: "stop" }),
+      },
+    },
+    1500,
+  );
+
   expect(h.llms[0]).toMatchObject({
     id: "a1",
     interaction: { id: "u1", run: { sessionID: "s1", id: "u1" } },
-    startedAt: 1100,
+    startedAt: 1050,
     providerName: "gcp.gemini",
     providerID: "google",
     model: "gemini-request-model",
     operation: "generate_content",
     stream: true,
-    input: "question",
+    fallbackInputText: "question",
     agentName: "build",
-    parameters: { temperature: 0, topP: 0.9, topK: 8, maxTokens: 100 },
+    parameters: { temperature: 0, topP: 0.9, topK: 8, maxOutputTokens: 100 },
     agentType: undefined,
     parentSessionID: undefined,
     compactionID: undefined,
   });
   expect(h.llmFinishes[0]).toMatchObject({
-    endedAt: 1300,
-    output: "answer",
+    endedAt: 1350,
+    fallbackOutputText: "answer",
     finishReason: "stop",
     cost: 0.02,
     usage: {
@@ -1062,8 +1176,8 @@ test("LLM steps establish observed boundaries, request metadata and normalized u
 
   expect(h.llms).toHaveLength(1);
   expect(h.llmFinishes).toHaveLength(1);
-  expect(h.llmFinishes[0]?.endedAt).toBe(1300);
-  expect(h.completed[0]?.endedAt).toBe(3000);
+  expect(h.llmFinishes[0]?.endedAt).toBe(1350);
+  expect(h.completed[0]?.endedAt).toBe(4500);
 });
 
 test("LLM spans omit fabricated assistants, unmatched parents, summaries and finish-only observations", async () => {
@@ -1098,6 +1212,129 @@ test("LLM spans omit fabricated assistants, unmatched parents, summaries and fin
   expect(h.llmFinishes).toEqual([]);
 });
 
+test("assistant completion can precede step results without losing source time or usage", async () => {
+  const h = recording();
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  await coordinator.message(user(), [text()]);
+  await modelPart(coordinator, "step-start", 1400);
+  await coordinator.event(
+    {
+      type: "message.updated",
+      properties: { info: modelMessage({ time: { created: 1050, completed: 1350 } }) },
+    },
+    1500,
+  );
+
+  expect(h.llms[0]?.startedAt).toBe(1050);
+  expect(h.llmFinishes).toHaveLength(0);
+
+  await modelPart(coordinator, "step-finish", 1600);
+
+  expect(h.llmFinishes[0]).toMatchObject({
+    endedAt: 1350,
+    usage: { inputTokens: 13, outputTokens: 7 },
+  });
+});
+
+test.each([true, false])("assistant error uses completion when available=%s", async (completed) => {
+  const h = recording();
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({ type: "message.updated", properties: { info: modelMessage() } }, 1100);
+  await modelPart(coordinator, "step-start", 1150);
+  await coordinator.event(
+    {
+      type: "message.updated",
+      properties: {
+        info: modelMessage({
+          time: { created: 1050, ...(completed ? { completed: 1250 } : {}) },
+          error: { name: "MessageAbortedError", data: { message: "cancelled" } },
+        }),
+      },
+    },
+    1400,
+  );
+
+  expect(h.llmFinishes[0]).toMatchObject({
+    endedAt: completed ? 1250 : 1400,
+    error: { type: "MessageAbortedError", message: "cancelled" },
+  });
+
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: modelMessage({ time: { created: 1050, completed: 1450 } }) },
+  });
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 1500);
+
+  expect(h.llmFinishes).toHaveLength(1);
+  expect(h.llmFinishes[0]?.endedAt).toBe(completed ? 1250 : 1400);
+});
+
+test.each([undefined, Number.NaN, 1000])(
+  "step success without a valid assistant completion (%s) is closed as incomplete",
+  async (completed) => {
+    const h = recording();
+    const coordinator = createCoordinatorHarness({ observer: h.observer });
+    await coordinator.message(user(), [text()]);
+    await coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ time: { created: 1050, completed } }) },
+    });
+    await modelPart(coordinator, "step-start", 1100);
+    await modelPart(coordinator, "step-finish", 1200);
+
+    expect(h.llmFinishes).toHaveLength(0);
+
+    await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 1400);
+
+    expect(h.llmFinishes[0]).toMatchObject({
+      endedAt: 1400,
+      error: { type: "_OTHER", message: "session ended before message completed" },
+    });
+  },
+);
+
+test("a completed assistant with a prepared request needs no fabricated step usage at cleanup", async () => {
+  const h = recording();
+  const coordinator = createCoordinatorHarness({ observer: h.observer });
+  await coordinator.message(user(), [text()]);
+  await coordinator.event({ type: "message.updated", properties: { info: modelMessage() } });
+  await coordinator.headers(modelRequest()[0]);
+  await coordinator.event({
+    type: "message.updated",
+    properties: {
+      info: modelMessage({ time: { created: 1050, completed: 1250 }, finish: "stop" }),
+    },
+  });
+  await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 1400);
+
+  expect(h.llmFinishes[0]).toMatchObject({
+    endedAt: 1250,
+    finishReason: "stop",
+  });
+  expect(h.llmFinishes[0]?.error).toBeUndefined();
+  expect(h.llmFinishes[0]?.usage).toBeUndefined();
+});
+
+test.each([Number.NaN, -1, Number.POSITIVE_INFINITY])(
+  "LLM spans omit invalid assistant creation time %s",
+  async (created) => {
+    const h = recording();
+    const coordinator = createCoordinatorHarness({ observer: h.observer });
+    await coordinator.message(user(), [text()]);
+    await coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ time: { created } }) },
+    });
+    await modelPart(coordinator, "step-start", 1100);
+    await modelPart(coordinator, "step-finish", 1200);
+    await coordinator.event({ type: "session.idle", properties: { sessionID: "s1" } }, 1400);
+
+    expect(h.llms).toHaveLength(0);
+    expect(h.llmFinishes).toHaveLength(0);
+  },
+);
+
 test("LLM step events can precede metadata and late synthetic ownership stays with the old interaction", async () => {
   const h = recording();
   const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
@@ -1110,7 +1347,12 @@ test("LLM step events can precede metadata and late synthetic ownership stays wi
   );
   await modelPart(coordinator, "step-finish", 1700);
   await coordinator.event(
-    { type: "message.updated", properties: { info: modelMessage({ parentID: "continuation" }) } },
+    {
+      type: "message.updated",
+      properties: {
+        info: modelMessage({ parentID: "continuation", time: { created: 1550, completed: 1750 } }),
+      },
+    },
     1800,
   );
 
@@ -1122,14 +1364,14 @@ test("LLM step events can precede metadata and late synthetic ownership stays wi
   );
 
   expect(h.llms[0]).toMatchObject({
-    startedAt: 1600,
+    startedAt: 1550,
     interaction: { id: "u1" },
-    input: "question",
+    fallbackInputText: "question",
   });
-  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1700, output: "old answer" });
+  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1750, fallbackOutputText: "old answer" });
 });
 
-test("LLM retries retain one span, reset attempt text and ignore scheduled retry time", async () => {
+test("OpenCode retries retain one span and count from retry notifications", async () => {
   const h = recording();
   const coordinator = createCoordinatorHarness({ observer: h.observer, captureContent: true });
   await coordinator.message(user(), [text()]);
@@ -1151,6 +1393,17 @@ test("LLM retries retain one span, reset attempt text and ignore scheduled retry
   );
 
   expect(h.llmFinishes).toHaveLength(0);
+  expect(h.llmUpdates).toHaveLength(2);
+  expect(h.llmUpdates[0]?.firstChunkObservedAt).toBe(1100);
+  expect(h.llmUpdates[0]?.retryCount).toBeUndefined();
+  expect(h.llmUpdates.at(-1)?.retryCount).toBe(1);
+
+  await coordinator.event(
+    { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } },
+    1540,
+  );
+
+  expect(h.llmUpdates).toHaveLength(2);
 
   await modelPart(coordinator, "step-start", 1600, "a1", { id: "retry-step" });
   await coordinator.event(
@@ -1166,13 +1419,18 @@ test("LLM retries retain one span, reset attempt text and ignore scheduled retry
   );
   await modelPart(coordinator, "step-start", 1700, "a1", { id: "retry-step" });
   await modelPart(coordinator, "step-finish", 1800);
+  await coordinator.event({
+    type: "message.updated",
+    properties: { info: modelMessage({ time: { created: 1050, completed: 1850 } }) },
+  });
   await modelPart(coordinator, "step-start", 1900, "a1", { id: "late-step" });
 
   expect(h.llms).toHaveLength(1);
-  expect(h.llms[0]?.startedAt).toBe(1100);
+  expect(h.llms[0]?.startedAt).toBe(1050);
   expect(h.llmFinishes).toHaveLength(1);
-  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1800, output: "recovered" });
+  expect(h.llmFinishes[0]).toMatchObject({ endedAt: 1850, fallbackOutputText: "recovered" });
   expect(h.llmFinishes[0]?.error).toBeUndefined();
+  expect(h.llmUpdates.flatMap((update) => update.firstChunkObservedAt ?? [])).toEqual([1100]);
 });
 
 test("recoverable overflow fails only the active model call and idle cleans unfinished calls", async () => {
@@ -1266,9 +1524,13 @@ test.each([true, false])(
       },
       cost: Number.NaN,
     });
+    await coordinator.event({
+      type: "message.updated",
+      properties: { info: modelMessage({ time: { created: 1050, completed: 1350 } }) },
+    });
 
-    expect(h.llms[0]?.input).toBe(captureContent ? "secret" : undefined);
-    expect(h.llmFinishes[0]?.output).toBe(captureContent ? "" : undefined);
+    expect(h.llms[0]?.fallbackInputText).toBe(captureContent ? "secret" : undefined);
+    expect(h.llmFinishes[0]?.fallbackOutputText).toBe(captureContent ? "" : undefined);
     expect(h.llmFinishes[0]?.usage).toEqual({
       inputTokens: undefined,
       outputTokens: undefined,

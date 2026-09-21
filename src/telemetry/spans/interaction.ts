@@ -1,4 +1,4 @@
-import { SpanKind, SpanStatusCode, trace, type Context, type Span } from "@opentelemetry/api";
+import { SpanKind, trace, type Context, type Span } from "@opentelemetry/api";
 import type {
   InteractionFinish,
   InteractionReference,
@@ -6,66 +6,64 @@ import type {
   ObservationError,
   RunReference,
 } from "../../contract/observer.js";
-import { encodeTextMessage, type SpanOptions } from "./common.js";
+import { encodeTextMessage, endSpan, type SpanOptions } from "./common.js";
 
 export function createInteractionSpans(
   options: SpanOptions & {
     parentContext: (run: RunReference) => Context | undefined;
   },
 ) {
-  const interactions = new Map<string, { reference: InteractionReference; span: Span }>();
-  const finished = new Set<string>();
-  const contexts = new Map<string, { run: RunReference; context: Context }>();
+  const activeSpans = new Map<string, { reference: InteractionReference; span: Span }>();
 
   function finish(input: InteractionFinish) {
-    const key = JSON.stringify([input.run.sessionID, input.run.id, input.id]);
-    const interaction = interactions.get(key);
+    const key = `${input.run.sessionID}:${input.run.id}:${input.id}`;
+    const spanState = activeSpans.get(key);
 
-    if (!interaction) {
+    if (!spanState) {
       return;
     }
 
-    interactions.delete(key);
-    finished.add(key);
+    activeSpans.delete(key);
     // Steer may end a parent before its model call is observed or completed.
-    contexts.set(key, {
-      run: interaction.reference.run,
-      context: trace.setSpanContext(options.rootContext, interaction.span.spanContext()),
-    });
-
-    if (input.status === "failed") {
-      interaction.span.setAttribute("error.type", input.error.type);
-      interaction.span.setStatus({ code: SpanStatusCode.ERROR, message: input.error.message });
-    }
+    options.finishedSpanRegistry.add(
+      spanState.reference.run,
+      "interaction",
+      key,
+      trace.setSpanContext(options.rootContext, spanState.span.spanContext()),
+    );
 
     if (options.captureContent && input.status === "superseded") {
-      interaction.span.setAttribute("gen_ai.output.messages", "[]");
+      spanState.span.setAttribute("gen_ai.output.messages", "[]");
     }
 
     if (options.captureContent && input.status === "completed" && input.output !== undefined) {
-      interaction.span.setAttribute(
+      spanState.span.setAttribute(
         "gen_ai.output.messages",
         encodeTextMessage("assistant", input.output),
       );
     }
 
-    interaction.span.end(new Date(input.endedAt));
+    endSpan(spanState.span, input.endedAt, input.status === "failed" ? input.error : undefined);
   }
 
   return {
     finish,
     start(input: InteractionStart) {
-      const key = JSON.stringify([input.run.sessionID, input.run.id, input.id]);
+      const key = `${input.run.sessionID}:${input.run.id}:${input.id}`;
       const parent = options.parentContext(input.run);
 
-      if (!parent || interactions.has(key) || finished.has(key)) {
+      if (
+        !parent ||
+        activeSpans.has(key) ||
+        options.finishedSpanRegistry.has(input.run, "interaction", key)
+      ) {
         return;
       }
 
-      interactions.set(key, {
+      activeSpans.set(key, {
         reference: { run: { sessionID: input.run.sessionID, id: input.run.id }, id: input.id },
         span: options.tracer.startSpan(
-          `${options.tracePrefix}interaction`,
+          `${options.spanNamePrefix}interaction`,
           {
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
@@ -78,7 +76,6 @@ export function createInteractionSpans(
               "gen_ai.agent.name": input.agentName,
               "opencode.agent.type": input.agentType,
               "opencode.session.parent_id": input.parentSessionID,
-              ...(input.userID ? { "user.id": input.userID } : {}),
               ...(options.captureContent && input.input !== undefined
                 ? { "gen_ai.input.messages": encodeTextMessage("user", input.input) }
                 : {}),
@@ -89,36 +86,31 @@ export function createInteractionSpans(
       });
     },
     context(reference: InteractionReference) {
-      const key = JSON.stringify([reference.run.sessionID, reference.run.id, reference.id]);
-      const interaction = interactions.get(key);
-      return interaction
-        ? trace.setSpan(options.rootContext, interaction.span)
-        : contexts.get(key)?.context;
+      const key = `${reference.run.sessionID}:${reference.run.id}:${reference.id}`;
+      const spanState = activeSpans.get(key);
+      return spanState
+        ? trace.setSpan(options.rootContext, spanState.span)
+        : options.finishedSpanRegistry.context(reference.run, "interaction", key);
     },
-    closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
-      interactions.forEach((interaction) => {
+    finishPendingForRun(run: RunReference, endedAt: number, error?: ObservationError) {
+      activeSpans.forEach((spanState) => {
         if (
-          interaction.reference.run.sessionID === run.sessionID &&
-          interaction.reference.run.id === run.id
+          spanState.reference.run.sessionID === run.sessionID &&
+          spanState.reference.run.id === run.id
         ) {
           finish({
-            ...interaction.reference,
+            ...spanState.reference,
             endedAt,
             status: "failed",
             error: error ?? { type: "_OTHER", message: "run ended before interaction completed" },
           });
         }
       });
-      contexts.forEach((value, key) => {
-        if (value.run.sessionID === run.sessionID && value.run.id === run.id) {
-          contexts.delete(key);
-        }
-      });
     },
-    close(endedAt: number) {
-      interactions.forEach((interaction) =>
+    finishAllOnShutdown(endedAt: number) {
+      activeSpans.forEach((spanState) =>
         finish({
-          ...interaction.reference,
+          ...spanState.reference,
           endedAt,
           status: "failed",
           error: { type: "_OTHER", message: "plugin disposed before interaction completed" },

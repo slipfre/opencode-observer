@@ -1,15 +1,15 @@
 ## Project Overview
 
-`opencode-observer` is an OpenCode observability plugin written in TypeScript and developed, built, and tested with Bun. It observes OpenCode hooks/events and supported AI SDK lifecycle callbacks, creates OpenTelemetry spans, and exports traces over OTLP HTTP/JSON. The current implementation covers run, interaction, LLM, tool, compaction, and permission.check spans.
+`opencode-observer` is an OpenCode observability plugin written in TypeScript and developed, built, and tested with Bun. It observes OpenCode hooks/events and supported AI SDK lifecycle callbacks, creates OpenTelemetry spans, and exports traces over OTLP HTTP/JSON. The current implementation covers run, interaction, LLM, tool, skill.load, compaction, and permission.check spans.
 
 ### Goals
 
-- Describe task execution with accurate lifecycles, parent-child relationships, usage, and errors, following the [Trace Schema](docs/schemas/trace.md). Omit or explicitly degrade unsupported measurements instead of inventing data.
+- Describe task execution with accurate lifecycles, parent-child relationships, usage, and errors, following the [expected Trace Schema](docs/schemas/trace.md) and the [OpenCode implementation schema](docs/schemas/trace-opencode.md). Omit or explicitly degrade unsupported measurements instead of inventing data; use the implementation schema for current export behavior and tests.
 - Keep OpenCode behavior recognition, observation contracts, and telemetry implementation separate, following the [Architecture](docs/architecture.md). The adapter and telemetry layers depend on the contract, never on each other; the contract is independent of third-party SDKs.
 - Keep observation from changing OpenCode's behavior: isolate telemetry failures, export asynchronously, and keep telemetry and content capture disabled by default.
-- Use `captureContent` for message bodies, LLM tool definitions, and model request/response headers together. Explicit SDK output type is metadata and remains observable when content capture is disabled; do not collect request seed.
+- Use `captureContent` for message bodies and LLM tool definitions. Model request/response HTTP headers require both `captureContent` and `captureHttpHeaders`; the extra header switch defaults to false. SDK output type is metadata and remains observable when content capture is disabled. Record `text` when an SDK callback confirms no `output` was configured; omit the type when the SDK snapshot or an explicit format is unavailable. Do not collect request seed.
 
-See [README.md](README.md) for features, local loading, configuration, and usage limits. Use the [Architecture](docs/architecture.md) for module boundaries, observation contracts, and runtime constraints, the [Adapter Design](docs/adapter.md) for behavior recognition and collection mechanisms, and the [Trace Schema](docs/schemas/trace.md) for exported data semantics.
+See [README.md](README.md) for features, local loading, configuration, and usage limits. Use the [Architecture](docs/architecture.md) for module boundaries, observation contracts, and runtime constraints, the [Adapter Design](docs/adapter.md) for behavior recognition and collection mechanisms, the [expected Trace Schema](docs/schemas/trace.md) for target structure and attributes, and the [OpenCode implementation schema](docs/schemas/trace-opencode.md) for current exported data semantics and limitations.
 
 ## Main Directory Structure
 
@@ -28,7 +28,9 @@ e2e/                     # Tests running real OpenCode CLI processes
 docs/
 ├── architecture.md      # Architecture, responsibilities, and dependency constraints
 ├── adapter.md           # Behavior recognition, model capture, and coordination mechanisms
-└── schemas/trace.md     # Trace topology, lifecycle semantics, and exported fields
+└── schemas/
+    ├── trace.md          # Expected trace topology and span attribute semantics
+    └── trace-opencode.md # Current OpenCode exports, sources, lifecycles, and limitations
 dist/                    # Generated JavaScript, source maps, and type declarations
 ```
 

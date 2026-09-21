@@ -80,26 +80,12 @@ test("resolver distinguishes exhausted lookup failures from skipped lookups", as
 });
 
 test.each([
-  { status: 503, payload: { code: 0, result: { ssicNo: "user-1" } } },
-  { status: 200, payload: { code: 1 } },
-  { status: 200, payload: { code: 0, result: { ssicNo: "unknown" } } },
-])("resolver treats unsuccessful identity responses as lookup failures: %j", async (input) => {
-  spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json(input.payload, { status: input.status }),
-  );
-
-  expect(await resolveUser(env)).toBeNull();
-});
-
-test.each([
-  { OPENCODE_USER_ID_ENABLED: "false" },
-  { OPENCODE_USER_ID_ENABLED: "0" },
   { OPENCODE_USER_ID_TOKEN: undefined },
   { OPENCODE_USER_ID_TOKEN: " " },
   { OPENCODE_USER_ID_ENDPOINT: undefined },
   { OPENCODE_USER_ID_ENDPOINT: "queryUserByToken" },
   { OPENCODE_USER_ID_ENDPOINT: "file:///tmp/identity" },
-])("disabled or incomplete identity configuration makes no requests: %j", async (options) => {
+])("incomplete identity configuration makes no requests: %j", async (options) => {
   const fetcher = spyOn(globalThis, "fetch");
 
   expect(await resolveUser({ ...env, ...options })).toBeUndefined();

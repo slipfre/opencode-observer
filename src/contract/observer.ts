@@ -1,22 +1,24 @@
 import type { JsonValue, ModelInput, ModelMessage } from "./messages.js";
 
-export type AgentIdentity = {
+export type AgentContext = {
   agentName?: string;
   agentType?: "primary" | "subagent";
   parentSessionID?: string;
-  userID?: string;
 };
 
 export type RunReference = { sessionID: string; id: string };
 
-export type ObservationError = { type: string; message?: string };
+export type ObservationError = {
+  type: string;
+  /** Source error summary; telemetry supplies a fallback when missing or blank. */
+  message?: string;
+};
 
 export type RunStart = RunReference & {
   /** Source creation time, in Unix epoch milliseconds. */
   startedAt: number;
-  userID?: string;
   /** Exact task tool association, when known before the run starts. */
-  parent: ToolReference | undefined;
+  parentTool: ToolReference | undefined;
   parentSessionID: string | undefined;
 };
 
@@ -40,13 +42,12 @@ export type InteractionStart = InteractionReference & {
   startedAt: number;
   input: string | undefined;
   agentName: string;
-  userID?: string;
-  agentType: AgentIdentity["agentType"];
+  agentType: AgentContext["agentType"];
   parentSessionID: string | undefined;
 };
 
 export type InteractionFinish = InteractionReference & {
-  /** Assistant completion, steer creation, or terminal observation time in epoch milliseconds. */
+  /** Idle or terminal observation time, or steer creation time, in epoch milliseconds. */
   endedAt: number;
 } & (
     | { status: "completed"; output: string | undefined }
@@ -65,7 +66,7 @@ export type LlmParameters = {
   temperature?: number;
   topP?: number;
   topK?: number;
-  maxTokens?: number;
+  maxOutputTokens?: number;
 };
 
 export type ModelHeaders = Record<string, string[]>;
@@ -77,14 +78,14 @@ export type ToolDefinition = {
   parameters?: JsonValue;
 };
 
-export type ModelRequest = {
+export type ModelRequestMetadata = {
   outputType?: "text" | "json";
   toolDefinitions?: ToolDefinition[];
   headers?: ModelHeaders;
 };
 
 export type LlmStart = LlmReference & {
-  /** Request preparation time, or first model step observation as fallback, in Unix epoch milliseconds. */
+  /** Assistant message creation time in Unix epoch milliseconds. */
   startedAt: number;
   providerID: string;
   providerName: string;
@@ -92,20 +93,28 @@ export type LlmStart = LlmReference & {
   operation: "chat" | "generate_content" | "text_completion";
   stream: boolean;
   agentName?: string;
-  userID?: string;
   /** Owner text fallback; this is not the full model request. */
-  input: string | undefined;
+  fallbackInputText: string | undefined;
   parameters?: LlmParameters;
-  agentType: AgentIdentity["agentType"];
+  agentType: AgentContext["agentType"];
   parentSessionID: string | undefined;
   compactionID: string | undefined;
 };
 
 export type LlmFinish = LlmReference & {
-  /** Model step completion or terminal event observation time in epoch milliseconds. */
+  /** Assistant completion time, or terminal observation time when unavailable, in epoch milliseconds. */
   endedAt: number;
+  /** Selected transport boundaries; omitted for the default message lifecycle. */
+  timing?:
+    | {
+        source: "fetch";
+        startedAt: number;
+        endedAt: number;
+        endReason: "eof" | "empty" | "error" | "cancel";
+      }
+    | { source: "message"; fallbackReason: "fetch-unobserved" | "fetch-incomplete" };
   /** Observed assistant text snapshot, with undefined distinct from known empty text. */
-  output: string | undefined;
+  fallbackOutputText: string | undefined;
   responseHeaders?: ModelHeaders;
   finishReason?: string;
   usage?: {
@@ -120,8 +129,15 @@ export type LlmFinish = LlmReference & {
 };
 
 export type LlmUpdate = LlmReference & {
+  /** First step-start publication time (receipt time if unavailable), in epoch milliseconds.
+   * Subtract the final selected LLM start; retries and later steps never replace this observation. */
+  firstChunkObservedAt?: number;
+  /** Latest OpenCode retry attempt reported, excluding initial execution; may still be in backoff. */
+  retryCount?: number;
   /** Replace the SDK request snapshot and clear the previous step's response. */
-  request?: ModelRequest;
+  request?: ModelRequestMetadata;
+  /** Model reported by the response callback; may include the SDK's request-model fallback. */
+  responseModel?: string;
   responseHeaders?: ModelHeaders;
   /** Replace the request snapshot and clear the previous attempt's output. */
   input?: ModelInput;
@@ -136,15 +152,41 @@ export type ToolReference = {
 };
 
 export type ToolStart = ToolReference &
-  AgentIdentity & {
+  AgentContext & {
     name: string;
     startedAt: number;
+    description?: string;
     arguments?: { [key: string]: JsonValue };
   };
 
-export type ToolUpdate = ToolReference & { arguments?: { [key: string]: JsonValue } };
+export type ToolUpdate = ToolReference & {
+  description?: string;
+  arguments?: { [key: string]: JsonValue };
+};
 
 export type ToolFinish = ToolReference & {
+  endedAt: number;
+  output?: string;
+  error?: ObservationError;
+};
+
+/** A skill load retains the underlying tool call identity for permission correlation. */
+export type SkillReference = ToolReference;
+
+export type SkillMetadata = {
+  /** Skill identity is metadata and remains observable without content capture. */
+  name?: string;
+  directory?: string;
+  outputTruncated?: boolean;
+};
+
+export type SkillStart = SkillReference & AgentContext & SkillMetadata & { startedAt: number };
+
+/** Merge known metadata; omitted fields retain their previous values. */
+export type SkillUpdate = SkillReference & SkillMetadata;
+
+/** Output is the actual returned text, which may include wrappers and truncation. */
+export type SkillFinish = SkillReference & {
   endedAt: number;
   output?: string;
   error?: ObservationError;
@@ -153,7 +195,7 @@ export type ToolFinish = ToolReference & {
 export type CompactionReference = { interaction: InteractionReference; id: string };
 
 export type CompactionStart = CompactionReference &
-  AgentIdentity & {
+  AgentContext & {
     startedAt: number;
     auto: boolean;
     overflow: boolean;
@@ -164,15 +206,13 @@ export type CompactionFinish = CompactionReference & {
   endedAt: number;
   promptTokens?: number;
   summaryTokens?: number;
-  /** Mirrors the completed summary model's normalized usage. */
-  usage?: LlmFinish["usage"];
   error?: ObservationError;
 };
 
 export type PermissionReference = { tool: ToolReference; requestID: string };
 
 export type PermissionStart = PermissionReference &
-  AgentIdentity & {
+  AgentContext & {
     startedAt: number;
     toolName: string;
     name: string;
@@ -186,6 +226,12 @@ export type PermissionFinish = PermissionReference & {
     | { reply?: never; error: ObservationError }
   );
 
+/**
+ * Operations use complete references: repeated starts cannot recreate an object,
+ * and repeated finishes or late updates cannot rewrite its terminal state.
+ * Update payloads define their own append or replacement semantics.
+ * Source event deduplication and lifecycle callbacks belong to the caller.
+ */
 export type Observer = {
   /** Recording is synchronous and never waits for network export. */
   startRun(input: RunStart): void;
@@ -201,6 +247,9 @@ export type Observer = {
   startTool(input: ToolStart): void;
   updateTool(input: ToolUpdate): void;
   finishTool(input: ToolFinish): void;
+  startSkill(input: SkillStart): void;
+  updateSkill(input: SkillUpdate): void;
+  finishSkill(input: SkillFinish): void;
   startCompaction(input: CompactionStart): void;
   finishCompaction(input: CompactionFinish): void;
   startPermission(input: PermissionStart): void;

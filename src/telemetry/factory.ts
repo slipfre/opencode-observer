@@ -5,12 +5,14 @@ import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trac
 import { name, version } from "../../package.json";
 import type { Observer } from "../contract/observer.js";
 import { createObserver } from "./observer.js";
+import { createTimingProcessor } from "./timing.js";
 
 export type TelemetryOptions = {
   serviceVersion?: string;
   endpoint: string;
   captureContent: boolean;
-  tracePrefix: string;
+  captureHttpHeaders?: boolean;
+  spanNamePrefix: string;
   otlpHeaders: Record<string, string>;
   resourceAttributes: Record<string, string>;
   spanAttributes: Record<string, string>;
@@ -18,7 +20,8 @@ export type TelemetryOptions = {
 };
 
 export function createTelemetry(config: TelemetryOptions): Observer {
-  const architectures: Record<string, string> = {
+  const spanStartTimes = new WeakMap<object, number>();
+  const hostArchByMachine: Record<string, string> = {
     x86_64: "amd64",
     AMD64: "amd64",
     aarch64: "arm64",
@@ -27,11 +30,11 @@ export function createTelemetry(config: TelemetryOptions): Observer {
     i686: "x86",
     armv7l: "arm32",
   };
-  const hostArch = architectures[machine()];
+  const hostArch = hostArchByMachine[machine()];
   const osType =
     platform() === "win32" ? "windows" : platform() === "sunos" ? "solaris" : platform();
 
-  const provider = new BasicTracerProvider({
+  const tracerProvider = new BasicTracerProvider({
     resource: resourceFromAttributes({
       "service.name": "opencode",
       ...(config.serviceVersion ? { "service.version": config.serviceVersion } : {}),
@@ -41,22 +44,27 @@ export function createTelemetry(config: TelemetryOptions): Observer {
     }),
     spanLimits: { attributeCountLimit: config.spanAttributeCountLimit },
     spanProcessors: [
-      new BatchSpanProcessor(
-        new OTLPTraceExporter({
-          url: config.endpoint,
-          headers: config.otlpHeaders,
-          timeoutMillis: 5000,
-        }),
-        { exportTimeoutMillis: 5000 },
+      createTimingProcessor(
+        new BatchSpanProcessor(
+          new OTLPTraceExporter({
+            url: config.endpoint,
+            headers: config.otlpHeaders,
+            timeoutMillis: 5000,
+          }),
+          { exportTimeoutMillis: 5000 },
+        ),
+        spanStartTimes,
       ),
     ],
   });
 
   return createObserver({
-    provider,
-    scope: { name, version },
-    tracePrefix: config.tracePrefix,
+    tracerProvider,
+    instrumentationScope: { name, version },
+    spanNamePrefix: config.spanNamePrefix,
     captureContent: config.captureContent,
+    captureHttpHeaders: config.captureHttpHeaders,
     spanAttributes: config.spanAttributes,
+    spanStartTimes,
   });
 }

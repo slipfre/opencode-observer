@@ -7,12 +7,14 @@ import type {
   RunReference,
   ToolReference,
 } from "../../contract/observer.js";
-import { errorDetails } from "../shared/error.js";
+import { normalizeError } from "../shared/error.js";
+import { nonNegativeNumber } from "../shared/number.js";
 import { createGuard } from "../shared/guard.js";
-import type { createModelMessageCapture } from "../model/ai-sdk.js";
+import type { createSdkModelCapture } from "../model/ai-sdk.js";
+import { createFetchModelCapture } from "../model/fetch.js";
 import { parseErrorResponseHeaders } from "../model/headers.js";
-import { userTraceState } from "../model/trace-state.js";
-import { createInteractionTracker, type InteractionOwner } from "../trackers/interaction.js";
+import { withUserTraceState } from "../model/trace-state.js";
+import { createInteractionTracker, type InteractionContext } from "../trackers/interaction.js";
 import { createLlmTracker } from "../trackers/llm.js";
 import { createRunTracker } from "../trackers/run.js";
 import { createToolTracker } from "../trackers/tool.js";
@@ -22,6 +24,7 @@ import { createSessionRegistry } from "./session.js";
 
 export type OpenCodeEvent =
   | Event
+  | { type: "message.part.updated"; properties: { part: Part; time?: number } }
   | { type: "permission.asked"; properties: PermissionRequest }
   | {
       type: "permission.replied";
@@ -35,83 +38,179 @@ export type OpenCodeEvent =
 export type CoordinatorOptions = {
   observer: Observer;
   captureContent?: boolean;
+  captureHttpHeaders?: boolean;
+  llmTimingMode?: "message" | "fetch";
   userIdentity?: { enabled: boolean; id?: string };
-  userID?: () => string | undefined;
   now?: () => number;
   log?: (error: unknown) => unknown;
 };
 
-type SessionState = {
+type ActiveRunState = {
   reference: RunReference;
-  interactions: ReturnType<typeof createInteractionTracker>;
-  llms: ReturnType<typeof createLlmTracker>;
-  tools: ReturnType<typeof createToolTracker>;
-  permissions: ReturnType<typeof createPermissionTracker>;
-  compactions: ReturnType<typeof createCompactionTracker>;
-  parent?: ToolReference;
-  overflow?: ObservationError;
-  trigger?: { messageID: string; owner?: InteractionOwner };
+  parentTool?: ToolReference;
+  pendingOverflowError?: ObservationError;
+  overflowTrigger?: { messageID: string; interactionContext?: InteractionContext };
 };
 
 export function createCoordinator(options: CoordinatorOptions) {
   const log = options.log ?? (() => {});
   const guard = createGuard(log);
   const userIdentity = options.userIdentity ? { ...options.userIdentity } : undefined;
-  const runs = createRunTracker(options);
-  const sessions = new Map<string, SessionState>();
-  const registry = createSessionRegistry();
+  const runs = createRunTracker({
+    observer: options.observer,
+    captureContent: options.captureContent,
+  });
+  const activeRunsBySessionID = new Map<string, ActiveRunState>();
+  const sessionRegistry = createSessionRegistry();
+  const interactions = createInteractionTracker({
+    observer: options.observer,
+    captureContent: options.captureContent,
+  });
+  const compactions = createCompactionTracker({
+    observer: options.observer,
+    onFinish: (run, id, time, error) => llms.finishForCompaction(run, id, time, error),
+  });
+  const llms = createLlmTracker({
+    observer: options.observer,
+    captureContent: options.captureContent,
+    captureHttpHeaders: options.captureHttpHeaders,
+    llmTimingMode: options.llmTimingMode,
+    onToolDescription: (run, messageID, value) => tools.describe(run, messageID, value),
+  });
+  const fetchCapture =
+    options.llmTimingMode === "fetch"
+      ? createFetchModelCapture({ log, now: options.now })
+      : undefined;
+  const tools = createToolTracker({
+    observer: options.observer,
+    captureContent: options.captureContent,
+    onChildSessionObserved: sessionRegistry.bindParentTool,
+    onStart(tool) {
+      if (permissions.associate(tool)) {
+        tools.markPermissionRejected(tool);
+      }
+    },
+    onFinish(tool, time, error) {
+      permissions.finishPendingForTool(tool, time, error);
+      activeRunsBySessionID.forEach((child) => {
+        if (
+          child.parentTool?.callID === tool.callID &&
+          child.parentTool.messageID === tool.messageID &&
+          child.parentTool.interaction.id === tool.interaction.id &&
+          child.parentTool.interaction.run.id === tool.interaction.run.id &&
+          child.parentTool.interaction.run.sessionID === tool.interaction.run.sessionID
+        ) {
+          finishActiveRun(
+            child.reference.sessionID,
+            time,
+            error ?? { type: "_OTHER", message: "task tool ended before subagent completed" },
+          );
+        }
+      });
+      sessionRegistry.unbindTool(tool);
+    },
+  });
+  const permissions = createPermissionTracker({ observer: options.observer });
   const state = {
     shutdown: undefined as Promise<void> | undefined,
-    messageCapture: undefined as ReturnType<typeof createModelMessageCapture> | undefined,
-    messageCaptureSetup: undefined as Promise<void> | undefined,
+    sdkModelCapture: undefined as ReturnType<typeof createSdkModelCapture> | undefined,
+    sdkModelCaptureSetup: undefined as Promise<void> | undefined,
   };
   const now = options.now ?? Date.now;
   const hooks = {
     dispose() {
       state.shutdown ??= guard(() => {
-        void guard(() => {
-          state.messageCapture?.close();
-          sessions.forEach((session) => session.llms.invalidate());
-          sessions.clear();
-          runs.close();
-        });
+        void guard(() => state.sdkModelCapture?.close());
+        void guard(() => fetchCapture?.close());
+        const time = now();
+        activeRunsBySessionID.forEach(
+          (runState) =>
+            void guard(() =>
+              llms.close(runState.reference, time, {
+                type: "_OTHER",
+                message: "plugin disposed before message completed",
+              }),
+            ),
+        );
         return options.observer.shutdown();
       });
       return state.shutdown;
     },
-    "chat.message": (_input, output) => guard(() => userMessage(output.message, output.parts)),
+    "chat.message": (_input, output) =>
+      guard(() => observeUserMessage(output.message, output.parts)),
     "chat.params": (input, output) =>
-      guard(() => sessions.get(input.sessionID)?.llms.request(input, output)),
+      guard(() => {
+        if (state.shutdown) {
+          return;
+        }
+
+        const runState = activeRunsBySessionID.get(input.sessionID);
+
+        if (runState) {
+          llms.observeRequestParameters(runState.reference, input, output);
+        }
+      }),
     "chat.headers": (input, output) =>
       guard(() => {
-        const headers = sessions.get(input.sessionID)?.llms.prepare(input, now());
+        if (state.shutdown) {
+          return;
+        }
+
+        const runState = activeRunsBySessionID.get(input.sessionID);
+        if (runState) {
+          associatePendingLlms(runState.reference);
+        }
+
+        const headers = runState ? llms.prepareTraceHeaders(runState.reference, input) : undefined;
         Object.assign(
           output.headers,
           headers && userIdentity?.enabled
-            ? { ...headers, tracestate: userTraceState(headers.tracestate, userIdentity.id) }
+            ? { ...headers, tracestate: withUserTraceState(headers.tracestate, userIdentity.id) }
             : headers,
         );
-        state.messageCapture?.attachCorrelationHeader(input, output);
+        state.sdkModelCapture?.attachCorrelationHeader(input, output);
+        if (fetchCapture && headers && runState) {
+          const capture = llms.bindFetch(runState.reference, input);
+          if (capture) {
+            fetchCapture.bind(headers.traceparent, capture);
+          }
+        }
       }),
     event: (input: { event: OpenCodeEvent }) =>
       guard(async () => {
+        if (state.shutdown) {
+          return;
+        }
+
         const event = input.event;
         const time = now();
 
         switch (event.type) {
           case "session.created":
           case "session.updated": {
-            registry.observe(event.properties.info);
+            sessionRegistry.observe(event.properties.info);
             return;
           }
 
           case "permission.asked": {
-            sessions.get(event.properties.sessionID)?.permissions.asked(event.properties, time);
+            const runState = activeRunsBySessionID.get(event.properties.sessionID);
+
+            if (runState) {
+              const tool = event.properties.tool;
+              permissions.observeRequest(
+                runState.reference,
+                event.properties,
+                time,
+                tool
+                  ? tools.activeStart(runState.reference, tool.messageID, tool.callID)
+                  : undefined,
+              );
+            }
             return;
           }
 
           case "permission.replied": {
-            const session = sessions.get(event.properties.sessionID);
+            const runState = activeRunsBySessionID.get(event.properties.sessionID);
             const requestID =
               "requestID" in event.properties
                 ? event.properties.requestID
@@ -119,11 +218,16 @@ export function createCoordinator(options: CoordinatorOptions) {
             const reply =
               "reply" in event.properties ? event.properties.reply : event.properties.response;
 
-            if (session && (reply === "once" || reply === "always" || reply === "reject")) {
-              const rejected = session.permissions.replied(requestID, reply, time);
+            if (runState && (reply === "once" || reply === "always" || reply === "reject")) {
+              const rejectedTool = permissions.observeReply(
+                runState.reference,
+                requestID,
+                reply,
+                time,
+              );
 
-              if (rejected) {
-                session.tools.reject(rejected);
+              if (rejectedTool) {
+                tools.markPermissionRejected(rejectedTool);
               }
             }
             return;
@@ -132,13 +236,17 @@ export function createCoordinator(options: CoordinatorOptions) {
           case "session.status":
           case "session.idle": {
             if (event.type === "session.status" && event.properties.status.type !== "idle") {
+              const runState = activeRunsBySessionID.get(event.properties.sessionID);
+              if (runState) {
+                llms.status(runState.reference, event.properties.status);
+              }
               return;
             }
 
-            endSession(
+            finishActiveRun(
               event.properties.sessionID,
               time,
-              sessions.get(event.properties.sessionID)?.overflow,
+              activeRunsBySessionID.get(event.properties.sessionID)?.pendingOverflowError,
             );
             await options.observer.flush();
             return;
@@ -146,29 +254,35 @@ export function createCoordinator(options: CoordinatorOptions) {
 
           case "session.error": {
             const id = event.properties.sessionID;
-            const session = id ? sessions.get(id) : undefined;
+            const runState = id ? activeRunsBySessionID.get(id) : undefined;
 
-            if (!id || !session) {
+            if (!id || !runState) {
               await options.observer.flush();
               return;
             }
 
-            const error = errorDetails(event.properties.error);
-            const activeRequest = session.llms.activeRequest();
+            const error = normalizeError(event.properties.error);
+            const activeAssistant = llms.activeAssistant(runState.reference);
 
-            if (error.type === "ContextOverflowError" && activeRequest) {
-              session.trigger = {
-                messageID: activeRequest.messageID,
-                owner: session.interactions.resolve(activeRequest.ownerMessageID),
+            if (error.type === "ContextOverflowError" && activeAssistant) {
+              runState.overflowTrigger = {
+                messageID: activeAssistant.messageID,
+                interactionContext: withAgentContext(
+                  interactions.resolveByUserMessage(
+                    runState.reference,
+                    activeAssistant.parentMessageID,
+                  ),
+                ),
               };
             }
 
-            session.llms.fail(
+            llms.fail(
+              runState.reference,
               time,
               error,
-              options.captureContent && activeRequest
+              options.captureContent && options.captureHttpHeaders && activeAssistant
                 ? {
-                    messageID: activeRequest.messageID,
+                    messageID: activeAssistant.messageID,
                     headers: parseErrorResponseHeaders(event.properties.error),
                   }
                 : undefined,
@@ -176,95 +290,122 @@ export function createCoordinator(options: CoordinatorOptions) {
 
             if (
               error.type === "ContextOverflowError" &&
-              !session.compactions.active() &&
-              !session.overflow
+              !compactions.activeMessageID(runState.reference) &&
+              !runState.pendingOverflowError
             ) {
-              session.overflow = error;
+              runState.pendingOverflowError = error;
               await options.observer.flush();
               return;
             }
 
-            endSession(id, time, error);
+            finishActiveRun(id, time, error);
             await options.observer.flush();
             return;
           }
 
           case "session.compacted": {
-            const session = sessions.get(event.properties.sessionID);
+            const runState = activeRunsBySessionID.get(event.properties.sessionID);
 
-            if (session?.compactions.completed(time)) {
-              delete session.overflow;
-              delete session.trigger;
+            if (runState && compactions.completeActive(runState.reference, time)) {
+              delete runState.pendingOverflowError;
+              delete runState.overflowTrigger;
             }
             return;
           }
 
           case "session.deleted": {
-            endSession(event.properties.info.id, time, {
+            finishActiveRun(event.properties.info.id, time, {
               type: "_OTHER",
               message: "session deleted before run completed",
             });
-            registry.remove(event.properties.info.id);
+            sessionRegistry.remove(event.properties.info.id);
             await options.observer.flush();
             return;
           }
 
           case "message.updated": {
             const info = event.properties.info;
-            const session = sessions.get(info.sessionID);
+            const runState = activeRunsBySessionID.get(info.sessionID);
 
-            if (!session) {
+            if (!runState) {
               return;
             }
 
-            session.interactions.message(info);
+            interactions.message(runState.reference, info);
 
             if (
               info.role === "assistant" &&
               !info.summary &&
               info.error &&
-              errorDetails(info.error).type === "ContextOverflowError"
+              normalizeError(info.error).type === "ContextOverflowError"
             ) {
-              session.trigger = {
+              runState.overflowTrigger = {
                 messageID: info.id,
-                owner: session.interactions.resolve(info.parentID),
+                interactionContext: withAgentContext(
+                  interactions.resolveByUserMessage(runState.reference, info.parentID),
+                ),
               };
             }
 
-            session.llms.message(info, time);
-            session.tools.refresh();
-            const error = session.compactions.message(info, time);
-            session.llms.refresh();
+            llms.message(
+              runState.reference,
+              info,
+              time,
+              info.role === "assistant" ? resolveModelContext(runState.reference, info) : undefined,
+            );
+            associatePendingTools(runState.reference);
+            const error = compactions.message(runState.reference, info, time);
+            associatePendingCompactions(runState.reference);
+            associatePendingLlms(runState.reference);
 
             if (error) {
-              endSession(info.sessionID, time, error);
+              finishActiveRun(info.sessionID, time, error);
             }
             return;
           }
 
           case "message.part.updated": {
             const part = event.properties.part;
-            const session = sessions.get(part.sessionID);
+            const runState = activeRunsBySessionID.get(part.sessionID);
 
-            if (!session) {
+            if (!runState) {
               return;
             }
 
             switch (part.type) {
               case "compaction": {
-                session.compactions.part(part, time, session.trigger);
-                session.llms.refresh();
+                compactions.part(runState.reference, part, time, runState.overflowTrigger);
+                associatePendingCompactions(runState.reference);
+                associatePendingLlms(runState.reference);
                 return;
               }
 
               case "tool": {
-                session.tools.part(part, time);
+                tools.part(
+                  runState.reference,
+                  part,
+                  time,
+                  withAgentContext(
+                    interactions.resolveByAssistantMessage(runState.reference, part.messageID),
+                  ),
+                );
                 return;
               }
 
               default: {
-                session.interactions.part(part);
-                session.llms.part(part, time);
+                interactions.part(runState.reference, part);
+                if (
+                  part.type !== "text" ||
+                  !interactions.resolveByUserMessage(runState.reference, part.messageID)
+                ) {
+                  llms.part(
+                    runState.reference,
+                    part,
+                    nonNegativeNumber(
+                      "time" in event.properties ? event.properties.time : undefined,
+                    ) ?? time,
+                  );
+                }
                 return;
               }
             }
@@ -272,55 +413,62 @@ export function createCoordinator(options: CoordinatorOptions) {
 
           case "message.part.removed":
           case "message.removed": {
-            const session = sessions.get(event.properties.sessionID);
+            const runState = activeRunsBySessionID.get(event.properties.sessionID);
             const partID = "partID" in event.properties ? event.properties.partID : undefined;
-            session?.llms.remove(event.properties.messageID, time, partID);
-            session?.tools.remove(event.properties.messageID, time, partID);
-            session?.compactions.remove(event.properties.messageID, time, partID);
-            session?.interactions.remove(event.properties.messageID, partID);
+            if (runState) {
+              llms.remove(runState.reference, event.properties.messageID, time, partID);
+              tools.remove(runState.reference, event.properties.messageID, time, partID);
+              compactions.remove(runState.reference, event.properties.messageID, time, partID);
+              interactions.remove(runState.reference, event.properties.messageID, partID);
+            }
             return;
           }
         }
       }),
   } satisfies Hooks;
 
-  async function installModelMessageCapture() {
-    const { createModelMessageCapture } = await import("../model/ai-sdk.js");
+  async function installSdkModelCapture() {
+    const { createSdkModelCapture } = await import("../model/ai-sdk.js");
 
     if (!state.shutdown) {
-      state.messageCapture = createModelMessageCapture({
-        bind: (input) => sessions.get(input.sessionID)?.llms.bind(input),
+      state.sdkModelCapture = createSdkModelCapture({
+        bind: (input) => {
+          const runState = activeRunsBySessionID.get(input.sessionID);
+          if (!runState) {
+            return;
+          }
+
+          associatePendingLlms(runState.reference);
+          return llms.bind(runState.reference, input);
+        },
         captureContent: options.captureContent ?? false,
+        captureHttpHeaders: options.captureHttpHeaders ?? false,
         log,
       });
     }
   }
 
-  function userMessage(info: UserMessage, parts: Part[]) {
+  function observeUserMessage(info: UserMessage, parts: Part[]) {
+    if (state.shutdown) {
+      return;
+    }
+
     const texts = parts
       .filter((part) => part.type === "text")
       .filter((part) => !part.synthetic && !part.ignored);
     const hasUserInput =
       texts.length > 0 || parts.some((part) => part.type === "file" || part.type === "subtask");
-    const activeSession = sessions.get(info.sessionID);
 
     if (!hasUserInput) {
-      activeSession?.interactions.continuation(info);
-      activeSession?.compactions.message(info, now());
-      parts
-        .filter((part) => part.type === "compaction")
-        .forEach((part) => activeSession?.compactions.part(part, now(), activeSession.trigger));
-      activeSession?.llms.message(info, now());
-      activeSession?.tools.refresh();
       return;
     }
 
-    const input = runs.userInput({
+    const input = runs.observeUserInput({
       sessionID: info.sessionID,
       id: info.id,
       createdAt: info.time.created,
-      parent: registry.parent(info.sessionID),
-      parentSessionID: registry.identity(info.sessionID).parentSessionID,
+      parentTool: sessionRegistry.parentTool(info.sessionID),
+      parentSessionID: sessionRegistry.agentContext(info.sessionID).parentSessionID,
       text:
         options.captureContent && texts.length > 0
           ? texts.map((part) => part.text).join("\n")
@@ -331,102 +479,116 @@ export function createCoordinator(options: CoordinatorOptions) {
       return;
     }
 
-    const session = activeSession ?? startSession(input.reference);
-    session.interactions.start(info, input.text, input.userID);
-    session.compactions.message(info, now());
-    session.llms.message(info, now());
-    session.tools.refresh();
+    const runState = activeRunsBySessionID.get(info.sessionID) ?? registerRunState(input.reference);
+    interactions.start(
+      runState.reference,
+      info,
+      input.text,
+      sessionRegistry.agentContext(info.sessionID),
+    );
+    compactions.message(runState.reference, info, now());
+    associatePendingCompactions(runState.reference);
+    associatePendingLlms(runState.reference);
+    associatePendingTools(runState.reference);
   }
 
-  function startSession(reference: RunReference): SessionState {
-    const interactions = createInteractionTracker({
-      observer: options.observer,
-      run: reference,
-      captureContent: options.captureContent,
-      identity: () => registry.identity(reference.sessionID),
+  function withAgentContext(context: InteractionContext | undefined) {
+    return context
+      ? { ...context, ...sessionRegistry.agentContext(context.reference.run.sessionID) }
+      : undefined;
+  }
+
+  function resolveModelContext(run: RunReference, info: { parentID: string; summary?: boolean }) {
+    return info.summary
+      ? compactions.resolveInteraction(run, info.parentID)
+      : withAgentContext(interactions.resolveByUserMessage(run, info.parentID));
+  }
+
+  function associatePendingLlms(run: RunReference) {
+    llms.unresolved(run).forEach((call) => {
+      llms.associate(run, call.id, resolveModelContext(run, call));
     });
-    const compactions = createCompactionTracker({
-      observer: options.observer,
-      parent: (id, time) => interactions.resolve(id) ?? interactions.at(time),
-      onFinish: (id, time, error) => llms.closeCompaction(id, time, error),
+  }
+
+  function associatePendingTools(run: RunReference) {
+    tools.unresolved(run).forEach((call) => {
+      const context = withAgentContext(interactions.resolveByAssistantMessage(run, call.messageID));
+
+      if (context) {
+        tools.associate(run, call.messageID, call.callID, context);
+      }
     });
-    const llms = createLlmTracker({
-      observer: options.observer,
-      captureContent: options.captureContent,
-      parent: interactions.resolve,
-      compaction: compactions.resolve,
+  }
+
+  function associatePendingCompactions(run: RunReference) {
+    compactions.unresolved(run).forEach((compaction) => {
+      const context = withAgentContext(
+        interactions.resolveByUserMessage(run, compaction.id) ??
+          interactions.resolveAt(run, compaction.startedAt),
+      );
+
+      if (context) {
+        compactions.associate(run, compaction.id, context);
+      }
     });
-    const tools = createToolTracker({
-      observer: options.observer,
-      captureContent: options.captureContent,
-      parent: interactions.resolveAssistant,
-      onTask: registry.bind,
-      onFinish(tool, time, error) {
-        permissions.closeTool(tool, time, error);
-        sessions.forEach((child) => {
-          if (
-            child.parent?.callID === tool.callID &&
-            child.parent.messageID === tool.messageID &&
-            child.parent.interaction.id === tool.interaction.id &&
-            child.parent.interaction.run.id === tool.interaction.run.id &&
-            child.parent.interaction.run.sessionID === tool.interaction.run.sessionID
-          ) {
-            endSession(
-              child.reference.sessionID,
-              time,
-              error ?? { type: "_OTHER", message: "task tool ended before subagent completed" },
-            );
-          }
-        });
-        registry.releaseTool(tool);
-      },
-    });
-    const permissions = createPermissionTracker({ observer: options.observer, tool: tools.active });
-    const session: SessionState = {
+  }
+
+  function registerRunState(reference: RunReference): ActiveRunState {
+    interactions.open(reference);
+    llms.open(reference);
+    tools.open(reference);
+    permissions.open(reference);
+    compactions.open(reference);
+    const runState: ActiveRunState = {
       reference,
-      interactions,
-      llms,
-      tools,
-      compactions,
-      permissions,
-      parent: registry.parent(reference.sessionID),
+      parentTool: sessionRegistry.parentTool(reference.sessionID),
     };
-    sessions.set(reference.sessionID, session);
+    activeRunsBySessionID.set(reference.sessionID, runState);
 
-    return session;
+    return runState;
   }
 
-  function endSession(sessionID: string, time: number, error?: ObservationError) {
-    const session = sessions.get(sessionID);
+  function finishActiveRun(sessionID: string, time: number, error?: ObservationError) {
+    const runState = activeRunsBySessionID.get(sessionID);
 
-    if (!session) {
+    if (!runState) {
       return;
     }
 
-    sessions.delete(sessionID);
-    sessions.forEach((child) => {
-      if (
-        child.parent?.interaction.run.sessionID === sessionID &&
-        child.parent.interaction.run.id === session.reference.id
-      ) {
-        endSession(
-          child.reference.sessionID,
-          time,
-          error ?? { type: "_OTHER", message: "parent run ended before subagent completed" },
-        );
-      }
-    });
-    session.permissions.close(time, error);
-    session.llms.close(time, error);
-    session.compactions.close(time, error);
-    session.tools.close(time, error);
-    const output = session.interactions.finish(time, error);
-    runs.finish({ ...session.reference, endedAt: time, output, error });
+    activeRunsBySessionID.delete(sessionID);
+    try {
+      activeRunsBySessionID.forEach((child) => {
+        if (
+          child.parentTool?.interaction.run.sessionID === sessionID &&
+          child.parentTool.interaction.run.id === runState.reference.id
+        ) {
+          finishActiveRun(
+            child.reference.sessionID,
+            time,
+            error ?? { type: "_OTHER", message: "parent run ended before subagent completed" },
+          );
+        }
+      });
+      permissions.close(runState.reference, time, error);
+      llms.close(runState.reference, time, error);
+      compactions.close(runState.reference, time, error);
+      tools.close(runState.reference, time, error);
+      const output = interactions.finishCurrent(runState.reference, time, error);
+      runs.finish({ ...runState.reference, endedAt: time, output, error });
+    } finally {
+      permissions.release(runState.reference);
+      llms.release(runState.reference);
+      compactions.release(runState.reference);
+      tools.release(runState.reference);
+      interactions.release(runState.reference);
+      runs.release(runState.reference);
+      sessionRegistry.unbindRun(runState.reference);
+    }
   }
 
   return {
     hooks,
-    startModelMessageCapture() {
+    startSdkModelCapture() {
       // Native runtime bypasses AI SDK callbacks, so it cannot consume a correlation header.
       const native = ["1", "true", "yes", "on"].includes(
         (process.env.OPENCODE_EXPERIMENTAL_NATIVE_LLM ?? "").toLowerCase(),
@@ -436,8 +598,8 @@ export function createCoordinator(options: CoordinatorOptions) {
         return Promise.resolve();
       }
 
-      state.messageCaptureSetup ??= installModelMessageCapture();
-      return state.messageCaptureSetup;
+      state.sdkModelCaptureSetup ??= installSdkModelCapture();
+      return state.sdkModelCaptureSetup;
     },
   };
 }

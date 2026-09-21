@@ -5,110 +5,218 @@ import type {
   ToolFinish,
   ToolReference,
   ToolStart,
+  RunReference,
+  SkillMetadata,
 } from "../../contract/observer.js";
-import type { InteractionOwner } from "./interaction.js";
-import { jsonObject } from "../shared/json.js";
+import type { InteractionContext } from "./interaction.js";
+import { createRunScopedStore } from "../shared/runs.js";
+import { toJsonObject } from "../shared/json.js";
 
-type ToolCallState = {
+type ToolCall = {
   partID: string;
   messageID: string;
   callID: string;
-  name: string;
+  toolName: string;
   startedAt: number;
   arguments?: ToolStart["arguments"];
-  start?: ToolStart;
-  result?: { endedAt: number; observedAt: number; output?: string; error?: string };
-  rejected?: boolean;
+  description?: string;
+  skill?: SkillMetadata;
+  startSnapshot?: ToolStart;
+  completion?: { endedAt: number; observedAt: number; output?: string; error?: string };
+  permissionRejected?: boolean;
   childSessionID?: string;
 };
 
 export function createToolTracker(options: {
   observer: Observer;
   captureContent?: boolean;
-  parent(messageID: string): InteractionOwner | undefined;
+  onStart?(tool: ToolStart): void;
   onFinish(reference: ToolReference, observedAt: number, error?: ObservationError): void;
-  onTask(sessionID: string, reference: ToolReference): void;
+  onChildSessionObserved(sessionID: string, reference: ToolReference): void;
 }) {
-  const calls = new Map<string, ToolCallState>();
-  const finished = new Set<string>();
+  const store = createRunScopedStore(() => ({
+    toolCalls: new Map<string, ToolCall>(),
+    finishedCallKeys: new Set<string>(),
+    pendingDescriptions: new Map<
+      string,
+      { messageID: string; name: string; description: string }
+    >(),
+  }));
 
   function finish(
-    call: ToolCallState,
-    result: Omit<ToolFinish, keyof ToolReference>,
+    run: RunReference,
+    call: ToolCall,
+    completion: Omit<ToolFinish, keyof ToolReference>,
     observedAt: number,
   ) {
-    if (!call.start) {
+    const state = store.get(run);
+
+    if (!state) {
       return;
     }
 
-    calls.delete(JSON.stringify([call.messageID, call.callID]));
-    finished.add(JSON.stringify([call.messageID, call.callID]));
+    const callKey = `${call.messageID}:${call.callID}`;
+
+    if (!state.toolCalls.delete(callKey)) {
+      return;
+    }
+
+    state.finishedCallKeys.add(callKey);
+    state.pendingDescriptions.delete(callKey);
+
+    // Removed or closed parts cannot acquire an owner and reopen through a late update.
+    if (!call.startSnapshot) {
+      return;
+    }
+
     const reference = {
-      interaction: call.start.interaction,
+      interaction: call.startSnapshot.interaction,
       callID: call.callID,
       messageID: call.messageID,
     };
-    options.onFinish(reference, observedAt, result.error);
-    options.observer.finishTool({ ...reference, ...result });
+    options.onFinish(reference, observedAt, completion.error);
+    if (call.skill) {
+      options.observer.finishSkill({ ...reference, ...completion });
+      return;
+    }
+
+    options.observer.finishTool({ ...reference, ...completion });
   }
 
-  function record(call: ToolCallState) {
-    const owner = options.parent(call.messageID);
-
-    if (!call.start && !owner) {
-      return;
-    }
-
-    if (!call.start && owner) {
-      call.start = {
-        interaction: owner.reference,
+  function record(run: RunReference, call: ToolCall, context?: InteractionContext) {
+    if (!call.startSnapshot && context) {
+      const start = {
+        interaction: context.reference,
         messageID: call.messageID,
         callID: call.callID,
-        name: call.name,
         startedAt: call.startedAt,
-        arguments: call.arguments,
-        agentName: owner.agentName,
-        agentType: owner.agentType,
-        parentSessionID: owner.parentSessionID,
-        userID: owner.userID,
+        agentName: context.agentName,
+        agentType: context.agentType,
+        parentSessionID: context.parentSessionID,
       };
-      options.observer.startTool(call.start);
+      call.startSnapshot = {
+        ...start,
+        name: call.toolName,
+        arguments: call.arguments,
+        description: call.description,
+      };
+      if (call.skill) {
+        options.observer.startSkill({ ...start, ...call.skill });
+      }
+
+      if (!call.skill) {
+        options.observer.startTool(call.startSnapshot);
+      }
+
+      options.onStart?.(call.startSnapshot);
     }
 
-    if (!call.start) {
+    if (!call.startSnapshot) {
       return;
     }
 
-    options.observer.updateTool({ ...call.start, arguments: call.arguments });
-
-    if (!call.result && call.name === "task" && call.childSessionID) {
-      options.onTask(call.childSessionID, call.start);
+    if (call.skill) {
+      options.observer.updateSkill({
+        interaction: call.startSnapshot.interaction,
+        messageID: call.messageID,
+        callID: call.callID,
+        ...call.skill,
+      });
     }
 
-    if (call.result) {
+    if (!call.skill) {
+      options.observer.updateTool({
+        ...call.startSnapshot,
+        arguments: call.arguments,
+        description: call.description,
+      });
+    }
+
+    if (!call.completion && call.toolName === "task" && call.childSessionID) {
+      options.onChildSessionObserved(call.childSessionID, call.startSnapshot);
+    }
+
+    if (call.completion) {
       finish(
+        run,
         call,
         {
-          endedAt: call.result.endedAt,
-          output: call.result.output,
+          endedAt: call.completion.endedAt,
+          output: call.completion.output,
           error:
-            call.result.error === undefined
+            call.completion.error === undefined
               ? undefined
               : {
-                  type: call.rejected ? "PermissionRejectedError" : "ExecutionError",
-                  message: call.result.error,
+                  type: call.permissionRejected ? "PermissionRejectedError" : "ExecutionError",
+                  message: call.completion.error,
                 },
         },
-        call.result.observedAt,
+        call.completion.observedAt,
       );
     }
   }
 
   return {
-    part(part: ToolPart, observedAt: number) {
-      const key = JSON.stringify([part.messageID, part.callID]);
+    open: store.open,
+    release: store.release,
+    describe(
+      run: RunReference,
+      messageID: string,
+      input: { callID: string; name: string; description: string },
+    ) {
+      const state = store.get(run);
+      const key = `${messageID}:${input.callID}`;
+      if (
+        !state ||
+        !options.captureContent ||
+        input.name === "skill" ||
+        state.finishedCallKeys.has(key)
+      ) {
+        return;
+      }
 
-      if (finished.has(key) || calls.get(key)?.result || part.state.status === "pending") {
+      const call = state.toolCalls.get(key);
+      if (call) {
+        if (call.toolName === input.name && !call.skill && call.description === undefined) {
+          call.description = input.description;
+          if (call.startSnapshot) {
+            options.observer.updateTool({
+              interaction: call.startSnapshot.interaction,
+              messageID: call.messageID,
+              callID: call.callID,
+              description: call.description,
+            });
+          }
+        }
+        return;
+      }
+
+      if (!state.pendingDescriptions.has(key)) {
+        state.pendingDescriptions.set(key, {
+          messageID,
+          name: input.name,
+          description: input.description,
+        });
+      }
+      if (state.pendingDescriptions.size > 1024) {
+        state.pendingDescriptions.delete(state.pendingDescriptions.keys().next().value!);
+      }
+    },
+    part(run: RunReference, part: ToolPart, observedAt: number, context?: InteractionContext) {
+      const state = store.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      const callKey = `${part.messageID}:${part.callID}`;
+      const existingCall = state.toolCalls.get(callKey);
+
+      if (
+        state.finishedCallKeys.has(callKey) ||
+        existingCall?.completion ||
+        part.state.status === "pending"
+      ) {
         return;
       }
 
@@ -118,15 +226,45 @@ export function createToolTracker(options: {
         return;
       }
 
-      const call = calls.get(key) ?? {
+      const call = existingCall ?? {
         partID: part.id,
         messageID: part.messageID,
         callID: part.callID,
-        name: part.tool,
+        toolName: part.tool,
         startedAt,
+        skill: part.tool === "skill" ? {} : undefined,
       };
-      calls.set(key, call);
-      call.arguments = options.captureContent ? jsonObject(part.state.input) : undefined;
+      state.toolCalls.set(callKey, call);
+      const description = state.pendingDescriptions.get(callKey);
+      state.pendingDescriptions.delete(callKey);
+      if (description?.name === call.toolName && !call.skill) {
+        call.description ??= description.description;
+      }
+      call.arguments =
+        options.captureContent && !call.skill ? toJsonObject(part.state.input) : undefined;
+
+      if (call.skill) {
+        // Whitelist identity independently of content capture; never retain raw skill arguments.
+        if (typeof part.state.input.name === "string" && part.state.input.name.length > 0) {
+          call.skill.name = part.state.input.name;
+        }
+
+        if (part.state.status === "completed") {
+          const metadata = part.state.metadata;
+          if (typeof metadata.name === "string" && metadata.name.length > 0) {
+            call.skill.name = metadata.name;
+          }
+
+          if (typeof metadata.dir === "string" && metadata.dir.length > 0) {
+            call.skill.directory = metadata.dir;
+          }
+
+          if (typeof metadata.truncated === "boolean") {
+            call.skill.outputTruncated = metadata.truncated;
+          }
+        }
+      }
+
       call.childSessionID =
         part.state.status === "running" &&
         typeof part.state.metadata?.sessionId === "string" &&
@@ -139,7 +277,7 @@ export function createToolTracker(options: {
         Number.isFinite(part.state.time.end) &&
         part.state.time.end >= call.startedAt
       ) {
-        call.result ??= {
+        call.completion ??= {
           endedAt: part.state.time.end,
           observedAt,
           output:
@@ -150,41 +288,81 @@ export function createToolTracker(options: {
         };
       }
 
-      record(call);
+      record(run, call, context);
     },
-    refresh() {
-      calls.forEach(record);
+    unresolved(run: RunReference) {
+      return Array.from(store.get(run)?.toolCalls.values() ?? [])
+        .filter((call) => !call.startSnapshot)
+        .map((call) => ({ messageID: call.messageID, callID: call.callID }));
     },
-    active(messageID: string, callID: string) {
-      return calls.get(JSON.stringify([messageID, callID]))?.start;
-    },
-    reject(reference: ToolReference) {
-      const call = calls.get(JSON.stringify([reference.messageID, reference.callID]));
+    associate(run: RunReference, messageID: string, callID: string, context: InteractionContext) {
+      const call = store.get(run)?.toolCalls.get(`${messageID}:${callID}`);
 
-      if (call?.start?.interaction.id === reference.interaction.id) {
-        call.rejected = true;
+      if (call && !call.startSnapshot) {
+        record(run, call, context);
       }
     },
-    remove(messageID: string, time: number, partID?: string) {
-      calls.forEach((call, key) => {
+    activeStart(run: RunReference, messageID: string, callID: string) {
+      return store.get(run)?.toolCalls.get(`${messageID}:${callID}`)?.startSnapshot;
+    },
+    markPermissionRejected(reference: ToolReference) {
+      const call = store
+        .get(reference.interaction.run)
+        ?.toolCalls.get(`${reference.messageID}:${reference.callID}`);
+
+      if (call?.startSnapshot?.interaction.id === reference.interaction.id) {
+        call.permissionRejected = true;
+      }
+    },
+    remove(run: RunReference, messageID: string, time: number, partID?: string) {
+      const state = store.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      if (partID === undefined) {
+        state.pendingDescriptions.forEach((description, key) => {
+          if (description.messageID === messageID) {
+            state.pendingDescriptions.delete(key);
+          }
+        });
+      }
+
+      state.toolCalls.forEach((call) => {
         if (call.messageID === messageID && (partID === undefined || call.partID === partID)) {
           finish(
+            run,
             call,
-            { endedAt: time, error: { type: "_OTHER", message: "tool removed before completion" } },
+            {
+              endedAt: time,
+              error: {
+                type: "_OTHER",
+                message: `${call.skill ? "skill load" : "tool"} removed before completion`,
+              },
+            },
             time,
           );
-          calls.delete(key);
-          finished.add(key);
         }
       });
     },
-    close(endedAt: number, error?: ObservationError) {
-      calls.forEach((call) =>
+    close(run: RunReference, endedAt: number, error?: ObservationError) {
+      const state = store.get(run);
+
+      if (!state) {
+        return;
+      }
+
+      state.toolCalls.forEach((call) =>
         finish(
+          run,
           call,
           {
             endedAt,
-            error: error ?? { type: "_OTHER", message: "session ended before tool completed" },
+            error: error ?? {
+              type: "_OTHER",
+              message: `session ended before ${call.skill ? "skill load" : "tool"} completed`,
+            },
           },
           endedAt,
         ),

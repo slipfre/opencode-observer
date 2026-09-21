@@ -35,6 +35,18 @@ describe("OpenCode tools E2E", () => {
         llms.forEach((span) => expect(span.parentSpanId).toBe(interaction.spanId));
         expect(tool.attributes["gen_ai.operation.name"]).toBe("execute_tool");
         expect(tool.attributes["gen_ai.tool.name"]).toBe("bash");
+        const definitions = JSON.parse(
+          String(call.attributes["gen_ai.tool.definitions"]),
+        ) as Array<{
+          name: string;
+          description?: string;
+        }>;
+        const description = definitions.find(
+          (definition) => definition.name === "bash",
+        )?.description;
+        expect(description).toBeString();
+        expect(description!.length).toBeGreaterThan(0);
+        expect(tool.attributes["gen_ai.tool.description"]).toBe(description);
         expect(JSON.parse(String(tool.attributes["gen_ai.tool.call.arguments"]))).toEqual(input);
         expect(JSON.parse(String(tool.attributes["gen_ai.tool.call.result"]))).toEqual({
           content: expect.stringMatching(/^observer-tool-output\r?\n$/),
@@ -91,6 +103,7 @@ describe("OpenCode tools E2E", () => {
 
         expect(fixture.llm.mainHits()).toHaveLength(2);
         const tool = oneSpan(spans, "e2e.tool.read");
+        expect(tool.attributes["gen_ai.tool.description"]).toBeString();
         expectError(tool, "ExecutionError");
         expect(tool.status.message).toContain("missing-e2e-file.txt");
         expect(tool.attributes["gen_ai.tool.call.result"]).toBeUndefined();

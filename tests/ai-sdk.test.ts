@@ -1,10 +1,11 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import type { OnStartEvent, OnStepStartEvent, OnStepFinishEvent } from "ai";
+import type { AssistantMessage } from "@opencode-ai/sdk";
+import type { OnStartEvent, OnStepStartEvent, OnStepFinishEvent, OnToolCallStartEvent } from "ai";
 import { jsonSchema, Output, streamText, tool } from "ai";
 import { MockLanguageModelV3, convertArrayToReadableStream } from "ai/test";
 import type { LlmFinish, LlmUpdate, Observer } from "../src/contract/observer.js";
 import { createCoordinator } from "../src/adapter/opencode/coordinator.js";
-import type { LlmRequest } from "../src/adapter/model/request.js";
+import type { ChatParamsHookArgs } from "../src/adapter/model/request.js";
 
 const adapters: ReturnType<typeof createCoordinator>[] = [];
 
@@ -12,7 +13,12 @@ afterEach(async () => {
   await Promise.all(adapters.splice(0).map((adapter) => adapter.hooks.dispose()));
 });
 
-async function setup(captureContent = true, log?: (error: unknown) => unknown) {
+async function setup(
+  captureContent = true,
+  log?: (error: unknown) => unknown,
+  now?: () => number,
+  captureHttpHeaders?: boolean,
+) {
   const updates: LlmUpdate[] = [];
   const finishes: LlmFinish[] = [];
   const errors: unknown[] = [];
@@ -20,6 +26,9 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
     startTool() {},
     updateTool() {},
     finishTool() {},
+    startSkill() {},
+    updateSkill() {},
+    finishSkill() {},
     startCompaction() {},
     finishCompaction() {},
     startPermission() {},
@@ -45,14 +54,16 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
   const adapter = createCoordinator({
     observer,
     captureContent,
+    captureHttpHeaders,
+    now,
     log(error) {
       errors.push(error);
       return log?.(error);
     },
   });
   adapters.push(adapter);
-  await adapter.startModelMessageCapture();
-  const input: LlmRequest[0] = {
+  await adapter.startSdkModelCapture();
+  const input: ChatParamsHookArgs[0] = {
     sessionID: "s1",
     agent: "build",
     message: {
@@ -63,8 +74,8 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
       model: { providerID: "test", modelID: "test" },
       time: { created: 1000 },
     },
-    model: { id: "test", providerID: "test" } as LlmRequest[0]["model"],
-    provider: {} as LlmRequest[0]["provider"],
+    model: { id: "test", providerID: "test" } as ChatParamsHookArgs[0]["model"],
+    provider: {} as ChatParamsHookArgs[0]["provider"],
   };
   await adapter.hooks["chat.message"]?.(
     { sessionID: "s1" },
@@ -73,23 +84,24 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
       parts: [{ id: "text", sessionID: "s1", messageID: "u1", type: "text", text: "fallback" }],
     },
   );
+  const assistant: AssistantMessage = {
+    id: "a1",
+    sessionID: "s1",
+    parentID: "u1",
+    role: "assistant",
+    time: { created: 1050 },
+    modelID: "test",
+    providerID: "test",
+    mode: "build",
+    path: { cwd: "/test", root: "/test" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  };
   await adapter.hooks.event?.({
     event: {
       type: "message.updated",
       properties: {
-        info: {
-          id: "a1",
-          sessionID: "s1",
-          parentID: "u1",
-          role: "assistant",
-          time: { created: 1050 },
-          modelID: "test",
-          providerID: "test",
-          mode: "build",
-          path: { cwd: "/test", root: "/test" },
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-        },
+        info: assistant,
       },
     },
   });
@@ -101,6 +113,21 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
     updates,
     finishes,
     errors,
+    async complete(overrides: Partial<AssistantMessage> = {}) {
+      await adapter.hooks.event({
+        event: {
+          type: "message.updated",
+          properties: {
+            info: {
+              ...assistant,
+              time: { created: 1050, completed: 1400 },
+              finish: "stop",
+              ...overrides,
+            },
+          },
+        },
+      });
+    },
     async headers() {
       const output = { headers: { "X-Test": "kept" } };
       await adapter.hooks["chat.headers"]?.(input, output);
@@ -108,16 +135,21 @@ async function setup(captureContent = true, log?: (error: unknown) => unknown) {
       // OpenCode merges headers into a new object before starting AI SDK.
       return { ...output.headers } as Record<string, string>;
     },
-    async step(type: "step-start" | "step-finish") {
+    async step(
+      type: "step-start" | "step-finish",
+      time?: number,
+      id = type === "step-start" ? "start" : "finish",
+    ) {
       await adapter.hooks.event?.({
         event: {
           type: "message.part.updated",
           properties: {
+            ...(time === undefined ? {} : { time }),
             part:
               type === "step-start"
-                ? { id: "start", sessionID: "s1", messageID: "a1", type }
+                ? { id, sessionID: "s1", messageID: "a1", type }
                 : {
-                    id: "finish",
+                    id,
                     sessionID: "s1",
                     messageID: "a1",
                     type,
@@ -151,8 +183,11 @@ function inputEvent(
     functionId: "session.llm",
     metadata,
     headers,
-    messages: [{ role: "user", content: text }],
-    system: "system",
+    messages: [
+      { role: "system", content: "system" },
+      { role: "user", content: text },
+    ],
+    system: undefined,
     providerOptions: undefined,
     stepNumber: 0,
   } as OnStepStartEvent;
@@ -166,6 +201,251 @@ function outputEvent(metadata: Record<string, unknown>, text = "full output"): O
     response: { messages: [] },
   } as unknown as OnStepFinishEvent;
 }
+
+function toolEvent(metadata: Record<string, unknown>, stepNumber = 0): OnToolCallStartEvent {
+  return {
+    functionId: "session.llm",
+    metadata,
+    stepNumber,
+    toolCall: { type: "tool-call", toolCallId: "call1", toolName: "read", input: {} },
+    messages: [],
+    model: undefined,
+    abortSignal: undefined,
+    experimental_context: undefined,
+  };
+}
+
+async function startReadTool(h: Awaited<ReturnType<typeof setup>>) {
+  await h.adapter.hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          type: "tool",
+          id: "tool-part",
+          messageID: "a1",
+          sessionID: "s1",
+          callID: "call1",
+          tool: "read",
+          state: { status: "running", input: {}, time: { start: 1200 } },
+        },
+      },
+    },
+  });
+}
+
+test.each([true, false])(
+  "tool descriptions respect content=%s without waiting for parameter schemas",
+  async (captureContent) => {
+    const h = await setup(captureContent);
+    const started = spyOn(h.observer, "startTool");
+    const metadata = {};
+    const read = tool({
+      description: "Read a file",
+      inputSchema: jsonSchema(() => new Promise<never>(() => {})),
+    });
+    if (!captureContent) {
+      Object.defineProperty(read, "description", {
+        get() {
+          throw new Error("disabled content must not be read");
+        },
+      });
+    }
+
+    await integration().onStepStart?.({
+      ...inputEvent(metadata, await h.headers()),
+      tools: { read },
+    });
+    await integration().onToolCallStart?.(toolEvent(metadata));
+    await startReadTool(h);
+
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(started.mock.calls[0]?.[0].description).toBe(captureContent ? "Read a file" : undefined);
+    expect(h.errors).toEqual([]);
+  },
+);
+
+test("tool descriptions use the active step and binding and ignore excluded tools", async () => {
+  const h = await setup();
+  const updated = spyOn(h.observer, "updateTool");
+  const metadata = {};
+  const read = tool({ description: "Original description", inputSchema: jsonSchema({}) });
+  await integration().onStepStart?.({
+    ...inputEvent(metadata, await h.headers()),
+    tools: { read },
+    activeTools: [],
+  });
+  await startReadTool(h);
+  updated.mockClear();
+  await integration().onToolCallStart?.(toolEvent(metadata));
+  expect(updated).not.toHaveBeenCalled();
+
+  await integration().onStepStart?.({
+    ...inputEvent(metadata, {}),
+    stepNumber: 1,
+    tools: { read },
+  });
+  read.description = "Changed after snapshot";
+  await integration().onToolCallStart?.(toolEvent(metadata));
+  await integration().onToolCallStart?.(toolEvent({}, 1));
+  await integration().onToolCallStart?.({ ...toolEvent(metadata, 1), functionId: "session.title" });
+  expect(updated).not.toHaveBeenCalled();
+
+  await integration().onToolCallStart?.(toolEvent(metadata, 1));
+  expect(updated).toHaveBeenCalledTimes(1);
+  expect(updated.mock.calls[0]?.[0].description).toBe("Original description");
+  await integration().onStepFinish?.(outputEvent(metadata));
+  await integration().onToolCallStart?.(toolEvent(metadata, 1));
+  await h.adapter.hooks.dispose();
+  await integration().onToolCallStart?.(toolEvent(metadata, 1));
+  expect(updated).toHaveBeenCalledTimes(1);
+});
+
+test("tool descriptions stay isolated between plugin bindings", async () => {
+  const first = await setup();
+  const second = await setup();
+  const firstStart = spyOn(first.observer, "startTool");
+  const secondStart = spyOn(second.observer, "startTool");
+  const firstMetadata = {};
+  const secondMetadata = {};
+  await integration().onStepStart?.({
+    ...inputEvent(firstMetadata, await first.headers()),
+    tools: { read: tool({ description: "First instance", inputSchema: jsonSchema({}) }) },
+  });
+  await integration().onStepStart?.({
+    ...inputEvent(secondMetadata, await second.headers()),
+    tools: { read: tool({ description: "Second instance", inputSchema: jsonSchema({}) }) },
+  });
+  await integration().onToolCallStart?.(toolEvent(firstMetadata));
+  await integration().onToolCallStart?.(toolEvent(secondMetadata));
+  await startReadTool(first);
+  await startReadTool(second);
+
+  expect(firstStart.mock.calls[0]?.[0].description).toBe("First instance");
+  expect(secondStart.mock.calls[0]?.[0].description).toBe("Second instance");
+});
+
+test.each([true, false])("response models are captured with content=%s", async (captureContent) => {
+  const h = await setup(captureContent);
+  const event = inputEvent({}, await h.headers());
+  await integration().onStepStart?.(event);
+  await h.step("step-start");
+  await h.step("step-finish");
+  await h.complete();
+  expect(h.finishes).toHaveLength(0);
+
+  await integration().onStepFinish?.({
+    ...outputEvent(event.metadata!),
+    response: { ...outputEvent(event.metadata!).response, modelId: "response-model" },
+  });
+
+  expect(h.updates.at(-1)?.responseModel).toBe("response-model");
+  expect(h.finishes).toHaveLength(1);
+  const updates = [...h.updates];
+  await integration().onStepFinish?.({
+    ...outputEvent(event.metadata!),
+    response: { ...outputEvent(event.metadata!).response, modelId: "late-model" },
+  });
+  expect(h.updates).toEqual(updates);
+  expect(h.errors).toEqual([]);
+});
+
+test.each([true, false])(
+  "first chunk uses step publication time and survives retries with content=%s",
+  async (captureContent) => {
+    const clock = { time: 1100 };
+    const h = await setup(captureContent, undefined, () => clock.time);
+    const first = inputEvent({}, await h.headers());
+    await integration().onStepStart?.(first);
+
+    clock.time = 1400;
+    await h.adapter.hooks.event({
+      event: {
+        type: "session.status",
+        properties: {
+          sessionID: "s1",
+          status: { type: "retry", attempt: 1, message: "busy", next: 1600 },
+        },
+      },
+    });
+    clock.time = 1700;
+    await h.adapter.hooks.event({
+      event: { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } },
+    });
+    const retry = inputEvent({}, await h.headers());
+    await integration().onStepStart?.(retry);
+    clock.time = 2300;
+    await h.step("step-start", 2100);
+
+    expect(h.updates.flatMap((update) => update.firstChunkObservedAt ?? [])).toEqual([2100]);
+
+    // Duplicate events, later steps, and old SDK bindings never replace the first observation.
+    await h.step("step-start", 2200);
+    await integration().onStepStart?.(inputEvent(first.metadata!, {}));
+    await integration().onStepStart?.(inputEvent(retry.metadata!, {}));
+    await h.step("step-start", 2400, "next-step");
+    await integration().onStepFinish?.(outputEvent(retry.metadata!));
+    await h.step("step-finish");
+    await h.complete({ time: { created: 1050, completed: 2600 } });
+    await h.step("step-start", 2800, "late-step");
+
+    expect(h.updates.flatMap((update) => update.firstChunkObservedAt ?? [])).toEqual([2100]);
+    expect(h.finishes).toHaveLength(1);
+    expect(h.errors).toEqual([]);
+  },
+);
+
+test.each([undefined, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+  "first chunk falls back to receipt time for unavailable publication time %s",
+  async (time) => {
+    const clock = { time: 1100 };
+    const h = await setup(false, undefined, () => clock.time);
+    await integration().onStepStart?.(inputEvent({}, await h.headers()));
+
+    clock.time = 1500;
+    await h.step("step-start", time);
+
+    expect(h.updates.at(-1)?.firstChunkObservedAt).toBe(1500);
+  },
+);
+
+test("a backwards first-step timestamp is preserved for final validation, never replaced", async () => {
+  const h = await setup(false, undefined, () => 1100);
+  await integration().onStepStart?.(inputEvent({}, await h.headers()));
+
+  await h.step("step-start", 1000);
+  await h.step("step-start", 1400, "next-step");
+
+  expect(h.updates.flatMap((update) => update.firstChunkObservedAt ?? [])).toEqual([1000]);
+});
+
+test.each(["missing", "late", "retry"])(
+  "first chunk observation does not require an SDK start: %s",
+  async (mode) => {
+    const h = await setup(false, undefined, () => 1100);
+    if (mode === "retry") {
+      await h.headers();
+      await h.adapter.hooks.event({
+        event: {
+          type: "session.status",
+          properties: {
+            sessionID: "s1",
+            status: { type: "retry", attempt: 1, message: "busy", next: 1200 },
+          },
+        },
+      });
+      await integration().onStepStart?.(inputEvent({}, await h.headers()));
+    }
+
+    await h.step("step-start", 1400);
+    if (mode === "late") {
+      await integration().onStepStart?.(inputEvent({}, await h.headers()));
+      await h.step("step-start", 1500, "next-step");
+    }
+
+    expect(h.updates.flatMap((update) => update.firstChunkObservedAt ?? [])).toEqual([1400]);
+  },
+);
 
 test.each([true, false])(
   "AI SDK snapshots survive callback ordering with output first=%s",
@@ -181,8 +461,10 @@ test.each([true, false])(
     await h.step("step-start");
 
     expect(h.updates[0]?.input).toEqual({
-      messages: [{ role: "user", parts: [{ type: "text", text: "full input" }] }],
-      systemInstructions: [{ type: "text", text: "system" }],
+      messages: [
+        { role: "system", parts: [{ type: "text", text: "system" }] },
+        { role: "user", parts: [{ type: "text", text: "full input" }] },
+      ],
     });
 
     if (outputFirst) {
@@ -190,6 +472,7 @@ test.each([true, false])(
     }
 
     await h.step("step-finish");
+    await h.complete();
 
     if (!outputFirst) {
       expect(h.finishes).toHaveLength(0);
@@ -219,19 +502,25 @@ test("AI SDK bindings isolate identical sessions in different instances and igno
   );
   await integration().onStepStart?.(inputEvent(metadata, firstHeaders));
   await first.step("step-start");
-  await second.step("step-start");
+  await second.step("step-start", 1200);
   await integration().onStepFinish?.(outputEvent({ sessionId: "s1" }, "unbound"));
   await integration().onStepFinish?.({
     ...outputEvent(metadata, "title"),
     functionId: "agent.title",
   });
 
-  expect(first.updates).toHaveLength(1);
-  expect(second.updates).toHaveLength(0);
+  expect(first.updates).toHaveLength(2);
+  expect(second.updates).toEqual([
+    {
+      id: "a1",
+      interaction: { id: "u1", run: { id: "u1", sessionID: "s1" } },
+      firstChunkObservedAt: 1200,
+    },
+  ]);
 
   await integration().onStepFinish?.(outputEvent(metadata));
-  expect(first.updates).toHaveLength(2);
-  expect(second.updates).toHaveLength(0);
+  expect(first.updates).toHaveLength(3);
+  expect(second.updates).toHaveLength(1);
 });
 
 test.each(["throw", "reject"])(
@@ -318,6 +607,7 @@ test.each(["throw", "reject"])(
 
     await integration().onStepFinish?.(outputEvent(metadata));
     await h.step("step-finish");
+    await h.complete();
 
     expect(h.finishes).toHaveLength(1);
     expect(h.errors).toEqual([failure]);
@@ -389,12 +679,12 @@ test("closing during SDK setup prevents late listener registration and restart",
   });
   adapters.push(closing);
 
-  const installation = closing.startModelMessageCapture();
+  const installation = closing.startSdkModelCapture();
   const disposal = closing.hooks.dispose();
 
   try {
     await installation;
-    await closing.startModelMessageCapture();
+    await closing.startSdkModelCapture();
     await integration().onStart?.(
       inputEvent({}, Object.freeze({ "x-opencode-observer-request": "unbound" })) as OnStartEvent &
         OnStepStartEvent,
@@ -408,7 +698,7 @@ test("closing during SDK setup prevents late listener registration and restart",
     await disposal;
   }
 
-  await closing.startModelMessageCapture();
+  await closing.startSdkModelCapture();
   await integration().onStart?.(
     inputEvent({}, Object.freeze({ "x-opencode-observer-request": "unbound" })) as OnStartEvent &
       OnStepStartEvent,
@@ -427,12 +717,12 @@ test("retry bindings discard old callbacks and session end releases a missing SD
   await integration().onStepStart?.(inputEvent(secondMetadata, await h.headers(), "retry"));
   await integration().onStepFinish?.(outputEvent(firstMetadata, "stale attempt"));
   await h.step("step-finish");
+  await h.complete();
 
   expect(h.finishes).toHaveLength(0);
-  expect(h.updates.map((value) => value.input?.messages[0]?.parts)).toEqual([
-    [{ type: "text", text: "first" }],
-    [{ type: "text", text: "retry" }],
-  ]);
+  expect(
+    h.updates.filter((value) => value.input).map((value) => value.input?.messages.at(-1)?.parts),
+  ).toEqual([[{ type: "text", text: "first" }], [{ type: "text", text: "retry" }]]);
 
   await h.adapter.hooks.event?.({
     event: { type: "session.idle", properties: { sessionID: "s1" } },
@@ -441,11 +731,157 @@ test("retry bindings discard old callbacks and session end releases a missing SD
 
   expect(h.finishes).toHaveLength(1);
   expect(h.finishes[0]?.error).toBeUndefined();
-  expect(h.updates).toHaveLength(2);
+  expect(h.finishes[0]?.endedAt).toBe(1400);
+  expect(h.updates).toHaveLength(3);
 });
 
-test("unresolved settings never block callbacks or discard an observed response", async () => {
+test.each(["dispose", "remove"] as const)(
+  "%s preserves assistant completion while SDK output is still pending",
+  async (termination) => {
+    const h = await setup();
+    await integration().onStepStart?.(inputEvent({}, await h.headers()));
+    await h.step("step-start");
+    await h.step("step-finish");
+    await h.complete();
+
+    expect(h.finishes).toHaveLength(0);
+
+    if (termination === "dispose") {
+      await h.adapter.hooks.dispose();
+    }
+    if (termination === "remove") {
+      await h.adapter.hooks.event({
+        event: { type: "message.removed", properties: { sessionID: "s1", messageID: "a1" } },
+      });
+    }
+
+    expect(h.finishes).toHaveLength(1);
+    expect(h.finishes[0]?.endedAt).toBe(1400);
+    expect(h.finishes[0]?.error).toBeUndefined();
+  },
+);
+
+test("a late step cannot clear completed results while SDK output is pending", async () => {
   const h = await setup();
+  const metadata = {};
+  await integration().onStepStart?.(inputEvent(metadata, await h.headers()));
+  await h.step("step-start");
+  await h.step("step-finish");
+  await h.complete();
+  await h.adapter.hooks.event({
+    event: {
+      type: "message.part.updated",
+      properties: {
+        part: { id: "late-step", sessionID: "s1", messageID: "a1", type: "step-start" },
+      },
+    },
+  });
+  await integration().onStepFinish?.(outputEvent(metadata));
+
+  expect(h.finishes).toHaveLength(1);
+  expect(h.finishes[0]).toMatchObject({
+    endedAt: 1400,
+    usage: { inputTokens: 1, outputTokens: 1 },
+  });
+});
+
+test.each([false, true])(
+  "run cleanup invalidates SDK callbacks before the next run, observer failure=%s",
+  async (failure) => {
+    const h = await setup();
+    const old = inputEvent({}, await h.headers(), "first run");
+    await integration().onStepStart?.(old);
+    await h.step("step-start");
+    const error = new Error("finish failed");
+    if (failure) {
+      spyOn(h.observer, "finishLlm").mockImplementationOnce(() => {
+        throw error;
+      });
+    }
+
+    await h.adapter.hooks.event({
+      event: { type: "session.idle", properties: { sessionID: "s1" } },
+    });
+    const next = { ...h.input, message: { ...h.input.message, id: "u2", time: { created: 2000 } } };
+    await h.adapter.hooks["chat.message"](
+      { sessionID: "s1" },
+      {
+        message: next.message,
+        parts: [
+          { id: "text2", sessionID: "s1", messageID: "u2", type: "text", text: "second run" },
+        ],
+      },
+    );
+    await h.adapter.hooks.event({
+      event: {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "a1",
+            sessionID: "s1",
+            parentID: "u2",
+            role: "assistant",
+            mode: "build",
+            modelID: "test",
+            providerID: "test",
+            path: { cwd: "/test", root: "/test" },
+            time: { created: 2100 },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          },
+        },
+      },
+    });
+    const output = { headers: {} };
+    await h.adapter.hooks["chat.headers"](next, output);
+    const current = inputEvent({}, { ...output.headers }, "second run");
+    await integration().onStepStart?.(current);
+    const count = h.updates.length;
+
+    await integration().onStepFinish?.(outputEvent(old.metadata!, "late first run"));
+    expect(h.updates).toHaveLength(count);
+    await integration().onStepFinish?.(outputEvent(current.metadata!, "second response"));
+    await h.step("step-finish");
+    await h.complete({ parentID: "u2", time: { created: 2100, completed: 2200 } });
+
+    expect(h.finishes.at(-1)?.interaction.run.id).toBe("u2");
+    expect(h.updates.at(-1)?.output?.[0]?.parts[0]).toEqual({
+      type: "text",
+      text: "second response",
+    });
+    expect(h.errors).toEqual(failure ? [error] : []);
+  },
+);
+
+test.each([true, false])(
+  "default text output is captured before pending tool schemas with content=%s",
+  async (captureContent) => {
+    const h = await setup(captureContent);
+    const schema = Promise.withResolvers<{ type: "object" }>();
+    const event = {
+      ...inputEvent({}, await h.headers()),
+      tools: { read: tool({ inputSchema: jsonSchema(() => schema.promise) }) },
+    };
+    await integration().onStepStart?.(event);
+    await h.step("step-start");
+
+    expect(h.updates.findLast((update) => update.request)?.request?.outputType).toBe("text");
+
+    await integration().onStepFinish?.(outputEvent(event.metadata!));
+    await h.step("step-finish");
+    await h.complete();
+    const count = h.updates.length;
+    schema.resolve({ type: "object" });
+    await Bun.sleep(0);
+
+    expect(h.updates).toHaveLength(count);
+    expect(h.finishes).toHaveLength(1);
+    expect(h.errors).toEqual([]);
+  },
+);
+
+test("unresolved settings never block callbacks or discard an observed response", async () => {
+  const h = await setup(true, undefined, undefined, true);
   const format = Promise.withResolvers<{ type: "json" }>();
   const event = {
     ...inputEvent({}, await h.headers()),
@@ -458,6 +894,7 @@ test("unresolved settings never block callbacks or discard an observed response"
     response: { ...outputEvent(event.metadata!).response, headers: { "x-response": "kept" } },
   });
   await h.step("step-finish");
+  await h.complete();
 
   expect(h.finishes).toHaveLength(1);
   const count = h.updates.length;
@@ -467,6 +904,7 @@ test("unresolved settings never block callbacks or discard an observed response"
   expect(h.updates).toHaveLength(count);
   expect(h.updates.at(-1)?.output?.[0]?.parts[0]).toEqual({ type: "text", text: "full output" });
   expect(h.updates.at(-1)?.responseHeaders).toEqual({ "x-response": ["kept"] });
+  expect(h.updates.every((update) => update.request?.outputType === undefined)).toBe(true);
   expect(h.finishes).toHaveLength(1);
   expect(h.errors).toEqual([]);
 });
@@ -488,9 +926,14 @@ test("late async settings cannot replace a retry's request snapshot", async () =
   await Bun.sleep(0);
 
   expect(h.updates).toHaveLength(count);
-  expect(h.updates.at(-1)?.input?.messages[0]?.parts[0]).toEqual({ type: "text", text: "retry" });
+  expect(h.updates.at(-1)?.input?.messages.at(-1)?.parts[0]).toEqual({
+    type: "text",
+    text: "retry",
+  });
+  expect(h.updates.at(-1)?.request?.outputType).toBe("text");
   await integration().onStepFinish?.(outputEvent(retry.metadata!, "retry response"));
   await h.step("step-finish");
+  await h.complete();
   expect(h.finishes).toHaveLength(1);
   expect(h.errors).toEqual([]);
 });
@@ -503,7 +946,7 @@ test.each(["session end", "dispose"])("%s invalidates pending async settings", a
     output: { ...Output.text(), responseFormat: format.promise },
   });
   await h.step("step-start");
-  expect(h.updates).toHaveLength(1);
+  expect(h.updates).toHaveLength(2);
 
   await (boundary === "dispose"
     ? h.adapter.hooks.dispose()
@@ -520,6 +963,90 @@ test.each(["session end", "dispose"])("%s invalidates pending async settings", a
   expect(h.finishes).toEqual(finishes);
   expect(h.errors).toEqual([]);
 });
+
+test.each([
+  [true, false],
+  [true, undefined],
+  [false, true],
+] as const)(
+  "SDK headers are not parsed with content=%s headers=%s",
+  async (captureContent, captureHttpHeaders) => {
+    const h = await setup(captureContent, undefined, undefined, captureHttpHeaders);
+    const headers = await h.headers();
+    Object.defineProperty(headers, "x-secret", {
+      enumerable: true,
+      get() {
+        throw new Error("request headers must not be read");
+      },
+    });
+    const event = inputEvent({}, headers);
+
+    await integration().onStepStart?.(event);
+    await integration().onStepFinish?.({
+      ...outputEvent(event.metadata!),
+      response: {
+        ...outputEvent(event.metadata!).response,
+        get headers(): never {
+          throw new Error("response headers must not be read");
+        },
+      },
+    });
+
+    expect(h.updates).toHaveLength(2);
+    expect(h.updates[0]?.request?.headers).toBeUndefined();
+    expect(h.updates[1]?.responseHeaders).toBeUndefined();
+    expect(h.updates[0]?.input !== undefined).toBe(captureContent);
+    expect(h.updates[1]?.output !== undefined).toBe(captureContent);
+    expect(h.errors).toEqual([]);
+  },
+);
+
+test.each(
+  (
+    [
+      [true, true],
+      [true, false],
+      [true, undefined],
+      [false, true],
+    ] as const
+  ).flatMap(([content, headers]) =>
+    (["message", "session"] as const).map((source) => [content, headers, source] as const),
+  ),
+)(
+  "API error headers require content=%s headers=%s via %s",
+  async (captureContent, captureHttpHeaders, source) => {
+    const h = await setup(captureContent, undefined, undefined, captureHttpHeaders);
+    await h.headers();
+    const error = {
+      name: "APIError" as const,
+      data: {
+        message: "request failed",
+        isRetryable: false,
+        get responseHeaders() {
+          if (!captureContent || !captureHttpHeaders) {
+            throw new Error("error response headers must not be read");
+          }
+          return { "X-Error": "terminal" };
+        },
+      },
+    };
+
+    if (source === "message") {
+      await h.complete({ error });
+    }
+    if (source === "session") {
+      await h.adapter.hooks.event({
+        event: { type: "session.error", properties: { sessionID: "s1", error } },
+      });
+    }
+
+    expect(h.finishes).toHaveLength(1);
+    expect(h.finishes[0]?.responseHeaders).toEqual(
+      captureContent && captureHttpHeaders ? { "x-error": ["terminal"] } : undefined,
+    );
+    expect(h.errors).toEqual([]);
+  },
+);
 
 test("capture disabled and disposed instances do not parse content and remove request markers", async () => {
   const enabled = await setup();
@@ -551,8 +1078,14 @@ test("capture disabled and disposed instances do not parse content and remove re
     get content() {
       throw new Error("output must not be read");
     },
-    get response() {
-      throw new Error("response must not be read");
+    response: {
+      modelId: "response-model",
+      get headers() {
+        throw new Error("response headers must not be read");
+      },
+      get messages() {
+        throw new Error("response messages must not be read");
+      },
     },
   } as unknown as OnStepFinishEvent);
 
@@ -567,7 +1100,8 @@ test("capture disabled and disposed instances do not parse content and remove re
         update.responseHeaders === undefined,
     ),
   ).toBe(true);
-  expect(disabled.updates[0]?.request).toEqual({});
+  expect(disabled.updates[0]?.request).toEqual({ outputType: "text" });
+  expect(disabled.updates.at(-1)?.responseModel).toBe("response-model");
   expect(enabled.errors).toEqual([]);
   expect(disabled.errors).toEqual([]);
 });
@@ -599,10 +1133,17 @@ test("unmatched and ambiguous assistant requests keep the event fallback without
   });
 
   expect(await h.headers()).toEqual({ "X-Test": "kept" });
-  await h.step("step-start");
+  await h.step("step-start", 1200);
   await h.step("step-finish");
+  await h.complete();
 
-  expect(h.updates).toEqual([]);
+  expect(h.updates).toEqual([
+    {
+      id: "a1",
+      interaction: { id: "u1", run: { id: "u1", sessionID: "s1" } },
+      firstChunkObservedAt: 1200,
+    },
+  ]);
   expect(h.finishes).toHaveLength(1);
   expect(h.errors).toEqual([]);
 });
@@ -686,8 +1227,16 @@ test("summary LLMs use the same SDK snapshot channel once their compaction paren
     },
   });
 
+  await h.complete({
+    id: "summary",
+    parentID: "compact",
+    mode: "compaction",
+    summary: true,
+    time: { created: 1250, completed: 1400 },
+  });
+
   expect(h.updates[0]?.id).toBe("summary");
-  expect(h.updates[0]?.input?.messages[0]?.parts).toEqual([
+  expect(h.updates[0]?.input?.messages.at(-1)?.parts).toEqual([
     { type: "text", text: "summary history" },
   ]);
   expect(h.updates.at(-1)?.output?.[0]?.parts).toEqual([
@@ -710,10 +1259,17 @@ test("native LLM runtime prepares trace headers without callback capture or a re
     h.observer.llmTraceHeaders = () => headers;
 
     expect(await h.headers()).toEqual({ "X-Test": "kept", ...headers });
-    await h.step("step-start");
+    await h.step("step-start", 1200);
     await h.step("step-finish");
+    await h.complete();
 
-    expect(h.updates).toEqual([]);
+    expect(h.updates).toEqual([
+      {
+        id: "a1",
+        interaction: { id: "u1", run: { id: "u1", sessionID: "s1" } },
+        firstChunkObservedAt: 1200,
+      },
+    ]);
     expect(h.finishes).toHaveLength(1);
     expect(h.errors).toEqual([]);
   } finally {
@@ -727,10 +1283,17 @@ test("native LLM runtime prepares trace headers without callback capture or a re
   }
 });
 
-test.each([true, false])(
-  "real AI SDK streaming captures settings with content=%s and strips the marker",
-  async (captureContent) => {
-    const h = await setup(captureContent);
+test.each([
+  [true, true, "json"],
+  [true, true, "text"],
+  [true, false, "json"],
+  [true, undefined, "text"],
+  [false, true, "json"],
+  [false, undefined, "text"],
+] as const)(
+  "real AI SDK streaming captures settings with content=%s headers=%s output=%s and strips the marker",
+  async (captureContent, captureHttpHeaders, outputType) => {
+    const h = await setup(captureContent, undefined, undefined, captureHttpHeaders);
     const model = new MockLanguageModelV3({
       doStream: async () => ({
         stream: convertArrayToReadableStream([
@@ -758,7 +1321,7 @@ test.each([true, false])(
     const response = streamText({
       model,
       headers: await h.headers(),
-      output: Output.json(),
+      output: outputType === "json" ? Output.json() : undefined,
       tools: {
         read: tool({
           description: "Read a file",
@@ -767,8 +1330,8 @@ test.each([true, false])(
         unused: tool({ inputSchema: jsonSchema({ type: "object" }) }),
       },
       activeTools: ["read"],
-      system: "actual system",
       messages: [
+        { role: "system", content: "actual system" },
         { role: "user", content: "previous question" },
         { role: "assistant", content: "previous answer" },
         { role: "user", content: "actual question" },
@@ -787,6 +1350,7 @@ test.each([true, false])(
 
       if (part.type === "finish-step") {
         await h.step("step-finish");
+        await h.complete();
       }
     }
 
@@ -794,7 +1358,7 @@ test.each([true, false])(
     expect(model.doStreamCalls[0]?.headers?.["x-opencode-observer-request"]).toBeUndefined();
     expect(model.doStreamCalls[0]?.headers?.["X-Test"]).toBe("kept");
     const request = h.updates.findLast((update) => update.request?.outputType)?.request;
-    expect(request?.outputType).toBe("json");
+    expect(request?.outputType).toBe(outputType);
     expect(request?.toolDefinitions).toEqual(
       captureContent
         ? [
@@ -807,9 +1371,13 @@ test.each([true, false])(
           ]
         : undefined,
     );
-    expect(request?.headers).toEqual(captureContent ? { "x-test": ["kept"] } : undefined);
+    expect(request?.headers).toEqual(
+      captureContent && captureHttpHeaders ? { "x-test": ["kept"] } : undefined,
+    );
+    // Without provider response metadata, the SDK supplies the request model ID.
+    expect(h.updates.at(-1)?.responseModel).toBe(model.modelId);
     expect(h.updates.at(-1)?.responseHeaders).toEqual(
-      captureContent
+      captureContent && captureHttpHeaders
         ? {
             "content-type": ["text/event-stream"],
             "x-model-request": ["request-1"],
@@ -827,11 +1395,11 @@ test.each([true, false])(
     }
     expect(h.updates.find((value) => value.input)?.input).toEqual({
       messages: [
+        { role: "system", parts: [{ type: "text", text: "actual system" }] },
         { role: "user", parts: [{ type: "text", text: "previous question" }] },
         { role: "assistant", parts: [{ type: "text", text: "previous answer" }] },
         { role: "user", parts: [{ type: "text", text: "actual question" }] },
       ],
-      systemInstructions: [{ type: "text", text: "actual system" }],
     });
     expect(h.updates.at(-1)?.output).toEqual([
       {

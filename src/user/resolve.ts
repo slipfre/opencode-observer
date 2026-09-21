@@ -22,9 +22,9 @@ export async function resolveUser(
   return (
     (await lookupUser(token, {
       endpoint,
-      authHeader: env["OPENCODE_USER_ID_X-Blackbox-Auth"],
-      timeoutMs: readInteger(env.OPENCODE_USER_ID_TIMEOUT, 3000, 1),
-      retryCount: readInteger(env.OPENCODE_USER_ID_RETRY_COUNT, 2, 0, 10),
+      blackboxAuthHeaderValue: env["OPENCODE_USER_ID_X-Blackbox-Auth"],
+      timeoutMs: parseIntegerOrDefault(env.OPENCODE_USER_ID_TIMEOUT, 3000, 1),
+      maxRetries: parseIntegerOrDefault(env.OPENCODE_USER_ID_RETRY_COUNT, 2, 0, 10),
     })) ?? null
   );
 }
@@ -33,7 +33,7 @@ export function isUserIDEnabled(env: Record<string, string | undefined> = proces
   return !["false", "0"].includes(env.OPENCODE_USER_ID_ENABLED?.trim().toLowerCase() ?? "");
 }
 
-function readInteger(
+function parseIntegerOrDefault(
   value: string | undefined,
   fallback: number,
   minimum: number,

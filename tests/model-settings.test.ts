@@ -39,8 +39,32 @@ test("model settings capture active tool definitions and explicit output formats
       true,
       () => {},
     ),
-  ).toEqual({ outputType: undefined, toolDefinitions: undefined });
+  ).toEqual({ outputType: "text", toolDefinitions: undefined });
 });
+
+test.each(["missing", "rejected"])(
+  "an explicit output with a %s response format does not default to text",
+  async (format) => {
+    const failure = new Error("format unavailable");
+    const errors: unknown[] = [];
+    const result = await parseModelSettings(
+      {
+        output: {
+          ...Output.text(),
+          responseFormat:
+            format === "rejected" ? Promise.reject(failure) : Promise.resolve(undefined),
+        },
+        tools: undefined,
+        activeTools: undefined,
+      },
+      false,
+      (error) => errors.push(error),
+    );
+
+    expect(result.outputType).toBeUndefined();
+    expect(errors).toEqual(format === "rejected" ? [failure] : []);
+  },
+);
 
 test("disabled capture observes only output type without reading tools or schemas", async () => {
   const unreadable = () => {

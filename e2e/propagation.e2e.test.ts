@@ -16,6 +16,9 @@ describe("OpenCode trace context E2E", () => {
 
         expect(result.stdout).toContain("fallback trace propagated");
         expect(result.stderr).toContain("native runtime unavailable; falling back to ai-sdk");
+        const llm = oneSpan(spans, "e2e.llm");
+        expect(llm.attributes["gen_ai.response.time_to_first_chunk"]).toBeGreaterThanOrEqual(0);
+        expect(llm.attributes["opencode.llm.time_to_first_chunk.source"]).toBeUndefined();
         spans.forEach(expectUnset);
       },
     ));

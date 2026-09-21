@@ -22,9 +22,8 @@ export const ObserverPlugin: Plugin = async (input, options) => {
     ...config,
     serviceVersion,
     spanAttributes: {
-      ...(user === null ? { "user.id": "unknown" } : {}),
+      ...(user === undefined ? {} : { "user.id": user?.id ?? "unknown" }),
       ...config.spanAttributes,
-      ...(user ? { "user.id": user.id } : {}),
     },
   });
 
@@ -41,12 +40,14 @@ export const ObserverPlugin: Plugin = async (input, options) => {
       .catch(() => undefined);
   };
 
-  const adapter = createCoordinator({
+  const coordinator = createCoordinator({
     observer,
     captureContent: config.captureContent,
+    captureHttpHeaders: config.captureHttpHeaders,
+    llmTimingMode: config.llmTimingMode,
     userIdentity: { enabled: userIDEnabled, id: user?.id },
     log,
   });
-  await adapter.startModelMessageCapture().catch(log);
-  return adapter.hooks;
+  await coordinator.startSdkModelCapture().catch(log);
+  return coordinator.hooks;
 };

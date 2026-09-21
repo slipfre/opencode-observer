@@ -47,8 +47,16 @@ describe("OpenCode compaction E2E", () => {
           "opencode.compaction.overflow": false,
           "opencode.compaction.prompt_tokens": 5,
           "opencode.compaction.summary_tokens": 3,
+        });
+        expect(
+          Object.keys(compaction.attributes).filter((key) => key.startsWith("gen_ai.usage.")),
+        ).toEqual([]);
+        expect(summary.attributes).toMatchObject({
           "gen_ai.usage.input_tokens": 5,
           "gen_ai.usage.output_tokens": 3,
+          "gen_ai.usage.reasoning.output_tokens": 0,
+          "gen_ai.usage.cache_read.input_tokens": 0,
+          "gen_ai.usage.cache_write.input_tokens": 0,
         });
         expect(summary.attributes["opencode.compaction.id"]).toBe(
           compaction.attributes["opencode.compaction.id"],
@@ -105,7 +113,9 @@ describe("OpenCode compaction E2E", () => {
         [compaction, oneSpan(spans, "e2e.interaction"), oneSpan(spans, "e2e.run")].forEach((span) =>
           expectError(span, "ContextOverflowError"),
         );
-        expect(compaction.attributes["gen_ai.usage.input_tokens"]).toBeUndefined();
+        expect(
+          Object.keys(compaction.attributes).filter((key) => key.startsWith("gen_ai.usage.")),
+        ).toEqual([]);
         expect(compaction.attributes["opencode.compaction.summary_tokens"]).toBeUndefined();
         expectError(
           oneSpan(

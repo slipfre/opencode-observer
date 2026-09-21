@@ -2,11 +2,11 @@ import type { Hooks } from "@opencode-ai/plugin";
 import type { LlmStart } from "../../contract/observer.js";
 import { nonNegativeInteger, nonNegativeNumber } from "../shared/number.js";
 
-export type LlmRequest = Parameters<NonNullable<Hooks["chat.params"]>>;
+export type ChatParamsHookArgs = Parameters<NonNullable<Hooks["chat.params"]>>;
 
-export function parseModelRequest(
-  input: LlmRequest[0],
-  output: LlmRequest[1],
+export function parseChatParams(
+  input: ChatParamsHookArgs[0],
+  output: ChatParamsHookArgs[1],
 ): Pick<LlmStart, "model" | "providerName" | "operation" | "parameters"> {
   return {
     model: input.model.api.id,
@@ -18,7 +18,7 @@ export function parseModelRequest(
       temperature: nonNegativeNumber(output.temperature),
       topP: nonNegativeNumber(output.topP),
       topK: nonNegativeInteger(output.topK),
-      maxTokens: nonNegativeInteger(output.maxOutputTokens),
+      maxOutputTokens: nonNegativeInteger(output.maxOutputTokens),
     },
   };
 }

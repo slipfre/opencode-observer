@@ -3,7 +3,7 @@ import { lookupUser, type UserLookupOptions } from "../src/user/lookup.js";
 
 const options: UserLookupOptions = {
   endpoint: "https://identity.example.test/queryUserByToken",
-  retryCount: 0,
+  maxRetries: 0,
 };
 
 afterEach(() => mock.restore());
@@ -13,7 +13,9 @@ test("posts the trimmed token and returns a normalized user", async () => {
     Response.json({ code: 0, result: { ssicNo: " user-1 " } }),
   );
 
-  expect(await lookupUser(" token ", { ...options, authHeader: "identity-secret" })).toEqual({
+  expect(
+    await lookupUser(" token ", { ...options, blackboxAuthHeaderValue: "identity-secret" }),
+  ).toEqual({
     id: "user-1",
   });
   expect(fetcher.mock.calls[0]).toEqual([
@@ -64,14 +66,14 @@ test("waits for HTTP and JSON failure retries before returning the user", async 
     .mockResolvedValueOnce(new Response("invalid JSON"))
     .mockResolvedValueOnce(Response.json({ code: 0, result: { ssicNo: "user-1" } }));
 
-  expect(await lookupUser("token", { ...options, retryCount: 2 })).toEqual({ id: "user-1" });
+  expect(await lookupUser("token", { ...options, maxRetries: 2 })).toEqual({ id: "user-1" });
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
 test("retry exhaustion returns no user without rejecting initialization", async () => {
   const fetcher = spyOn(globalThis, "fetch").mockRejectedValue(new Error("unavailable"));
 
-  expect(await lookupUser("token", { ...options, retryCount: 1 })).toBeUndefined();
+  expect(await lookupUser("token", { ...options, maxRetries: 1 })).toBeUndefined();
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
