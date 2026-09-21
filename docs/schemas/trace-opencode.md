@@ -399,18 +399,18 @@ HTTP header 示例是原生 attribute 值：`http.request.header.content-type=["
 
 ### 11.1 Attributes
 
-| 字段                           | 类型     | 出现条件       | 值与口径                                                     |
-| ------------------------------ | -------- | -------------- | ------------------------------------------------------------ |
-| `gen_ai.agent.name`            | string   | agent 可识别时 | 关联工具所属 assistant 的 `agent`，兼容 `mode`；未知时省略。 |
-| `opencode.agent.type`          | string   | 必有           | `primary` 或 `subagent`。                                    |
-| `gen_ai.tool.call.id`          | string   | 必有           | 被检查的调用 ID，与父 tool 或 skill.load span 相同。         |
-| `gen_ai.tool.name`             | string   | 必有           | 从对应 tool part 的 `tool` 取得；skill.load 为 `skill`。     |
-| `opencode.permission.name`     | string   | 必有           | 权限类型。                                                   |
-| `opencode.permission.patterns` | string[] | 必有           | 请求匹配的 patterns。                                        |
-| `opencode.permission.reply`    | string   | 收到 reply     | `once`、`always` 或 `reject`。                               |
-| `opencode.permission.granted`  | boolean  | 收到 reply     | reply 不为 `reject` 时为 `true`。                            |
+| 字段                               | 类型     | 出现条件       | 值与口径                                                     |
+| ---------------------------------- | -------- | -------------- | ------------------------------------------------------------ |
+| `gen_ai.agent.name`                | string   | agent 可识别时 | 关联工具所属 assistant 的 `agent`，兼容 `mode`；未知时省略。 |
+| `opencode.agent.type`              | string   | 必有           | `primary` 或 `subagent`。                                    |
+| `opencode.permission.tool.call.id` | string   | 必有           | 被检查的调用 ID，与父 tool 或 skill.load span 相同。         |
+| `opencode.permission.tool.name`    | string   | 必有           | 从对应 tool part 的 `tool` 取得；skill.load 为 `skill`。     |
+| `opencode.permission.name`         | string   | 必有           | 权限类型。                                                   |
+| `opencode.permission.patterns`     | string[] | 必有           | 请求匹配的 patterns。                                        |
+| `opencode.permission.reply`        | string   | 收到 reply     | `once`、`always` 或 `reject`。                               |
+| `opencode.permission.granted`      | boolean  | 收到 reply     | reply 不为 `reject` 时为 `true`。                            |
 
-此 span 的 GenAI tool 字段仅引用被检查的工具调用，不表示又执行了一次工具，因此不设置 `gen_ai.operation.name=execute_tool`。权限模式、人工决策和 patterns 没有等价的标准 GenAI 字段，保留 OpenCode 扩展。
+此 span 使用 `opencode.permission.tool.*` 自定义属性引用被检查的工具调用，不设置 `gen_ai.tool.name`、`gen_ai.tool.call.id` 或 `gen_ai.operation.name=execute_tool`。Langfuse 会根据 GenAI tool 名称或调用 ID 推断工具类型，并优先使用工具名作为显示名称；使用自定义属性可避免将权限检查识别为工具执行或覆盖其 span 名称。权限模式、人工决策和 patterns 没有等价的标准 GenAI 字段，保留 OpenCode 扩展。
 
 ### 11.2 生命周期与状态
 

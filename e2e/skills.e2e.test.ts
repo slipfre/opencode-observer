@@ -118,12 +118,15 @@ test("skill permission rejection is parented to the load span without capturing 
       expectUnset(permission);
       expect(permission.parentSpanId).toBe(skill.spanId);
       expect(permission.attributes).toMatchObject({
-        "gen_ai.tool.call.id": skill.attributes["gen_ai.tool.call.id"],
-        "gen_ai.tool.name": "skill",
+        "opencode.permission.tool.call.id": skill.attributes["gen_ai.tool.call.id"],
+        "opencode.permission.tool.name": "skill",
         "opencode.permission.name": "skill",
         "opencode.permission.granted": false,
         "opencode.permission.reply": "reject",
       });
+      expect(permission.attributes["gen_ai.operation.name"]).toBeUndefined();
+      expect(permission.attributes["gen_ai.tool.call.id"]).toBeUndefined();
+      expect(permission.attributes["gen_ai.tool.name"]).toBeUndefined();
       expect(skill.attributes["opencode.skill.name"]).toBe("observer-review");
       expect(skill.attributes["ai.agent.skill.name"]).toBe("observer-review");
       expect(skill.attributes["opencode.skill.output"]).toBeUndefined();

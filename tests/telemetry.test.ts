@@ -585,16 +585,21 @@ test("permission keys keep provider tool call separators distinct from request I
     "reject",
     "once",
   ]);
-  expect(checks.map((span) => span.attributes["gen_ai.tool.call.id"])).toEqual(
+  expect(checks.map((span) => span.attributes["opencode.permission.tool.call.id"])).toEqual(
     permissions.map((permission) => permission.tool.callID),
   );
   checks.forEach((check) => {
     const tool = h.spans.find(
       (span) =>
         span.name === "opencode.tool.read" &&
-        span.attributes["gen_ai.tool.call.id"] === check.attributes["gen_ai.tool.call.id"],
+        span.attributes["gen_ai.tool.call.id"] ===
+          check.attributes["opencode.permission.tool.call.id"],
     );
     expect(check.parentSpanContext?.spanId).toBe(tool?.spanContext().spanId);
+    expect(check.attributes["opencode.permission.tool.name"]).toBe("read");
+    expect(check.attributes["gen_ai.tool.call.id"]).toBeUndefined();
+    expect(check.attributes["gen_ai.tool.name"]).toBeUndefined();
+    expect(check.attributes["gen_ai.operation.name"]).toBeUndefined();
   });
 });
 

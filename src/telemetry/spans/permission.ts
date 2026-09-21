@@ -74,8 +74,8 @@ export function createPermissionSpans(
             attributes: {
               ...options.spanAttributes,
               ...agentContextAttributes(input.tool.interaction.run, input),
-              "gen_ai.tool.call.id": input.tool.callID,
-              "gen_ai.tool.name": input.toolName,
+              "opencode.permission.tool.call.id": input.tool.callID,
+              "opencode.permission.tool.name": input.toolName,
               "opencode.permission.name": input.name,
               "opencode.permission.patterns": [...input.patterns],
             },

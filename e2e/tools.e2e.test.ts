@@ -201,8 +201,8 @@ describe("OpenCode tools E2E", () => {
         const tool = oneSpan(spans, "e2e.tool.bash");
         expect(permission.parentSpanId).toBe(tool.spanId);
         expect(permission.attributes).toMatchObject({
-          "gen_ai.tool.call.id": tool.attributes["gen_ai.tool.call.id"],
-          "gen_ai.tool.name": "bash",
+          "opencode.permission.tool.call.id": tool.attributes["gen_ai.tool.call.id"],
+          "opencode.permission.tool.name": "bash",
           "opencode.permission.name": "bash",
           "opencode.permission.reply": "reject",
           "opencode.permission.granted": false,
@@ -211,6 +211,8 @@ describe("OpenCode tools E2E", () => {
           "echo should-not-execute",
         );
         expect(permission.attributes["gen_ai.operation.name"]).toBeUndefined();
+        expect(permission.attributes["gen_ai.tool.call.id"]).toBeUndefined();
+        expect(permission.attributes["gen_ai.tool.name"]).toBeUndefined();
         expectError(tool, "PermissionRejectedError");
         expect(tool.attributes["gen_ai.tool.call.result"]).toBeUndefined();
         // OpenCode stops after rejection, leaving the interaction without a final assistant reply.

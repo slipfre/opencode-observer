@@ -325,16 +325,18 @@ skill.load 表示一次技能加载调用，沿用标准工具执行语义。它
 
 permission.check 覆盖人工权限请求的等待周期，从发起请求到收到答复或异常终止。它表示检查过程，不表示又执行一次工具，也不涵盖未进入人工等待的静默授权。
 
-| 字段                           | 类型     | 出现条件     | 期望语义                                |
-| ------------------------------ | -------- | ------------ | --------------------------------------- |
-| `gen_ai.agent.name`            | string   | agent 可识别 | 被检查工具所属 agent 名称。             |
-| `opencode.agent.type`          | string   | 必有         | `primary` 或 `subagent`。               |
-| `gen_ai.tool.call.id`          | string   | 必有         | 与父 tool 或 skill.load 相同的调用 ID。 |
-| `gen_ai.tool.name`             | string   | 必有         | 被检查的工具名；skill.load 为 `skill`。 |
-| `opencode.permission.name`     | string   | 必有         | 权限类型。                              |
-| `opencode.permission.patterns` | string[] | 必有         | 请求匹配的 patterns。                   |
-| `opencode.permission.reply`    | string   | 收到答复     | `once`、`always` 或 `reject`。          |
-| `opencode.permission.granted`  | boolean  | 收到答复     | reply 不为 `reject` 时为 `true`。       |
+| 字段                               | 类型     | 出现条件     | 期望语义                                |
+| ---------------------------------- | -------- | ------------ | --------------------------------------- |
+| `gen_ai.agent.name`                | string   | agent 可识别 | 被检查工具所属 agent 名称。             |
+| `opencode.agent.type`              | string   | 必有         | `primary` 或 `subagent`。               |
+| `opencode.permission.tool.call.id` | string   | 必有         | 与父 tool 或 skill.load 相同的调用 ID。 |
+| `opencode.permission.tool.name`    | string   | 必有         | 被检查的工具名；skill.load 为 `skill`。 |
+| `opencode.permission.name`         | string   | 必有         | 权限类型。                              |
+| `opencode.permission.patterns`     | string[] | 必有         | 请求匹配的 patterns。                   |
+| `opencode.permission.reply`        | string   | 收到答复     | `once`、`always` 或 `reject`。          |
+| `opencode.permission.granted`      | boolean  | 收到答复     | reply 不为 `reject` 时为 `true`。       |
+
+工具关联使用 `opencode.permission.tool.*` 自定义属性，不设置 `gen_ai.tool.name`、`gen_ai.tool.call.id` 或 `gen_ai.operation.name=execute_tool`，避免观测后端将权限检查识别为工具执行或用工具名覆盖 span 名称。
 
 收到拒绝也是检查流程正常完成，status 保持 `UNSET`，通过 `granted=false` 表示决策。调用因此失败时，由 tool 或 skill.load span 记录失败。检查尚未得到答复却提前终止时，permission span 才是 `ERROR`。
 
