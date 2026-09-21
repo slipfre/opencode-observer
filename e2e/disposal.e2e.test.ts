@@ -32,10 +32,10 @@ test("OpenCode dispose releases observer subscriptions without process exit list
     },
   ));
 
-test("OpenCode dispose waits for a slow collector before exiting", () =>
+test("OpenCode default export timeouts wait beyond five seconds for a slow collector", () =>
   withE2EFixture(
     {
-      otlpDelayMs: 250,
+      otlpDelayMs: 6000,
       replies: [{ type: "text", text: "ready for disposal" }],
     },
     async (fixture) => {
@@ -47,3 +47,25 @@ test("OpenCode dispose waits for a slow collector before exiting", () =>
       spans.forEach(expectUnset);
     },
   ));
+
+test.each(["options", "environment"])(
+  "OpenCode honors the OTLP timeout from %s without failing the task",
+  (source) =>
+    withE2EFixture(
+      {
+        otlpDelayMs: 2000,
+        pluginOptions: source === "options" ? { otlpTimeoutMillis: 100 } : {},
+        env: source === "environment" ? { OPENCODE_OTLP_TIMEOUT: "100" } : {},
+        replies: [{ type: "text", text: "completed despite export timeout" }],
+      },
+      async (fixture) => {
+        const result = await fixture.run("answer even when trace export times out");
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("completed despite export timeout");
+        expect(result.stderr).toContain("Trace processing failed");
+        expect(fixture.otlp.payloads.length).toBeGreaterThan(0);
+        expect(fixture.otlp.errors).toEqual([]);
+      },
+    ),
+);

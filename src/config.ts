@@ -44,12 +44,34 @@ export function loadConfig(
     llmTimingMode: llmTimingMode as "message" | "fetch",
     spanNamePrefix: parseString(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
     otlpHeaders: parseStringMap(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
+    otlpTimeoutMillis: parseTimeout(
+      options.otlpTimeoutMillis ?? env.OPENCODE_OTLP_TIMEOUT ?? 10_000,
+      "otlpTimeoutMillis",
+    ),
+    batchExportTimeoutMillis: parseTimeout(
+      options.batchExportTimeoutMillis ?? env.OPENCODE_BATCH_EXPORT_TIMEOUT ?? 30_000,
+      "batchExportTimeoutMillis",
+    ),
+    forceFlushTimeoutMillis: parseTimeout(
+      options.forceFlushTimeoutMillis ?? env.OPENCODE_FORCE_FLUSH_TIMEOUT ?? 30_000,
+      "forceFlushTimeoutMillis",
+    ),
     resourceAttributes: parseStringMap(
       options.resourceAttributes ?? env.OPENCODE_RESOURCE_ATTRIBUTES,
     ),
     spanAttributes: parseStringMap(options.spanAttributes ?? env.OPENCODE_SPAN_ATTRIBUTES),
     spanAttributeCountLimit,
   };
+}
+
+function parseTimeout(value: unknown, name: string) {
+  const timeout = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
+  // Larger delays overflow the runtime's signed 32-bit timers and can fire immediately.
+  if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 2_147_483_647) {
+    throw new Error(`${name} must be an integer between 1 and 2147483647 milliseconds`);
+  }
+
+  return timeout;
 }
 
 function parseString(value: unknown, fallback: string) {

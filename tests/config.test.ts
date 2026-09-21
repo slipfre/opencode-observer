@@ -15,7 +15,34 @@ test("enabled defaults use OTLP HTTP and leave content capture off", () => {
     captureHttpHeaders: false,
     llmTimingMode: "message",
     spanAttributeCountLimit: 4096,
+    otlpTimeoutMillis: 10_000,
+    batchExportTimeoutMillis: 30_000,
+    forceFlushTimeoutMillis: 30_000,
   });
+});
+
+test.each([
+  { option: "otlpTimeoutMillis", env: "OPENCODE_OTLP_TIMEOUT" },
+  { option: "batchExportTimeoutMillis", env: "OPENCODE_BATCH_EXPORT_TIMEOUT" },
+  { option: "forceFlushTimeoutMillis", env: "OPENCODE_FORCE_FLUSH_TIMEOUT" },
+])("$option validates milliseconds and options override the environment", ({ option, env }) => {
+  expect(loadConfig({ enabled: true }, { [env]: "45000" })).toMatchObject({ [option]: 45_000 });
+  expect(loadConfig({ enabled: true, [option]: 20_000 }, { [env]: "45000" })).toMatchObject({
+    [option]: 20_000,
+  });
+  expect(loadConfig({ enabled: true, [option]: "15000" }, {})).toMatchObject({
+    [option]: 15_000,
+  });
+  expect(loadConfig({ enabled: true, [option]: 2_147_483_647 }, {})).toMatchObject({
+    [option]: 2_147_483_647,
+  });
+
+  for (const value of [0, -1, 1.5, "", " ", "invalid", NaN, Infinity, 2_147_483_648, true, []]) {
+    expect(() => loadConfig({ enabled: true, [option]: value }, {})).toThrow(option);
+    expect(() => loadConfig({ enabled: true }, { [env]: String(value) })).toThrow(option);
+  }
+
+  expect(loadConfig({ [option]: "invalid" }, { [env]: "invalid" })).toEqual({ enabled: false });
 });
 
 test.each([true, false, "true", "false", "1", "0"])(

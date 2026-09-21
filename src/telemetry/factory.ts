@@ -14,6 +14,9 @@ export type TelemetryOptions = {
   captureHttpHeaders?: boolean;
   spanNamePrefix: string;
   otlpHeaders: Record<string, string>;
+  otlpTimeoutMillis: number;
+  batchExportTimeoutMillis: number;
+  forceFlushTimeoutMillis: number;
   resourceAttributes: Record<string, string>;
   spanAttributes: Record<string, string>;
   spanAttributeCountLimit: number;
@@ -43,15 +46,16 @@ export function createTelemetry(config: TelemetryOptions): Observer {
       ...config.resourceAttributes,
     }),
     spanLimits: { attributeCountLimit: config.spanAttributeCountLimit },
+    forceFlushTimeoutMillis: config.forceFlushTimeoutMillis,
     spanProcessors: [
       createTimingProcessor(
         new BatchSpanProcessor(
           new OTLPTraceExporter({
             url: config.endpoint,
             headers: config.otlpHeaders,
-            timeoutMillis: 5000,
+            timeoutMillis: config.otlpTimeoutMillis,
           }),
-          { exportTimeoutMillis: 5000 },
+          { exportTimeoutMillis: config.batchExportTimeoutMillis },
         ),
         spanStartTimes,
       ),
