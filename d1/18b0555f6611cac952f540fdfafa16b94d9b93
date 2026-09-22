@@ -1,0 +1,47 @@
+src/telemetry/probe.ts
+  s_19b42ab3ca2b80::t_85031949535205 36-42,47
+  s_19b42ab3ca2b80::t_a668e00acba3dc 1-35,48-49
+  s_19b42ab3ca2b80::t_6979789a751777 43-46
+tests/probe.test.ts
+  s_19b42ab3ca2b80::t_85031949535205 64-78
+  s_19b42ab3ca2b80::t_42cf5e51dc557a 1-33,35-63,91,102-103,106-109,111-114,116
+  s_19b42ab3ca2b80::t_60834df456d893 115
+  s_19b42ab3ca2b80::t_b0c0bda32e4fef 104-105,110
+  s_19b42ab3ca2b80::t_a83449a6daf8f1 34,79-90,92-101
+tests/plugin.test.ts
+  s_19b42ab3ca2b80::t_a668e00acba3dc 52-58
+  s_19b42ab3ca2b80::t_85031949535205 965-967,969,972
+  s_19b42ab3ca2b80::t_a83449a6daf8f1 979-984,1003,1031-1034,1040-1045,1073,1101
+  s_19b42ab3ca2b80::t_b0c0bda32e4fef 2-3,1117-1147
+  s_19b42ab3ca2b80::t_42cf5e51dc557a 973,975-978,985-1002,1004-1030,1035-1039,1046-1072,1074-1100,1102-1116
+  s_19b42ab3ca2b80::t_98b7f3d66db27c 974
+e2e/protocol.e2e.test.ts
+  s_19b42ab3ca2b80::t_4ec3853eaa9fca 28-30
+e2e/run.e2e.test.ts
+  s_19b42ab3ca2b80::t_4ec3853eaa9fca 230-231
+README.md
+  s_19b42ab3ca2b80::t_4ec3853eaa9fca 83-92
+e2e/diagnostics.e2e.test.ts
+  s_19b42ab3ca2b80::t_b0c0bda32e4fef 16-20
+  s_19b42ab3ca2b80::t_4ec3853eaa9fca 1-15,21-29
+src/index.ts
+  s_19b42ab3ca2b80::t_a668e00acba3dc 2,13,18-30,33-34,40,73,75-102,116
+docs/architecture.md
+  s_19b42ab3ca2b80::t_4ec3853eaa9fca 90-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d118b0555f6611cac952f540fdfafa16b94d9b93",
+  "prompts": {},
+  "sessions": {
+    "s_19b42ab3ca2b80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c792-8ec8-71e0-b306-38d844bf93d3",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
