@@ -40,6 +40,7 @@ OpenCode 可观测性插件，记录任务执行、用户交互、模型调用�
 | `llmTimingMode`            | `OPENCODE_LLM_TIMING_MODE`            | `message`               | `message` 按模型消息创建到完成计时；`fetch` 按模型请求开始到响应体读取结束计时 |
 | `endpoint`                 | `OPENCODE_OTLP_ENDPOINT`              | `http://localhost:4318` | HTTP(S) 接收端地址，自动补齐 `/v1/traces`                                      |
 | `tracePrefix`              | `OPENCODE_TRACE_PREFIX`               | `opencode.`             | span 名称前缀                                                                  |
+| `attributePrefix`          | `OPENCODE_ATTRIBUTE_PREFIX`           | `opencode.`             | 插件生成的内建 `opencode.*` span 属性键前缀                                    |
 | `otlpHeaders`              | `OPENCODE_OTLP_HEADERS`               | 空                      | 发往遥测接收端的请求头，例如鉴权信息                                           |
 | `otlpTimeoutMillis`        | `OPENCODE_OTLP_TIMEOUT`               | `10000`                 | 单批 OTLP 发送与重试的时间预算，单位毫秒                                       |
 | `batchExportTimeoutMillis` | `OPENCODE_BATCH_EXPORT_TIMEOUT`       | `30000`                 | 批处理器等待单批导出完成的上限，单位毫秒                                       |
@@ -49,6 +50,10 @@ OpenCode 可观测性插件，记录任务执行、用户交互、模型调用�
 | `spanAttributeCountLimit`  | `OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT` | `4096`                  | 每个 span 的属性数量上限，必须为正整数                                         |
 
 `llmTimingMode` 同时决定首块耗时的计时起点。`fetch` 模式包含中间重试等待，无法取得完整计时数据时回退到 `message`。这些耗时可能包含本地处理或重试等待，不代表服务端纯推理时间；首块耗时也不是网络首字节耗时。
+
+`attributePrefix` 与 `tracePrefix` 独立配置，未配置时各自使用 `opencode.`，不会互相继承。例如 `tracePrefix: "agent."`、`attributePrefix: "app."` 会生成 `agent.llm` span，并将内建 `opencode.message.id` 写为 `app.message.id`。两项均按字符串原样拼接，不自动补 `.`；空字符串表示移除对应前缀。
+
+属性前缀只作用于插件生成的内建 `opencode.*` span 属性键，标准字段及 `ai.agent.skill.name` 保持原名。显式配置的 `spanAttributes`、`resourceAttributes` 和属性值不做重命名；`spanAttributes` 仍不能注入默认前缀或配置前缀下受保护的内建字段，也不能绕过正文采集开关。其他自定义键（例如 `opencode.custom.tag`）原样保留。内建字段只导出配置后的键名，不额外保留默认键名。
 
 ### 导出超时与重试
 

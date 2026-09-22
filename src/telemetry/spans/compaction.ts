@@ -40,8 +40,8 @@ export function createCompactionSpans(
 
     if (!input.error) {
       spanState.span.setAttributes({
-        "opencode.compaction.prompt_tokens": input.promptTokens,
-        "opencode.compaction.summary_tokens": input.summaryTokens,
+        [`${options.attributePrefix}compaction.prompt_tokens`]: input.promptTokens,
+        [`${options.attributePrefix}compaction.summary_tokens`]: input.summaryTokens,
       });
     }
 
@@ -74,11 +74,11 @@ export function createCompactionSpans(
             startTime: new Date(input.startedAt),
             attributes: {
               ...options.spanAttributes,
-              ...agentContextAttributes(input.interaction.run, input),
-              "opencode.compaction.id": input.id,
-              "opencode.compaction.auto": input.auto,
-              "opencode.compaction.overflow": input.overflow,
-              "opencode.compaction.trigger_message.id": input.triggerMessageID,
+              ...agentContextAttributes(input.interaction.run, input, options.attributePrefix),
+              [`${options.attributePrefix}compaction.id`]: input.id,
+              [`${options.attributePrefix}compaction.auto`]: input.auto,
+              [`${options.attributePrefix}compaction.overflow`]: input.overflow,
+              [`${options.attributePrefix}compaction.trigger_message.id`]: input.triggerMessageID,
             },
           },
           parent,

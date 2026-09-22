@@ -43,6 +43,10 @@ export function loadConfig(
     ),
     llmTimingMode: llmTimingMode as "message" | "fetch",
     spanNamePrefix: parseString(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
+    attributePrefix: parseString(
+      options.attributePrefix ?? env.OPENCODE_ATTRIBUTE_PREFIX,
+      "opencode.",
+    ),
     otlpHeaders: parseStringMap(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
     otlpTimeoutMillis: parseTimeout(
       options.otlpTimeoutMillis ?? env.OPENCODE_OTLP_TIMEOUT ?? 10_000,

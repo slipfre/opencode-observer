@@ -36,7 +36,7 @@ export function createSkillSpans(
     options.finishedSpanRegistry.add(state.reference.interaction.run, "skill", key);
 
     if (options.captureContent && !input.error && input.output !== undefined) {
-      state.span.setAttribute("opencode.skill.output", input.output);
+      state.span.setAttribute(`${options.attributePrefix}skill.output`, input.output);
     }
 
     endSpan(state.span, input.endedAt, input.error);
@@ -69,11 +69,11 @@ export function createSkillSpans(
             startTime: new Date(input.startedAt),
             attributes: {
               ...options.spanAttributes,
-              ...agentContextAttributes(input.interaction.run, input),
+              ...agentContextAttributes(input.interaction.run, input, options.attributePrefix),
               "gen_ai.operation.name": "execute_tool",
               "gen_ai.tool.call.id": input.callID,
               "gen_ai.tool.name": "skill",
-              ...skillAttributes(input),
+              ...skillAttributes(input, options.attributePrefix),
             },
           },
           parent,
@@ -81,7 +81,9 @@ export function createSkillSpans(
       });
     },
     update(input: SkillUpdate) {
-      activeSpans.get(operationKey(input))?.span.setAttributes(skillAttributes(input));
+      activeSpans
+        .get(operationKey(input))
+        ?.span.setAttributes(skillAttributes(input, options.attributePrefix));
     },
     context(reference: SkillReference) {
       const state = activeSpans.get(operationKey(reference));
@@ -113,11 +115,11 @@ export function createSkillSpans(
   };
 }
 
-function skillAttributes(input: SkillMetadata) {
+function skillAttributes(input: SkillMetadata, attributePrefix: string) {
   return {
-    "opencode.skill.name": input.name,
+    [`${attributePrefix}skill.name`]: input.name,
     "ai.agent.skill.name": input.name,
-    "opencode.skill.directory": input.directory,
-    "opencode.skill.output.truncated": input.outputTruncated,
+    [`${attributePrefix}skill.directory`]: input.directory,
+    [`${attributePrefix}skill.output.truncated`]: input.outputTruncated,
   };
 }

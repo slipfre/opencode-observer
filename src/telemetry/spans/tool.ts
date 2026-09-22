@@ -69,7 +69,7 @@ export function createToolSpans(
             startTime: new Date(input.startedAt),
             attributes: {
               ...options.spanAttributes,
-              ...agentContextAttributes(input.interaction.run, input),
+              ...agentContextAttributes(input.interaction.run, input, options.attributePrefix),
               "gen_ai.operation.name": "execute_tool",
               "gen_ai.tool.call.id": input.callID,
               "gen_ai.tool.name": input.name,

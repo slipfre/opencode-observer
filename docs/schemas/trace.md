@@ -54,7 +54,9 @@ trace-opencode.md 记录了当前实际导出的结构、字段来源、创建�
 
 ### 3.1 主会话
 
-默认前缀为 `opencode.`；自定义前缀只改变 span 名称，不改变 attribute key 或 operation 值。
+span 名称前缀由 `tracePrefix` / `OPENCODE_TRACE_PREFIX` 配置，默认 `opencode.`，只改变 span 名称。插件生成的内建 `opencode.*` span 属性键另由 `attributePrefix` / `OPENCODE_ATTRIBUTE_PREFIX` 配置，默认同为 `opencode.`，两者独立且不互相继承。两项均原样拼接，不自动补 `.`，空字符串表示移除对应前缀。
+
+下文属性表沿用默认 `opencode.*` 键名；自定义属性前缀时只替换内建键名的 `opencode.` 部分，不改变属性值、operation 值、标准字段或 `ai.agent.skill.name`，也不同时导出旧键。用户显式配置的 `spanAttributes` 和 `resourceAttributes` 保留原键名；默认前缀与配置前缀下受保护的内建 span 字段均不能通过 `spanAttributes` 注入。
 
 ```text
 opencode.run                         invoke_workflow / INTERNAL

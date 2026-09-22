@@ -11,6 +11,7 @@ test("enabled defaults use OTLP HTTP and leave content capture off", () => {
     enabled: true,
     endpoint: "http://localhost:4318/v1/traces",
     spanNamePrefix: "opencode.",
+    attributePrefix: "opencode.",
     captureContent: false,
     captureHttpHeaders: false,
     llmTimingMode: "message",
@@ -103,6 +104,41 @@ test("options take precedence over environment variables, including explicit fal
     captureHttpHeaders: false,
     spanNamePrefix: "",
     endpoint: "https://collector/otel/v1/traces",
+  });
+});
+
+test.each(["app.", "", "raw"])(
+  "attribute prefix %j is independent and preserves literal strings",
+  (attributePrefix) => {
+    expect(loadConfig({ enabled: true, attributePrefix }, {})).toMatchObject({
+      spanNamePrefix: "opencode.",
+      attributePrefix,
+    });
+    expect(
+      loadConfig({ enabled: true }, { OPENCODE_ATTRIBUTE_PREFIX: attributePrefix }),
+    ).toMatchObject({
+      spanNamePrefix: "opencode.",
+      attributePrefix,
+    });
+    expect(
+      loadConfig(
+        { enabled: true, tracePrefix: "spans.", attributePrefix },
+        { OPENCODE_ATTRIBUTE_PREFIX: "env." },
+      ),
+    ).toMatchObject({ spanNamePrefix: "spans.", attributePrefix });
+  },
+);
+
+test("attribute prefix defaults independently of the span name prefix and validates strings", () => {
+  expect(loadConfig({ enabled: true, tracePrefix: "spans." }, {})).toMatchObject({
+    attributePrefix: "opencode.",
+  });
+  expect(loadConfig({ enabled: true }, { OPENCODE_TRACE_PREFIX: "spans." })).toMatchObject({
+    attributePrefix: "opencode.",
+  });
+  [true, 1, {}, []].forEach((attributePrefix) => {
+    expect(() => loadConfig({ enabled: true, attributePrefix }, {})).toThrow();
+    expect(loadConfig({ attributePrefix }, {})).toEqual({ enabled: false });
   });
 });
 

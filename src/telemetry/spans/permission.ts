@@ -35,8 +35,8 @@ export function createPermissionSpans(
 
     if (input.reply !== undefined) {
       spanState.span.setAttributes({
-        "opencode.permission.reply": input.reply,
-        "opencode.permission.granted": input.reply !== "reject",
+        [`${options.attributePrefix}permission.reply`]: input.reply,
+        [`${options.attributePrefix}permission.granted`]: input.reply !== "reject",
       });
     }
 
@@ -73,11 +73,11 @@ export function createPermissionSpans(
             startTime: new Date(input.startedAt),
             attributes: {
               ...options.spanAttributes,
-              ...agentContextAttributes(input.tool.interaction.run, input),
-              "opencode.permission.tool.call.id": input.tool.callID,
-              "opencode.permission.tool.name": input.toolName,
-              "opencode.permission.name": input.name,
-              "opencode.permission.patterns": [...input.patterns],
+              ...agentContextAttributes(input.tool.interaction.run, input, options.attributePrefix),
+              [`${options.attributePrefix}permission.tool.call.id`]: input.tool.callID,
+              [`${options.attributePrefix}permission.tool.name`]: input.toolName,
+              [`${options.attributePrefix}permission.name`]: input.name,
+              [`${options.attributePrefix}permission.patterns`]: [...input.patterns],
             },
           },
           parent,

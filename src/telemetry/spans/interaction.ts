@@ -71,11 +71,11 @@ export function createInteractionSpans(
               ...options.spanAttributes,
               "session.id": input.run.sessionID,
               "gen_ai.conversation.id": input.run.sessionID,
-              "opencode.interaction.id": input.id,
+              [`${options.attributePrefix}interaction.id`]: input.id,
               "gen_ai.operation.name": "invoke_agent",
               "gen_ai.agent.name": input.agentName,
-              "opencode.agent.type": input.agentType,
-              "opencode.session.parent_id": input.parentSessionID,
+              [`${options.attributePrefix}agent.type`]: input.agentType,
+              [`${options.attributePrefix}session.parent_id`]: input.parentSessionID,
               ...(options.captureContent && input.input !== undefined
                 ? { "gen_ai.input.messages": encodeTextMessage("user", input.input) }
                 : {}),

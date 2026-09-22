@@ -12,6 +12,7 @@ export type SpanOptions = {
   tracer: Tracer;
   rootContext: Context;
   spanNamePrefix: string;
+  attributePrefix: string;
   captureContent: boolean;
   spanAttributes: Record<string, string>;
   finishedSpanRegistry: Pick<
@@ -68,13 +69,17 @@ export function createFinishedSpanRegistry() {
   };
 }
 
-export function agentContextAttributes(run: RunReference, agentContext: AgentContext) {
+export function agentContextAttributes(
+  run: RunReference,
+  agentContext: AgentContext,
+  attributePrefix: string,
+) {
   return {
     "session.id": run.sessionID,
     "gen_ai.conversation.id": run.sessionID,
     "gen_ai.agent.name": agentContext.agentName,
-    "opencode.agent.type": agentContext.agentType,
-    "opencode.session.parent_id": agentContext.parentSessionID,
+    [`${attributePrefix}agent.type`]: agentContext.agentType,
+    [`${attributePrefix}session.parent_id`]: agentContext.parentSessionID,
   };
 }
 

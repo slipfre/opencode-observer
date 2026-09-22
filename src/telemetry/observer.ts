@@ -14,6 +14,7 @@ export type ObserverOptions = {
   tracerProvider: BasicTracerProvider;
   instrumentationScope: { name: string; version?: string };
   spanNamePrefix?: string;
+  attributePrefix?: string;
   captureContent?: boolean;
   captureHttpHeaders?: boolean;
   spanAttributes?: Record<string, string>;
@@ -21,20 +22,33 @@ export type ObserverOptions = {
   spanStartTimes?: WeakMap<object, number>;
 };
 
-const reservedAttributes = new Set([
-  "session.id",
-  "opencode.session.parent_id",
-  "opencode.run.id",
-  "opencode.interaction.id",
-  "opencode.agent.type",
-  "ai.agent.skill.name",
-  "error.type",
-  "exception.message",
-  "status.code",
-  "status.message",
-]);
-
 export function createObserver(options: ObserverOptions): Observer {
+  const attributePrefix = options.attributePrefix ?? "opencode.";
+  // Protect both schema spellings without reserving the whole configurable namespace.
+  const reservedAttributes = new Set([
+    "session.id",
+    "ai.agent.skill.name",
+    "error.type",
+    "exception.message",
+    "status.code",
+    "status.message",
+    ...["opencode.", attributePrefix].flatMap((prefix) =>
+      ["session.parent_id", "run.id", "interaction.id", "agent.type"].map(
+        (key) => `${prefix}${key}`,
+      ),
+    ),
+  ]);
+  const reservedPrefixes = [
+    "openinference.",
+    "gen_ai.",
+    "http.request.header.",
+    "http.response.header.",
+    ...["opencode.", attributePrefix].flatMap((prefix) =>
+      ["llm.", "provider.", "message.", "compaction.", "permission.", "tool.", "skill."].map(
+        (key) => `${prefix}${key}`,
+      ),
+    ),
+  ];
   const finishedSpanRegistry = createFinishedSpanRegistry();
   const spanOptions = {
     finishedSpanRegistry,
@@ -44,24 +58,13 @@ export function createObserver(options: ObserverOptions): Observer {
     ),
     rootContext: ROOT_CONTEXT,
     spanNamePrefix: options.spanNamePrefix ?? "opencode.",
+    attributePrefix,
     captureContent: options.captureContent ?? false,
     spanAttributes: Object.fromEntries(
       Object.entries(options.spanAttributes ?? {}).filter(
         ([key]) =>
           !reservedAttributes.has(key) &&
-          ![
-            "openinference.",
-            "gen_ai.",
-            "opencode.llm.",
-            "opencode.provider.",
-            "opencode.message.",
-            "opencode.compaction.",
-            "opencode.permission.",
-            "opencode.tool.",
-            "opencode.skill.",
-            "http.request.header.",
-            "http.response.header.",
-          ].some((prefix) => key.startsWith(prefix)),
+          !reservedPrefixes.some((prefix) => key.startsWith(prefix)),
       ),
     ),
   };

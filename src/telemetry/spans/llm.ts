@@ -74,8 +74,8 @@ export function createLlmSpans(
         ? firstChunkElapsedMs / 1000
         : undefined;
     spanState.span.setAttributes({
-      "opencode.llm.timing.source": timing ? "fetch" : "message",
-      "opencode.llm.timing.fallback_reason":
+      [`${options.attributePrefix}llm.timing.source`]: timing ? "fetch" : "message",
+      [`${options.attributePrefix}llm.timing.fallback_reason`]:
         input.timing?.source === "message"
           ? input.timing.fallbackReason
           : input.timing && !timing
@@ -96,7 +96,7 @@ export function createLlmSpans(
             "gen_ai.usage.reasoning.output_tokens": input.usage?.reasoningTokens,
             "gen_ai.usage.cache_read.input_tokens": input.usage?.cacheReadTokens,
             "gen_ai.usage.cache_write.input_tokens": input.usage?.cacheWriteTokens,
-            "opencode.llm.cost.total": input.cost,
+            [`${options.attributePrefix}llm.cost.total`]: input.cost,
           }
         : {}),
     });
@@ -166,7 +166,7 @@ export function createLlmSpans(
       }
 
       if (input.retryCount !== undefined) {
-        spanState.span.setAttribute("opencode.llm.retry_count", input.retryCount);
+        spanState.span.setAttribute(`${options.attributePrefix}llm.retry_count`, input.retryCount);
       }
 
       if (input.request) {
@@ -242,17 +242,17 @@ export function createLlmSpans(
               "gen_ai.operation.name": input.operation,
               "gen_ai.provider.name": input.providerName,
               "gen_ai.request.model": input.model,
-              "opencode.message.id": input.id,
+              [`${options.attributePrefix}message.id`]: input.id,
               "gen_ai.agent.name": input.agentName,
-              "opencode.agent.type": input.agentType,
-              "opencode.session.parent_id": input.parentSessionID,
-              "opencode.compaction.id": input.compactionID,
+              [`${options.attributePrefix}agent.type`]: input.agentType,
+              [`${options.attributePrefix}session.parent_id`]: input.parentSessionID,
+              [`${options.attributePrefix}compaction.id`]: input.compactionID,
               "gen_ai.request.stream": input.stream,
               "gen_ai.request.temperature": input.parameters?.temperature,
               "gen_ai.request.top_p": input.parameters?.topP,
               "gen_ai.request.top_k": input.parameters?.topK,
               "gen_ai.request.max_tokens": input.parameters?.maxOutputTokens,
-              "opencode.llm.retry_count": 0,
+              [`${options.attributePrefix}llm.retry_count`]: 0,
               ...(options.captureContent && input.fallbackInputText !== undefined
                 ? { "gen_ai.input.messages": encodeTextMessage("user", input.fallbackInputText) }
                 : {}),

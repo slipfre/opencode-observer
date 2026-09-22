@@ -13,6 +13,7 @@ export type TelemetryOptions = {
   captureContent: boolean;
   captureHttpHeaders?: boolean;
   spanNamePrefix: string;
+  attributePrefix: string;
   otlpHeaders: Record<string, string>;
   otlpTimeoutMillis: number;
   batchExportTimeoutMillis: number;
@@ -66,6 +67,7 @@ export function createTelemetry(config: TelemetryOptions): Observer {
     tracerProvider,
     instrumentationScope: { name, version },
     spanNamePrefix: config.spanNamePrefix,
+    attributePrefix: config.attributePrefix,
     captureContent: config.captureContent,
     captureHttpHeaders: config.captureHttpHeaders,
     spanAttributes: config.spanAttributes,

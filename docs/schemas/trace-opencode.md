@@ -4,7 +4,11 @@
 
 [期望规范](trace.md) 定义目标拓扑与字段语义；本文沿用相同的 span 章节顺序，逐项说明如何落地。尚未导出的目标字段集中列在[第 14 节](#14-与期望规范的差距)，不列为已实现属性。行为识别机制见[适配层设计](../adapter.md)，层间接口见 [Observer 契约](../../src/contract/observer.ts)。
 
-默认 span 名称前缀为 `opencode.`；设置 `OPENCODE_TRACE_PREFIX` 后替换此前缀。本文保留 `run`、`interaction`、`llm` 等 OpenCode 专用 span 名称，通过 `gen_ai.operation.name` 表达标准操作语义。这是 GenAI 规范允许的框架专用命名约定；前缀只影响 span 名称，不影响 attribute key 或 operation 值。
+默认 span 名称前缀为 `opencode.`；通过 `tracePrefix` / `OPENCODE_TRACE_PREFIX` 替换此前缀。本文保留 `run`、`interaction`、`llm` 等 OpenCode 专用 span 名称，通过 `gen_ai.operation.name` 表达标准操作语义。这是 GenAI 规范允许的框架专用命名约定；名称前缀只影响 span 名称。
+
+插件生成的内建 `opencode.*` span 属性键通过独立的 `attributePrefix` / `OPENCODE_ATTRIBUTE_PREFIX` 配置前缀，默认 `opencode.`，不继承名称前缀。两项均原样拼接，不自动补 `.`，空字符串表示移除对应前缀。本文属性表使用默认键名；例如属性前缀为 `app.` 时，内建 `opencode.llm.retry_count` 导出为 `app.llm.retry_count`，不同时导出旧键。
+
+属性值、operation 值、标准属性和 `ai.agent.skill.name` 保持不变；用户显式配置的 `spanAttributes` 与 `resourceAttributes` 保留原键名。`spanAttributes` 中受保护的内建字段按默认前缀和配置前缀同时过滤，避免伪造观测结果或绕过正文采集；其他自定义键（例如 `opencode.custom.tag`）原样保留。
 
 ## 1. Schema 约定
 
