@@ -1,6 +1,6 @@
 # Trace Schema：OpenCode 实现
 
-本文描述当前 opencode-observer 在 OpenCode hooks/events 与受支持的 AI SDK 生命周期回调下，实际通过 OTLP HTTP/JSON 导出的 trace 结构、span attributes、数据来源和测量限制。它是读取现有导出数据、实现适配和编写测试的依据。
+本文描述当前 opencode-observer 在 OpenCode hooks/events 与受支持的 AI SDK 生命周期回调下，实际通过 OTLP 导出的 trace 结构、span attributes、数据来源和测量限制。默认传输协议为 HTTP/JSON，也可配置 HTTP/Protobuf 或 gRPC；协议选择不改变 span 结构和属性语义。它是读取现有导出数据、实现适配和编写测试的依据。
 
 [期望规范](trace.md) 定义目标拓扑与字段语义；本文沿用相同的 span 章节顺序，逐项说明如何落地。尚未导出的目标字段集中列在[第 14 节](#14-与期望规范的差距)，不列为已实现属性。行为识别机制见[适配层设计](../adapter.md)，层间接口见 [Observer 契约](../../src/contract/observer.ts)。
 

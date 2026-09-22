@@ -6,9 +6,10 @@ test("telemetry defaults to disabled and does not parse unused exporter settings
   expect(loadConfig({ enabled: false, endpoint: "invalid" }, {})).toEqual({ enabled: false });
 });
 
-test("enabled defaults use OTLP HTTP and leave content capture off", () => {
+test("enabled defaults use OTLP HTTP/JSON and leave content capture off", () => {
   expect(loadConfig({ enabled: true }, {})).toMatchObject({
     enabled: true,
+    otlpProtocol: "http/json",
     endpoint: "http://localhost:4318/v1/traces",
     spanNamePrefix: "opencode.",
     attributePrefix: "opencode.",
@@ -20,6 +21,73 @@ test("enabled defaults use OTLP HTTP and leave content capture off", () => {
     batchExportTimeoutMillis: 30_000,
     forceFlushTimeoutMillis: 30_000,
   });
+});
+
+test.each(["http/json", "http/protobuf", "grpc"])(
+  "OTLP protocol %s is configurable through options and the environment",
+  (otlpProtocol) => {
+    const expected = {
+      otlpProtocol,
+      endpoint:
+        otlpProtocol === "grpc" ? "http://localhost:4317/" : "http://localhost:4318/v1/traces",
+    };
+
+    expect(loadConfig({ enabled: true, otlpProtocol }, {})).toMatchObject(expected);
+    expect(loadConfig({ enabled: true }, { OPENCODE_OTLP_PROTOCOL: otlpProtocol })).toMatchObject(
+      expected,
+    );
+    expect(
+      loadConfig({ enabled: true, otlpProtocol }, { OPENCODE_OTLP_PROTOCOL: "invalid" }),
+    ).toMatchObject(expected);
+    expect(
+      loadConfig(
+        { enabled: true, otlpProtocol, endpoint: "https://collector:1234" },
+        { OPENCODE_OTLP_ENDPOINT: "http://ignored:4321" },
+      ),
+    ).toMatchObject({
+      endpoint:
+        otlpProtocol === "grpc" ? "https://collector:1234/" : "https://collector:1234/v1/traces",
+    });
+  },
+);
+
+test("invalid OTLP protocols are rejected only when telemetry is enabled", () => {
+  for (const otlpProtocol of ["", "HTTP/JSON", "http", "protobuf", "invalid", true, 1, {}, []]) {
+    expect(() => loadConfig({ enabled: true, otlpProtocol }, {})).toThrow("otlpProtocol");
+    expect(() =>
+      loadConfig({ enabled: true }, { OPENCODE_OTLP_PROTOCOL: String(otlpProtocol) }),
+    ).toThrow("otlpProtocol");
+    expect(loadConfig({ otlpProtocol }, { OPENCODE_OTLP_PROTOCOL: "invalid" })).toEqual({
+      enabled: false,
+    });
+  }
+});
+
+test.each(["http/json", "http/protobuf"])(
+  "OTLP %s appends the trace path once and preserves custom paths",
+  (otlpProtocol) => {
+    for (const endpoint of [
+      "https://collector/otel",
+      "https://collector/otel/",
+      "https://collector/otel/v1/traces",
+    ]) {
+      expect(loadConfig({ enabled: true, otlpProtocol, endpoint }, {})).toMatchObject({
+        endpoint: "https://collector/otel/v1/traces",
+      });
+    }
+  },
+);
+
+test("OTLP gRPC rejects endpoints whose path, query, or fragment would be ignored", () => {
+  for (const endpoint of [
+    "http://collector/v1/traces",
+    "http://collector/otel",
+    "http://collector?token=value",
+    "http://collector#fragment",
+    "grpc://collector:4317",
+  ]) {
+    expect(() => loadConfig({ enabled: true, otlpProtocol: "grpc", endpoint }, {})).toThrow("OTLP");
+  }
 });
 
 test.each([

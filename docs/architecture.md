@@ -39,12 +39,12 @@ adapter → contract ← telemetry
 
 下表为各目录允许的依赖，未列出的跨层依赖均禁止；类型导入、重导出和动态加载同样受限。
 
-| 目录             | 允许的依赖                                 |
-| ---------------- | ------------------------------------------ |
-| `src/adapter/`   | 本层、契约、OpenCode SDK、AI SDK、平台库   |
-| `src/contract/`  | 本层契约类型                               |
-| `src/telemetry/` | 本层、契约、OTel SDK、平台库、包版本元数据 |
-| `src/user/`      | 本模块、平台库                             |
+| 目录             | 允许的依赖                                              |
+| ---------------- | ------------------------------------------------------- |
+| `src/adapter/`   | 本层、契约、OpenCode SDK、AI SDK、平台库                |
+| `src/contract/`  | 本层契约类型                                            |
+| `src/telemetry/` | 本层、契约、OTel SDK、gRPC 传输库、平台库、包版本元数据 |
+| `src/user/`      | 本模块、平台库                                          |
 
 `user` 是三层之外的独立身份模块，由插件初始化模块装配，见第 3 节。
 
@@ -77,7 +77,7 @@ coordinator 在接受新 run 时显式调用各 tracker 的 `open(run)` 登记�
 
 内部依赖方向为 `factory → observer → spans`：工厂装配 OTel SDK/exporter，Observer 实现观测契约并协调记录、导出与关闭，span 模块维护遥测状态及数据映射。span 模块不反向依赖工厂或 Observer。
 
-这里的 Observer 是契约的具体实现，其接口定义仍属于契约层。OTLP 编码和传输使用 SDK/exporter，不自行实现协议。
+这里的 Observer 是契约的具体实现，其接口定义仍属于契约层。OTLP 编码和传输使用 SDK/exporter，不自行实现协议。遥测工厂按 `otlpProtocol` 按需加载 HTTP/JSON、HTTP/Protobuf 或 gRPC exporter，默认使用 `http/json`。HTTP 协议默认使用 4318 端口并补齐 `/v1/traces`；gRPC 默认使用 4317 端口，不追加路径。`otlpHeaders` 在 gRPC 下转换为 metadata，其余导出超时和 span 处理逻辑共用。
 
 LLM 在请求准备阶段创建 span 以传播上下文；fetch 计时边界后到时，通过 `LlmFinish.timing` 提供。遥测层保留相同 span ID，用实例内 WeakMap 将实际起点交给时间处理器，在 BatchSpanProcessor 之前创建只读导出视图，校准 startTime/duration，不修改 SDK span 的只读字段。结束时间和首块耗时同步使用选定边界；首块终点由 `LlmUpdate.firstChunkObservedAt` 暂存，在收尾确定起点后计算。没有校准时按原消息边界导出；不把适配层的 fetch 对象交给遥测层。
 

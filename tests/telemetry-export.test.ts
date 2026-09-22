@@ -1,6 +1,54 @@
 import { expect, test } from "bun:test";
+import { startOtlpReceiver } from "../e2e/support/otlp-receiver.js";
 import { loadConfig } from "../src/config.js";
 import { createTelemetry } from "../src/telemetry/factory.js";
+
+test.each(["http/json", "http/protobuf", "grpc"])(
+  "OTLP %s exports a span and collector headers through the selected transport",
+  async (otlpProtocol) => {
+    using receiver = await startOtlpReceiver(0, otlpProtocol);
+    const config = loadConfig(
+      {
+        enabled: true,
+        otlpProtocol,
+        endpoint: receiver.endpoint,
+        otlpHeaders: { authorization: "Bearer local-test-token" },
+      },
+      {},
+    );
+    if (!config.enabled) {
+      throw new Error("Expected enabled telemetry");
+    }
+
+    const observer = await createTelemetry(config);
+    try {
+      observer.startRun({
+        sessionID: "s1",
+        id: "u1",
+        startedAt: 1000,
+        parentTool: undefined,
+        parentSessionID: undefined,
+      });
+      observer.finishRun({ sessionID: "s1", id: "u1", endedAt: 2000, output: undefined });
+      await observer.flush();
+
+      expect(receiver.errors).toEqual([]);
+      expect(receiver.spans()).toMatchObject([
+        {
+          name: "opencode.run",
+          startTimeUnixNano: "1000000000",
+          endTimeUnixNano: "2000000000",
+          attributes: { "session.id": "s1" },
+        },
+      ]);
+      expect(receiver.spans()[0]!.traceId).toMatch(/^[0-9a-f]{32}$/);
+      expect(receiver.headers).toHaveLength(1);
+      expect(receiver.headers[0]!.get("authorization")).toBe("Bearer local-test-token");
+    } finally {
+      await observer.shutdown();
+    }
+  },
+);
 
 test.each([
   { option: "otlpTimeoutMillis", error: "Request timed out" },
@@ -32,7 +80,7 @@ test.each([
     throw new Error("Expected enabled telemetry");
   }
 
-  const observer = createTelemetry(config);
+  const observer = await createTelemetry(config);
   try {
     observer.startRun({
       sessionID: "s1",
@@ -75,7 +123,7 @@ test("configured export budget permits retrying the same batch after a temporary
     throw new Error("Expected enabled telemetry");
   }
 
-  const observer = createTelemetry(config);
+  const observer = await createTelemetry(config);
   try {
     observer.startRun({
       sessionID: "s1",

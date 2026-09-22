@@ -1048,7 +1048,7 @@ test.each(["options", "environment"])(
       throw new Error("Expected enabled telemetry");
     }
 
-    const telemetry = createTelemetry(config);
+    const telemetry = await createTelemetry(config);
 
     for (const id of ["u1", "u2"]) {
       telemetry.startRun({

@@ -43,7 +43,7 @@ export const ObserverPlugin: Plugin = async (input, options) => {
       return;
     }
 
-    const observer = createTelemetry({
+    const observer = await createTelemetry({
       ...config,
       serviceVersion,
       spanAttributes: {
@@ -51,6 +51,11 @@ export const ObserverPlugin: Plugin = async (input, options) => {
         ...config.spanAttributes,
       },
     });
+    if (state.disposed) {
+      await observer.shutdown();
+      return;
+    }
+
     state.coordinator = createCoordinator({
       observer,
       captureContent: config.captureContent,

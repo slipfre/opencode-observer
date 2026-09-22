@@ -61,7 +61,9 @@ test("runtime imports stay within each layer and its allowed dependencies", asyn
 
             if (
               layer === "telemetry" &&
-              (dependency.path.startsWith("@opentelemetry/") || dependency.path.startsWith("node:"))
+              (dependency.path.startsWith("@opentelemetry/") ||
+                dependency.path === "@grpc/grpc-js" ||
+                dependency.path.startsWith("node:"))
             ) {
               return [];
             }

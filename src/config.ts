@@ -8,15 +8,27 @@ export function loadConfig(
     return { enabled: false as const };
   }
 
+  const otlpProtocol = options.otlpProtocol ?? env.OPENCODE_OTLP_PROTOCOL ?? "http/json";
+  if (otlpProtocol !== "http/json" && otlpProtocol !== "http/protobuf" && otlpProtocol !== "grpc") {
+    throw new Error('otlpProtocol must be "http/json", "http/protobuf", or "grpc"');
+  }
+
   const endpoint = new URL(
-    parseString(options.endpoint ?? env.OPENCODE_OTLP_ENDPOINT, "http://localhost:4318"),
+    parseString(
+      options.endpoint ?? env.OPENCODE_OTLP_ENDPOINT,
+      otlpProtocol === "grpc" ? "http://localhost:4317" : "http://localhost:4318",
+    ),
   );
 
   if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
     throw new Error("OTLP endpoint must use HTTP or HTTPS");
   }
 
-  if (!endpoint.pathname.endsWith("/v1/traces")) {
+  if (otlpProtocol === "grpc" && (endpoint.pathname !== "/" || endpoint.search || endpoint.hash)) {
+    throw new Error("OTLP gRPC endpoint must not include a path, query, or fragment");
+  }
+
+  if (otlpProtocol !== "grpc" && !endpoint.pathname.endsWith("/v1/traces")) {
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/v1/traces`;
   }
 
@@ -35,6 +47,7 @@ export function loadConfig(
 
   return {
     enabled: true as const,
+    otlpProtocol: otlpProtocol as "http/json" | "http/protobuf" | "grpc",
     endpoint: endpoint.toString(),
     captureContent: parseBoolean(options.captureContent ?? env.OPENCODE_CAPTURE_CONTENT, false),
     captureHttpHeaders: parseBoolean(

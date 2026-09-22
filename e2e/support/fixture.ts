@@ -12,6 +12,7 @@ type FixtureOptions = {
   pluginOptions?: Record<string, unknown>;
   provider?: Config["provider"];
   otlpDelayMs?: number;
+  otlpProtocol?: "http/json" | "http/protobuf" | "grpc";
   autoCompact?: boolean;
   permission?: Record<string, "ask" | "allow" | "deny">;
   env?: Record<string, string>;
@@ -24,7 +25,7 @@ export async function withE2EFixture(
   test: (fixture: {
     directory: string;
     llm: ReturnType<typeof startFakeLlm>;
-    otlp: ReturnType<typeof startOtlpReceiver>;
+    otlp: Awaited<ReturnType<typeof startOtlpReceiver>>;
     run(
       prompt: string,
       args?: string[],
@@ -60,7 +61,7 @@ export async function withE2EFixture(
   };
   const directory = workspace.directory;
   using llm = startFakeLlm(options.replies);
-  using otlp = startOtlpReceiver(options.otlpDelayMs);
+  using otlp = await startOtlpReceiver(options.otlpDelayMs, options.otlpProtocol);
   const processes = new Set<Bun.Subprocess>();
   const results: CliRunResult[] = [];
 

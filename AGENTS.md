@@ -1,6 +1,6 @@
 ## Project Overview
 
-`opencode-observer` is an OpenCode observability plugin written in TypeScript and developed, built, and tested with Bun. It observes OpenCode hooks/events and supported AI SDK lifecycle callbacks, creates OpenTelemetry spans, and exports traces over OTLP HTTP/JSON. The current implementation covers run, interaction, LLM, tool, skill.load, compaction, and permission.check spans.
+`opencode-observer` is an OpenCode observability plugin written in TypeScript and developed, built, and tested with Bun. It observes OpenCode hooks/events and supported AI SDK lifecycle callbacks, creates OpenTelemetry spans, and exports traces over OTLP HTTP/JSON by default, with configurable HTTP/Protobuf and gRPC support. The current implementation covers run, interaction, LLM, tool, skill.load, compaction, and permission.check spans.
 
 ### Goals
 

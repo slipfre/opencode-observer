@@ -1,5 +1,4 @@
 import { machine, platform } from "node:os";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { name, version } from "../../package.json";
@@ -10,6 +9,7 @@ import { createTimingProcessor } from "./timing.js";
 export type TelemetryOptions = {
   serviceVersion?: string;
   endpoint: string;
+  otlpProtocol: "http/json" | "http/protobuf" | "grpc";
   captureContent: boolean;
   captureHttpHeaders?: boolean;
   spanNamePrefix: string;
@@ -23,7 +23,8 @@ export type TelemetryOptions = {
   spanAttributeCountLimit: number;
 };
 
-export function createTelemetry(config: TelemetryOptions): Observer {
+export async function createTelemetry(config: TelemetryOptions): Promise<Observer> {
+  const exporter = await createExporter(config);
   const spanStartTimes = new WeakMap<object, number>();
   const hostArchByMachine: Record<string, string> = {
     x86_64: "amd64",
@@ -50,14 +51,7 @@ export function createTelemetry(config: TelemetryOptions): Observer {
     forceFlushTimeoutMillis: config.forceFlushTimeoutMillis,
     spanProcessors: [
       createTimingProcessor(
-        new BatchSpanProcessor(
-          new OTLPTraceExporter({
-            url: config.endpoint,
-            headers: config.otlpHeaders,
-            timeoutMillis: config.otlpTimeoutMillis,
-          }),
-          { exportTimeoutMillis: config.batchExportTimeoutMillis },
-        ),
+        new BatchSpanProcessor(exporter, { exportTimeoutMillis: config.batchExportTimeoutMillis }),
         spanStartTimes,
       ),
     ],
@@ -73,4 +67,23 @@ export function createTelemetry(config: TelemetryOptions): Observer {
     spanAttributes: config.spanAttributes,
     spanStartTimes,
   });
+}
+
+async function createExporter(config: TelemetryOptions) {
+  const options = { url: config.endpoint, timeoutMillis: config.otlpTimeoutMillis };
+  if (config.otlpProtocol === "grpc") {
+    const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-grpc");
+    const { Metadata } = await import("@grpc/grpc-js");
+    const metadata = new Metadata();
+    Object.entries(config.otlpHeaders).forEach(([key, value]) => metadata.set(key, value));
+    return new OTLPTraceExporter({ ...options, metadata });
+  }
+
+  if (config.otlpProtocol === "http/protobuf") {
+    const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-proto");
+    return new OTLPTraceExporter({ ...options, headers: config.otlpHeaders });
+  }
+
+  const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
+  return new OTLPTraceExporter({ ...options, headers: config.otlpHeaders });
 }
