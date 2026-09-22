@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { Config } from "@opencode-ai/plugin";
 import { startFakeLlm, type LlmReply } from "./fake-llm.js";
 import { startOtlpReceiver } from "./otlp-receiver.js";
 
@@ -9,6 +10,7 @@ type FixtureOptions = {
   replies: LlmReply[];
   pluginEntry?: string;
   pluginOptions?: Record<string, unknown>;
+  provider?: Config["provider"];
   otlpDelayMs?: number;
   autoCompact?: boolean;
   permission?: Record<string, "ask" | "allow" | "deny">;
@@ -89,10 +91,15 @@ export async function withE2EFixture(
         ],
       ],
       provider: {
+        ...options.provider,
         test: {
           name: "Test",
           npm: "@ai-sdk/openai-compatible",
-          options: { apiKey: "e2e-local-key", baseURL: llm.url },
+          options: {
+            apiKey: "e2e-local-key",
+            baseURL: llm.url,
+            ...options.provider?.test?.options,
+          },
           models: {
             "test-model": {
               name: "Test Model",

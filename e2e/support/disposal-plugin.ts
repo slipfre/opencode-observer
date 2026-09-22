@@ -13,6 +13,10 @@ export const DisposalObserverPlugin: Plugin = async (input, options) => {
 
   return {
     ...hooks,
+    async config(config) {
+      await hooks.config?.(config);
+      Object.assign(installed, snapshot());
+    },
     async dispose() {
       const before = snapshot();
       await hooks.dispose?.();

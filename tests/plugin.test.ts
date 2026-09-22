@@ -90,6 +90,7 @@ test("tool, permission and compaction with summary LLM export through plugin eve
     endpoint: new URL("/v1/traces", server.url).toString(),
   });
   hooks.push(hook);
+  await hook.config?.({});
   const user: UserMessage = {
     id: "u1",
     sessionID: "s1",
@@ -377,6 +378,7 @@ test("AI SDK history and generated tool calls reach OTLP through the plugin", as
     endpoint: server.url.toString(),
   });
   hooks.push(hook);
+  await hook.config?.({});
   const user = {
     id: "u1",
     sessionID: "s1",
@@ -587,6 +589,7 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
     resourceAttributes: { "service.name": "test-opencode", "service.version": "custom-version" },
   });
   hooks.push(hook);
+  await hook.config?.({});
 
   const created = 1_789_000_000_000;
   const start = hook["chat.message"]?.(
@@ -791,6 +794,7 @@ test("idle and disposal await a slow collector while chat hooks remain independe
     endpoint: server.url.toString(),
   });
   hooks.push(hook);
+  await hook.config?.({});
 
   const message = (id: string) =>
     hook["chat.message"]?.(
@@ -904,6 +908,7 @@ test.each([
   });
   const hook = await ObserverPlugin(input, { enabled: true, endpoint: server.url.toString() });
   hooks.push(hook);
+  await hook.config?.({});
 
   await hook["chat.message"]?.(
     { sessionID: "s1" },
@@ -953,6 +958,62 @@ test("disabled plugin installs no hooks, listeners, or network requests", async 
 
   expect(await ObserverPlugin(pluginInput(server), { enabled: false })).toEqual({});
   expect(process.listenerCount("beforeExit")).toBe(listeners);
+  expect(requests).toEqual([]);
+});
+
+test.each([false, true])(
+  "configuration initializes once and handles disposal during setup: %s",
+  async (disposeDuringSetup) => {
+    const paths: string[] = [];
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        paths.push(new URL(request.url).pathname);
+        started.resolve();
+        await release.promise;
+        return Response.json({ healthy: true, version: "1.18.30" });
+      },
+    });
+    servers.push(server);
+    const hook = await ObserverPlugin(pluginInput(server), { enabled: true });
+    hooks.push(hook);
+
+    expect(paths).toEqual([]);
+
+    const first = hook.config?.({});
+    await started.promise;
+    const second = hook.config?.({});
+    const disposal = disposeDuringSetup ? hook.dispose?.() : undefined;
+    release.resolve();
+    await Promise.all([first, second, disposal]);
+    await hook.config?.({});
+    await hook.dispose?.();
+    await hook.config?.({});
+
+    expect(paths).toEqual(["/global/health"]);
+  },
+);
+
+test("disposal before configuration does not initialize telemetry", async () => {
+  const requests: string[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      requests.push(request.url);
+      return Response.json({});
+    },
+  });
+  servers.push(server);
+  const hook = await ObserverPlugin(pluginInput(server), { enabled: true });
+  hooks.push(hook);
+
+  await hook.dispose?.();
+  await hook.config?.({});
+
   expect(requests).toEqual([]);
 });
 

@@ -63,7 +63,7 @@ Scope 的名称和版本均读取插件 `package.json`，随构建嵌入产物�
 
 子 agent 的所有 span 使用自己的 `session.id` 和 `gen_ai.conversation.id`，父 session ID 只记录在 `opencode.session.parent_id`。[Session 字段][otel-session]、[User 字段][otel-user]
 
-`user.id` 由插件入口在初始化阶段直接调用独立 user 模块解析，使用 `OPENCODE_USER_ID_TOKEN` 调用 `OPENCODE_USER_ID_ENDPOINT`，从成功响应的 `result.ssicNo` 取得 ID；接口返回空值或 `unknown` 时视为未取得有效身份。入口等待查询和重试完成后，将有效 ID 合并进 `spanAttributes`；静态配置的 `user.id` 始终优先于查询结果。没有静态配置时，查询最终失败使用 `unknown` 兜底，因开关关闭、地址无效或 token 为空而跳过查询则省略。七类 span 从创建起统一使用此配置快照，tracker 和观测契约不传递用户身份。正文采集开关不控制该属性，身份不会自动刷新或写入 resource。模型请求头中的动态身份传播由 adapter 单独完成，规则见第 3.3 节。配置与重试规则见 [README](../../README.md#用户身份解析)。
+七类 span 从创建起统一使用初始化时的身份快照，tracker 和观测契约不传递用户身份。正文采集开关不控制 `user.id`，身份不会自动刷新或写入 resource。模型请求头中的身份字段由 adapter 单独编码，规则见第 3.3 节。
 
 默认每个 span 最多保留 4096 个 attributes，可通过 `OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT` 调整。超过限制时由 OTel SDK 丢弃多余字段；此数量上限不代表单个属性值或整个 OTLP 请求可以无限大。
 
@@ -112,7 +112,7 @@ opencode.run                         invoke_workflow / INTERNAL
 - 每个顶层 run 从空上下文创建独立 trace；子 run 通过已关联的 task tool 继承父 trace。
 - 插件不读取 `traceparent` / `tracestate` 选项或 `OPENCODE_TRACEPARENT` / `OPENCODE_TRACESTATE` 环境变量。
 - 遥测开启时，在可唯一关联的模型请求中注入当前 LLM span 的 W3C `traceparent`，使用该 span 的 trace ID、span ID 和采样标记。遥测层将非空 `traceState` 序列化为 `tracestate`；当前默认根上下文没有该值。
-- `OPENCODE_USER_ID_ENABLED` 同时控制动态身份查询和 adapter 的出站身份写入，默认开启。开启时在 `tracestate` 首位写入 `user_id=<动态查询结果>`；配置不完整、结果缺失、查询失败或 ID 无法合法表示时写入 `user_id=unknown`，不使用静态 span 属性兜底。ID 去除首尾空白后须为不含逗号或等号的 1～256 个可打印 ASCII 字符。已有同键替换，其余厂商项顺序保留，最多 32 项。身份拼装只发生在 adapter，不回写 SpanContext 或 OTLP traceState；关闭开关时只传播原有 trace 上下文。
+- 携带身份的模型请求在 `tracestate` 首位写入 `user_id=<用户 ID>`；身份结果缺失或 ID 无法合法表示时使用 `user_id=unknown`，不使用静态 span 属性兜底。ID 去除首尾空白后须为不含逗号或等号的 1～256 个可打印 ASCII 字符。已有同键替换，其余厂商项顺序保留，最多 32 项。身份拼装只发生在 adapter，不回写 SpanContext 或 OTLP traceState。
 - 下游传播不依赖正文采集开关。AI SDK 和 native LLM 路径均在 `chat.headers` 准备字段，但当前 OpenCode native HTTP 层会另行注入并覆盖 traceparent，尚不能保证下游关联到本插件 trace；native 自动回退到 AI SDK 时可正常传播。标题、未知或歧义归属、缺少父节点的调用省略注入。模型配置、其他插件及底层传输的同名 headers 冲突处理暂未覆盖。
 
 ## 4. Span 总览

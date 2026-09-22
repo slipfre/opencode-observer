@@ -2,6 +2,7 @@ import { lookupUser, type User } from "./lookup.js";
 
 // Undefined means lookup was skipped; null means it failed after all attempts.
 export async function resolveUser(
+  providers: Record<string, { options?: { apiKey?: unknown } }> | undefined,
   env: Record<string, string | undefined> = process.env,
 ): Promise<User | null | undefined> {
   if (!isUserIDEnabled(env)) {
@@ -9,7 +10,10 @@ export async function resolveUser(
   }
 
   const endpoint = env.OPENCODE_USER_ID_ENDPOINT?.trim();
-  const token = env.OPENCODE_USER_ID_TOKEN?.trim();
+  const token = Object.values(providers ?? {})
+    .map((provider) => provider.options?.apiKey)
+    .find((apiKey): apiKey is string => typeof apiKey === "string" && apiKey.trim().length > 0)
+    ?.trim();
 
   if (!token || !endpoint || !URL.canParse(endpoint)) {
     return;
