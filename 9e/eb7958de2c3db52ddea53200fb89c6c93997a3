@@ -1,0 +1,61 @@
+src/config.ts
+  s_fbbd62489fda78::t_f336c79145c6de 46-49
+src/telemetry/factory.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 16,70
+src/telemetry/observer.ts
+  s_fbbd62489fda78::t_f336c79145c6de 36-38
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 17,26-35,39-51,61,67
+src/telemetry/spans/interaction.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 74,77-78
+src/telemetry/spans/compaction.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 43-44,77-81
+src/telemetry/spans/common.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 15,72-76,81-82
+tests/config.test.ts
+  s_fbbd62489fda78::t_ddf6c8b8c560cf 14,131-142
+  s_fbbd62489fda78::t_f336c79145c6de 110-130
+  s_fbbd62489fda78::t_66a12a7838072e 143-144
+docs/architecture.md
+  s_fbbd62489fda78::t_8b403e491ae38e 94-95
+src/telemetry/spans/run.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 82-83
+tests/attribute-prefix.test.ts
+  s_fbbd62489fda78::t_f336c79145c6de 51-61,63-129,131-210,212-250,252-254,256-265,277-280
+  s_fbbd62489fda78::t_ddf6c8b8c560cf 1-50,62,130,211,251,255,266-276,281-283
+docs/schemas/trace-opencode.md
+  s_fbbd62489fda78::t_8b403e491ae38e 7-11
+src/telemetry/spans/llm.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 77-78,99,169,245,247-249,255
+README.md
+  s_fbbd62489fda78::t_8b403e491ae38e 54-56
+  s_fbbd62489fda78::t_f336c79145c6de 43
+  s_fbbd62489fda78::t_aab4283fdcffcd 57
+docs/schemas/trace.md
+  s_fbbd62489fda78::t_8b403e491ae38e 57-59
+src/telemetry/spans/permission.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 38-39,76-80
+src/telemetry/spans/tool.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 72
+src/telemetry/spans/skill.ts
+  s_fbbd62489fda78::t_50b5e98c1e0ff9 39,72,76,118,120,122-123
+  s_fbbd62489fda78::t_f336c79145c6de 84-86
+e2e/attribute-prefix.e2e.test.ts
+  s_fbbd62489fda78::t_ddf6c8b8c560cf 1-10,14-36,40-54,58-67
+  s_fbbd62489fda78::t_f336c79145c6de 11-13,37-39,55-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9eeb7958de2c3db52ddea53200fb89c6c93997a3",
+  "prompts": {},
+  "sessions": {
+    "s_fbbd62489fda78": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c6bb-1ab6-7372-acbc-fa8125df45dd",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
