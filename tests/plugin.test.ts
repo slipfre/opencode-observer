@@ -1,5 +1,6 @@
 import { $, type Server } from "bun";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import { Socket } from "node:net";
 import type { Hooks, PluginInput } from "@opencode-ai/plugin";
 import { createOpencodeClient, type AssistantMessage, type UserMessage } from "@opencode-ai/sdk";
 import type { OpenCodeEvent } from "../src/adapter/opencode/coordinator.js";
@@ -48,7 +49,13 @@ afterEach(async () => {
 
 function pluginInput(server: Server<undefined>): PluginInput {
   return {
-    client: createOpencodeClient({ baseUrl: server.url.toString() }),
+    client: createOpencodeClient({
+      baseUrl: server.url.toString(),
+      fetch: (request) =>
+        new URL(request instanceof Request ? request.url : String(request)).pathname === "/log"
+          ? Promise.resolve(Response.json(true))
+          : fetch(request),
+    }),
     project: { id: "project", worktree: "/test", time: { created: 1000 } },
     directory: "/test",
     worktree: "/test",
@@ -955,10 +962,189 @@ test("disabled plugin installs no hooks, listeners, or network requests", async 
   servers.push(server);
 
   const listeners = process.listenerCount("beforeExit");
+  const input = pluginInput(server);
+  input.client = createOpencodeClient({ baseUrl: server.url.toString() });
+  using connect = spyOn(Socket.prototype, "connect");
 
-  expect(await ObserverPlugin(pluginInput(server), { enabled: false })).toEqual({});
+  expect(await ObserverPlugin(input, { enabled: false })).toEqual({});
   expect(process.listenerCount("beforeExit")).toBe(listeners);
   expect(requests).toEqual([]);
+  expect(connect).not.toHaveBeenCalled();
+});
+
+test.each(["http/json", "http/protobuf", "grpc"])(
+  "plugin logs initialization and one TCP probe for %s without exposing credentials",
+  async (otlpProtocol) => {
+    const requests: string[] = [];
+    const logs: Array<{
+      service: string;
+      level: string;
+      message: string;
+      extra: Record<string, unknown>;
+    }> = [];
+    const reported = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        requests.push(request.url);
+        return Response.json({});
+      },
+    });
+    servers.push(server);
+    const input = pluginInput(server);
+    input.client = createOpencodeClient({
+      baseUrl: "http://opencode.invalid",
+      fetch: async (request) => {
+        if (request.method === "GET") {
+          return Response.json({ healthy: true, version: "1.18.30" });
+        }
+
+        const entry = (await request.json()) as (typeof logs)[number];
+        logs.push(entry);
+        if (entry.message === "OTLP endpoint TCP reachable") {
+          reported.resolve();
+        }
+        return Response.json(true);
+      },
+    });
+    const endpoint = new URL(server.url);
+    if (otlpProtocol !== "grpc") {
+      endpoint.username = "private-user";
+      endpoint.password = "private-password";
+      endpoint.search = "?token=private-query";
+      endpoint.hash = "private-fragment";
+    }
+    const hook = await ObserverPlugin(input, {
+      enabled: true,
+      endpoint: endpoint.toString(),
+      otlpProtocol,
+      otlpHeaders: { authorization: "private-header" },
+    });
+    hooks.push(hook);
+
+    await Promise.all([hook.config?.({}), hook.config?.({})]);
+    await reported.promise;
+    await hook.config?.({});
+    await hook.dispose?.();
+
+    const loggedEndpoint = new URL(
+      otlpProtocol === "grpc" ? "/" : "/v1/traces",
+      server.url,
+    ).toString();
+    expect(logs).toEqual([
+      {
+        service: "opencode-observer",
+        level: "info",
+        message: "Observer plugin initialized",
+        extra: {
+          version,
+          serviceVersion: "1.18.30",
+          endpoint: loggedEndpoint,
+          protocol: otlpProtocol,
+        },
+      },
+      {
+        service: "opencode-observer",
+        level: "info",
+        message: "OTLP endpoint TCP reachable",
+        extra: { endpoint: loggedEndpoint, protocol: otlpProtocol, ms: expect.any(Number) },
+      },
+    ]);
+    expect(JSON.stringify(logs)).not.toContain("private-");
+    expect(requests).toEqual([]);
+  },
+);
+
+test("an unreachable collector produces a warning without failing initialization", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({}) });
+  const input = pluginInput(server);
+  const endpoint = server.url.toString();
+  await server.stop(true);
+  const logs: Array<{ level: string; message: string; extra: Record<string, unknown> }> = [];
+  const reported = Promise.withResolvers<void>();
+  input.client = createOpencodeClient({
+    baseUrl: "http://opencode.invalid",
+    fetch: async (request) => {
+      if (request.method === "GET") {
+        return Response.json({ healthy: true, version: "1.18.30" });
+      }
+
+      const entry = (await request.json()) as (typeof logs)[number];
+      logs.push(entry);
+      if (entry.level === "warn") {
+        reported.resolve();
+      }
+      return Response.json(true);
+    },
+  });
+  const hook = await ObserverPlugin(input, { enabled: true, endpoint });
+  hooks.push(hook);
+
+  await hook.config?.({});
+  await reported.promise;
+  await hook.dispose?.();
+
+  expect(logs.map((entry) => entry.message)).toEqual([
+    "Observer plugin initialized",
+    "OTLP endpoint TCP unreachable; exports may fail",
+  ]);
+  expect(logs[1]?.extra.error).toContain("ECONNREFUSED");
+});
+
+test.each(["throw", "reject", "pending"])(
+  "startup logging that will %s does not block initialization or disposal",
+  async (failure) => {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({}) });
+    servers.push(server);
+    const input = pluginInput(server);
+    input.client.app.log = (): Promise<never> => {
+      if (failure === "throw") {
+        throw new Error("Synchronous logging failure");
+      }
+      if (failure === "reject") {
+        return Promise.reject(new Error("Asynchronous logging failure"));
+      }
+      return new Promise(() => undefined);
+    };
+    const hook = await ObserverPlugin(input, { enabled: true, endpoint: server.url.toString() });
+    hooks.push(hook);
+
+    await hook.config?.({});
+    await hook.dispose?.();
+  },
+);
+
+test("configuration does not wait for the probe and disposal cancels it without late logging", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({}) });
+  servers.push(server);
+  const messages: string[] = [];
+  const input = pluginInput(server);
+  input.client = createOpencodeClient({
+    baseUrl: "http://opencode.invalid",
+    fetch: async (request) => {
+      if (request.method === "GET") {
+        return Response.json({ healthy: true, version: "1.18.30" });
+      }
+
+      messages.push(((await request.json()) as { message: string }).message);
+      return Response.json(true);
+    },
+  });
+  const hook = await ObserverPlugin(input, { enabled: true, endpoint: server.url.toString() });
+  hooks.push(hook);
+  using connect = spyOn(Socket.prototype, "connect").mockImplementation(function (this: Socket) {
+    return this;
+  });
+
+  await hook.config?.({});
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(connect.mock.results[0]?.value).toMatchObject({ destroyed: false });
+  await hook.dispose?.();
+  await Bun.sleep(0);
+
+  expect(connect.mock.results[0]?.value).toMatchObject({ destroyed: true });
+  expect(messages).toEqual(["Observer plugin initialized"]);
 });
 
 test.each([false, true])(

@@ -80,6 +80,16 @@ HTTP 协议会在地址路径末尾补齐 `/v1/traces`，已有该后缀时不�
 
 SDK 对可重试的网络错误和服务端响应进行有限的退避重试，重试同时受到时间预算和次数上限限制。超时不是每次重试独享的时长，增大它也不保证用满预算。最终发送失败的批次不会重新入队；缓存仅保留在内存中，不支持离线持久化或恢复后的可靠补报。
 
+### 启动日志与连通性探测
+
+遥测开启后，每个插件实例在首次配置完成时记录一条 `info` 日志 `Observer plugin initialized`，包含插件版本、可获取的 OpenCode 版本、导出协议和接收端地址。初始化成功表示插件已就绪，不代表数据已经上报成功。
+
+随后异步执行一次 TCP probe，最长 5 秒，不等待探测完成才返回配置回调。端口可达时记录 `info` 日志 `OTLP endpoint TCP reachable`；连接失败或超时时记录 `warn` 日志 `OTLP endpoint TCP unreachable; exports may fail`，包含耗时和错误原因。探测失败不禁用导出，也不阻止 OpenCode 执行任务；插件关闭时取消未完成的探测。遥测关闭时不记录这些日志或发起探测。
+
+日志通过 OpenCode 的 `client.app.log` 写入服务日志，service 为 `opencode-observer`。启动 OpenCode 时加 `--print-logs --log-level INFO` 可在终端查看。日志中的接收端地址省略用户名、密码、查询参数和片段，不记录 `otlpHeaders`。
+
+probe 只检查接收端主机和端口的 TCP 连通性，不发送 HTTP、gRPC 请求或测试 span，不验证 TLS、鉴权、OTLP 路径、协议兼容性或下游入库。它不是持续健康检查，后台上报的后续失败仍需结合接收端日志排查。
+
 ### 使用环境变量
 
 在 `opencode.json` 中只声明插件：

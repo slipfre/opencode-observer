@@ -227,6 +227,8 @@ describe("OpenCode run E2E", () => {
         requireSpans(fixture, result, 0);
 
         expect(result.stdout).toContain("telemetry is disabled");
+        expect(result.stderr).not.toContain("Observer plugin initialized");
+        expect(result.stderr).not.toContain("OTLP endpoint TCP");
         expect(fixture.llm.mainHits()).toHaveLength(1);
         expect(fixture.otlp.payloads).toEqual([]);
       },

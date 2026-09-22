@@ -25,6 +25,9 @@ test.each(
       const llm = oneSpan(spans, "e2e.llm");
 
       expect(result.stdout).toContain("protocol export completed");
+      expect(result.stderr).toContain("Observer plugin initialized");
+      expect(result.stderr).toContain("OTLP endpoint TCP reachable");
+      expect(result.stderr).not.toContain("OTLP endpoint TCP unreachable");
       expect(run.parentSpanId ?? "").toBe("");
       expect(interaction.parentSpanId).toBe(run.spanId);
       expect(llm.parentSpanId).toBe(interaction.spanId);

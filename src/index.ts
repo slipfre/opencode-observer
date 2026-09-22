@@ -1,4 +1,5 @@
 import type { Config, Plugin } from "@opencode-ai/plugin";
+import { version } from "../package.json";
 import { loadConfig } from "./config.js";
 
 export const ObserverPlugin: Plugin = async (input, options) => {
@@ -9,27 +10,34 @@ export const ObserverPlugin: Plugin = async (input, options) => {
   }
 
   const { createTelemetry } = await import("./telemetry/factory.js");
+  const { probeEndpoint } = await import("./telemetry/probe.js");
   const { createCoordinator } = await import("./adapter/opencode/coordinator.js");
   const { getOpenCodeVersion } = await import("./adapter/opencode/version.js");
   const { resolveUser, isUserIDEnabled } = await import("./user/resolve.js");
 
-  const log = async (error: unknown) => {
-    await input.client.app
-      .log({
-        signal: AbortSignal.timeout(1000),
-        body: {
-          service: "opencode-observer",
-          level: "error",
-          message: error instanceof Error ? error.message : "Trace processing failed",
-        },
-      })
+  const log = (
+    level: "info" | "warn" | "error",
+    message: string,
+    extra?: Record<string, unknown>,
+  ) => {
+    // Isolate synchronous throws and async failures without delaying host callbacks.
+    void Promise.resolve()
+      .then(() =>
+        input.client.app.log({
+          signal: AbortSignal.timeout(1000),
+          body: { service: "opencode-observer", level, message, extra },
+        }),
+      )
       .catch(() => undefined);
   };
+  const logError = (error: unknown) =>
+    log("error", error instanceof Error ? error.message : "Trace processing failed");
 
   const state = {
     setup: undefined as Promise<void> | undefined,
     coordinator: undefined as ReturnType<typeof createCoordinator> | undefined,
     disposed: false,
+    probe: new AbortController(),
   };
 
   const initialize = async (providers: Config["provider"]) => {
@@ -62,9 +70,36 @@ export const ObserverPlugin: Plugin = async (input, options) => {
       captureHttpHeaders: config.captureHttpHeaders,
       llmTimingMode: config.llmTimingMode,
       userIdentity: { enabled: userIDEnabled, id: user?.id },
-      log,
+      log: logError,
     });
-    await state.coordinator.startSdkModelCapture().catch(log);
+    await state.coordinator.startSdkModelCapture().catch(logError);
+    if (state.disposed) {
+      return;
+    }
+
+    const url = new URL(config.endpoint);
+    const endpoint = `${url.origin}${url.pathname}`;
+    log("info", "Observer plugin initialized", {
+      version,
+      serviceVersion,
+      endpoint,
+      protocol: config.otlpProtocol,
+    });
+    void probeEndpoint(config.endpoint, state.probe.signal)
+      .then((result) => {
+        if (state.disposed) {
+          return;
+        }
+
+        log(
+          result.ok ? "info" : "warn",
+          result.ok
+            ? "OTLP endpoint TCP reachable"
+            : "OTLP endpoint TCP unreachable; exports may fail",
+          { endpoint, protocol: config.otlpProtocol, ms: result.ms, error: result.error },
+        );
+      })
+      .catch(logError);
   };
 
   return {
@@ -78,6 +113,7 @@ export const ObserverPlugin: Plugin = async (input, options) => {
     },
     async dispose() {
       state.disposed = true;
+      state.probe.abort();
       const disposal = state.coordinator?.hooks.dispose();
       await state.setup;
       await disposal;
