@@ -6,45 +6,19 @@ OpenCode 可观测性插件，记录任务执行、用户交互、模型调用�
 
 ## 安装与使用
 
-支持 npm 包和单文件 JS 两种安装方式，两者均支持 OTLP HTTP/JSON、HTTP/Protobuf 和 gRPC。准备遥测接收端后，选择与接收端匹配的导出协议和地址，具体见 [OTLP 协议](#otlp-协议)。
+推荐从本项目的 GitHub Release 下载单文件 JS 安装，支持 OTLP HTTP/JSON、HTTP/Protobuf 和 gRPC。准备遥测接收端后，选择与接收端匹配的导出协议和地址，具体见 [OTLP 协议](#otlp-协议)。
 
-### npm 包
+本项目目前未发布到 npm registry。npm 上的同名包 `opencode-observer` 属于其他项目，请勿按该包名安装或在 `opencode.json` 中按该包名加载；指定版本号也不会加载本项目。
 
-在 OpenCode 的 `opencode.json` 中添加插件，以下以默认的 HTTP/JSON 协议为例：
+### 下载并加载单文件 JS
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    [
-      "opencode-observer",
-      {
-        "enabled": true,
-        "otlpProtocol": "http/json",
-        "endpoint": "http://localhost:4318",
-        "captureContent": true
-      }
-    ]
-  ]
-}
-```
+从 [GitHub Releases](https://github.com/slipfre/opencode-observer/releases) 选择版本并下载附件 `opencode-observer.js`，也可直接下载[最新正式版 JS](https://github.com/slipfre/opencode-observer/releases/latest/download/opencode-observer.js)。该文件包含插件运行所需的第三方依赖，由 OpenCode 的 Bun 运行时加载，无需为插件单独安装 npm 依赖。
 
-根据接收端设置 `otlpProtocol`（`http/json`、`http/protobuf` 或 `grpc`）和 `endpoint`。例如使用 gRPC 时，将协议设为 `grpc`，地址通常为 `http://localhost:4317`。启动 OpenCode 并执行任务后，即可在接收端查看 trace；默认服务名称为 `opencode`。
+下载后可选择自动加载并使用环境变量，或在 `opencode.json` 中显式加载并配置插件选项。
 
-上述示例同时开启遥测和正文采集。只需耗时、token 用量和错误等信息时，可移除 `captureContent` 或将其设为 `false`。
+#### 自动加载，使用环境变量
 
-### 单文件 JS
-
-使用独立构建产物 `dist/standalone/opencode-observer.js`，该文件包含插件运行所需的第三方依赖，由 OpenCode 的 Bun 运行时加载，无需为插件单独安装 npm 依赖。
-
-从源码构建时，在本仓库根目录运行：
-
-```sh
-bun install --frozen-lockfile
-bun run build:standalone
-```
-
-将生成的 `opencode-observer.js` 复制到以下任意一个位置：
+将下载的 `opencode-observer.js` 复制到以下任意一个位置：
 
 | 作用范围 | 文件位置                                                                                                       |
 | -------- | -------------------------------------------------------------------------------------------------------------- |
@@ -60,13 +34,61 @@ export OPENCODE_OTLP_ENDPOINT=http://localhost:4318
 opencode
 ```
 
-正文采集默认关闭，需要时设置 `OPENCODE_CAPTURE_CONTENT=true`。其他配置同样使用下表中的环境变量。升级时替换同一路径下的 JS 文件并重启 OpenCode；回退时换回旧版本文件。
+启动 OpenCode 并执行任务后，即可在接收端查看 trace；默认服务名称为 `opencode`。正文采集默认关闭，需要时设置 `OPENCODE_CAPTURE_CONTENT=true`。其他配置同样使用下表中的环境变量。
 
-不要同时保留 npm 安装、项目级文件和用户级文件等多个副本，以免重复采集。`dist/index.js` 是 npm 包入口，依赖外部包，不能替代上述独立构建文件。
+项目级和用户级插件目录只选择一个安装，以免重复采集。
+
+#### 在 opencode.json 中加载并配置
+
+将下载的 JS 文件保存为 `<项目目录>/.opencode/vendor/opencode-observer.js`，然后在项目根目录的 `opencode.json` 中添加以下 `plugin` 条目；已有其他插件时，保留原有条目：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    [
+      "./.opencode/vendor/opencode-observer.js",
+      {
+        "enabled": true,
+        "otlpProtocol": "http/json",
+        "endpoint": "http://localhost:4318",
+        "captureContent": false
+      }
+    ]
+  ]
+}
+```
+
+相对路径以声明该插件的 `opencode.json` 所在目录为基准。用户级配置也可使用相对路径，例如将 JS 放在 `~/.config/opencode/vendor/opencode-observer.js`，在 `~/.config/opencode/opencode.json` 中使用 `./vendor/opencode-observer.js`；设置了 `XDG_CONFIG_HOME` 时，配置目录为其下的 `opencode/`。
+
+也可使用绝对文件 URL，例如 Linux/macOS 的 `file:///opt/opencode-observer/opencode-observer.js` 或 Windows 的 `file:///D:/Tools/opencode-observer/opencode-observer.js`，请替换为实际文件位置。
+
+`plugin` 条目采用 `[本地文件路径, 插件选项]` 的形式，选项名称见下表。上述示例开启遥测，正文采集保持关闭，需要时将 `captureContent` 设为 `true`。保存配置后启动 OpenCode 即可使用，无需另设同名环境变量；插件选项优先于对应环境变量。
+
+显式加载时，将 JS 放在示例中的 `vendor/` 等非自动加载目录，移除项目级和用户级 `plugins/`（或 `plugin/`）目录中本插件的副本，以免自动发现与显式配置同时加载或覆盖插件选项。
+
+两种方式升级时均替换同一路径下的 JS 文件并重启 OpenCode；回退时换回旧版本文件。
+
+### 从源码构建
+
+也可在本仓库根目录运行：
+
+```sh
+bun install --frozen-lockfile
+bun run build:standalone
+```
+
+将生成的 `dist/standalone/opencode-observer.js` 按上述任一方式安装：复制到自动加载目录，或保存到其他目录并在 `opencode.json` 中显式加载。`dist/index.js` 是依赖外部包的构建入口，不能替代独立构建文件。
+
+### 从旧安装说明迁移
+
+如果曾按旧说明配置 npm 包加载，请先移除项目级和用户级 OpenCode 配置中指向 `opencode-observer` 的 `plugin` 条目，包括带版本号或选项的条目。如果还曾手动安装同名 npm 包，请在原安装位置用对应包管理器移除该依赖。
+
+然后按上述任一方式安装本项目的单文件 JS，并重启 OpenCode。选择自动加载时，将原插件选项按下表转换为环境变量，无需在 `opencode.json` 中声明插件；选择显式加载时，将原条目中的 npm 包名替换为下载文件的本地路径，保留原插件选项。
 
 ## 配置
 
-支持插件选项和环境变量，插件选项优先于对应环境变量。布尔环境变量接受 `true` / `false` / `1` / `0`。
+单文件自动加载时，使用环境变量配置；在 `opencode.json` 中显式加载时，可直接传入插件选项。插件选项优先于对应环境变量。布尔环境变量接受 `true` / `false` / `1` / `0`。
 
 | 插件选项                   | 环境变量                              | 默认值      | 说明                                                                           |
 | -------------------------- | ------------------------------------- | ----------- | ------------------------------------------------------------------------------ |
@@ -110,16 +132,7 @@ HTTP 协议会在地址路径末尾补齐 `/v1/traces`，已有该后缀时不�
 
 ### 使用环境变量
 
-使用 npm 安装时，在 `opencode.json` 中只声明插件；使用单文件 JS 自动加载时跳过此步骤：
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-observer"]
-}
-```
-
-在启动 OpenCode 的终端中设置环境变量，协议和地址需与接收端匹配，以下以 HTTP/JSON 为例：
+安装单文件 JS 后，在启动 OpenCode 的终端中设置环境变量，协议和地址需与接收端匹配。以下以 HTTP/JSON 为例，同时开启遥测和正文采集；只需耗时、token 用量和错误等信息时，省略 `OPENCODE_CAPTURE_CONTENT` 或将其设为 `false`：
 
 ```sh
 export OPENCODE_ENABLE_TELEMETRY=true
