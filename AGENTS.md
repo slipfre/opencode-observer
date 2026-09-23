@@ -57,11 +57,13 @@ bun install --frozen-lockfile
 bun run build
 ```
 
-`build` bundles `src/index.ts` as Bun-targeted ESM with external package dependencies and a linked source map, then generates TypeScript declarations using `tsconfig.build.json`. Output is written to `dist/`; both package entry points (`opencode-observer` and `opencode-observer/server`) resolve to `dist/index.js`.
+`build` runs both `build:package` and `build:standalone`. `build:package` bundles `src/index.ts` as Bun-targeted ESM with external package dependencies and a linked source map, then generates TypeScript declarations using `tsconfig.build.json`. Output is written to `dist/`; both package entry points (`opencode-observer` and `opencode-observer/server`) resolve to `dist/index.js`. `build:standalone` bundles third-party runtime dependencies into `dist/standalone/opencode-observer.js`, which users can copy directly into an OpenCode `plugins/` directory without installing plugin dependencies.
 
 `bun run check` runs formatting, lint, and type checks. Use `bun run format`, `bun run format:check`, `bun run lint`, `bun run lint:fix`, or `bun run typecheck` for individual development tasks.
 
-`bun pm pack` runs the prepack checks, unit tests, and build. The package includes `dist/`, `package.json`, README, and the MIT license.
+`bun pm pack` runs the prepack checks, unit tests, and build. The package includes `dist/` except `dist/standalone/`, plus `package.json`, README, and the MIT license. Distribute the standalone JS separately, for example as a Release attachment.
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which verifies the package version, runs checks and both test suites against a pinned OpenCode revision, and publishes the tested JS and npm tarball with checksums to GitHub Releases. See [Releasing](docs/releasing.md) for the release procedure and retry behavior. Keep release details out of README.
 
 ## Testing and Verification
 
@@ -92,6 +94,8 @@ bun run test:e2e
 Each E2E case uses isolated HOME/XDG temporary directories and random loopback ports, then cleans up processes, servers, and files. Set `OPENCODE_E2E_TMPDIR` to an existing parent directory to control temporary file placement. Each CLI invocation has a 45-second timeout; each test has a 60-second timeout. Missing OpenCode source or build output causes a failure rather than a skipped test. Failure diagnostics include CLI output, model requests, and OTLP payloads. E2E files participate in type checking but are excluded from the published build.
 
 Coverage includes trace structure, content and usage, disabled telemetry/content capture, retries and terminal errors, repeated session runs, real tools and failures, permission denial, foreground subtasks, independent root traces, ignored legacy trace context configuration, collector headers, and compaction success/failure. Assertions must reflect current measurement limits: normal status is `UNSET`, LLM spans require model-step evidence, and retry counts or first-chunk timing must not be presented as measured without precise attempt boundaries.
+
+Standalone coverage copies only the bundled JS into isolated project and user `plugins/` directories, leaves plugin dependencies uninstalled, and verifies automatic discovery, all three OTLP protocols, AI SDK callback capture, and disabled telemetry/content defaults.
 
 ### Required Checks After Changes
 

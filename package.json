@@ -13,7 +13,8 @@
     "url": "git+https://github.com/slipfre/opencode-observer.git"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/standalone"
   ],
   "type": "module",
   "main": "./dist/index.js",
@@ -31,7 +32,9 @@
     }
   },
   "scripts": {
-    "build": "bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --packages=external --sourcemap=linked && tsc -p tsconfig.build.json",
+    "build": "bun run build:package && bun run build:standalone",
+    "build:package": "bun build ./src/index.ts --outdir=./dist --target=bun --format=esm --packages=external --sourcemap=linked && tsc -p tsconfig.build.json",
+    "build:standalone": "bun build ./src/index.ts --outfile=./dist/standalone/opencode-observer.js --target=bun --format=esm --packages=bundle",
     "typecheck": "tsc --noEmit",
     "test": "bun test ./tests",
     "test:e2e": "bun run build && bun test ./e2e --timeout 60000",

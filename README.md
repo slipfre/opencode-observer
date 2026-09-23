@@ -6,7 +6,11 @@ OpenCode 可观测性插件，记录任务执行、用户交互、模型调用�
 
 ## 安装与使用
 
-准备支持 OTLP HTTP/JSON 的遥测接收端，然后在 OpenCode 的 `opencode.json` 中添加插件：
+支持 npm 包和单文件 JS 两种安装方式，两者均支持 OTLP HTTP/JSON、HTTP/Protobuf 和 gRPC。准备遥测接收端后，选择与接收端匹配的导出协议和地址，具体见 [OTLP 协议](#otlp-协议)。
+
+### npm 包
+
+在 OpenCode 的 `opencode.json` 中添加插件，以下以默认的 HTTP/JSON 协议为例：
 
 ```json
 {
@@ -16,6 +20,7 @@ OpenCode 可观测性插件，记录任务执行、用户交互、模型调用�
       "opencode-observer",
       {
         "enabled": true,
+        "otlpProtocol": "http/json",
         "endpoint": "http://localhost:4318",
         "captureContent": true
       }
@@ -24,9 +29,40 @@ OpenCode 可观测性插件，记录任务执行、用户交互、模型调用�
 }
 ```
 
-将 `endpoint` 替换为实际接收端地址。启动 OpenCode 并执行任务后，即可在接收端查看 trace；默认服务名称为 `opencode`。
+根据接收端设置 `otlpProtocol`（`http/json`、`http/protobuf` 或 `grpc`）和 `endpoint`。例如使用 gRPC 时，将协议设为 `grpc`，地址通常为 `http://localhost:4317`。启动 OpenCode 并执行任务后，即可在接收端查看 trace；默认服务名称为 `opencode`。
 
 上述示例同时开启遥测和正文采集。只需耗时、token 用量和错误等信息时，可移除 `captureContent` 或将其设为 `false`。
+
+### 单文件 JS
+
+使用独立构建产物 `dist/standalone/opencode-observer.js`，该文件包含插件运行所需的第三方依赖，由 OpenCode 的 Bun 运行时加载，无需为插件单独安装 npm 依赖。
+
+从源码构建时，在本仓库根目录运行：
+
+```sh
+bun install --frozen-lockfile
+bun run build:standalone
+```
+
+将生成的 `opencode-observer.js` 复制到以下任意一个位置：
+
+| 作用范围 | 文件位置                                                                                                       |
+| -------- | -------------------------------------------------------------------------------------------------------------- |
+| 当前项目 | `<项目目录>/.opencode/plugins/opencode-observer.js`                                                            |
+| 当前用户 | `~/.config/opencode/plugins/opencode-observer.js`（设置了 `XDG_CONFIG_HOME` 时使用其下的 `opencode/plugins/`） |
+
+OpenCode 自动发现该文件，无需在 `opencode.json` 中再声明插件。通过环境变量设置与接收端匹配的协议和地址后启动 OpenCode，以下以 HTTP/JSON 为例：
+
+```sh
+export OPENCODE_ENABLE_TELEMETRY=true
+export OPENCODE_OTLP_PROTOCOL=http/json
+export OPENCODE_OTLP_ENDPOINT=http://localhost:4318
+opencode
+```
+
+正文采集默认关闭，需要时设置 `OPENCODE_CAPTURE_CONTENT=true`。其他配置同样使用下表中的环境变量。升级时替换同一路径下的 JS 文件并重启 OpenCode；回退时换回旧版本文件。
+
+不要同时保留 npm 安装、项目级文件和用户级文件等多个副本，以免重复采集。`dist/index.js` 是 npm 包入口，依赖外部包，不能替代上述独立构建文件。
 
 ## 配置
 
@@ -70,29 +106,11 @@ HTTP 协议会在地址路径末尾补齐 `/v1/traces`，已有该后缀时不�
 
 例如，使用 HTTP/Protobuf 时，在插件选项中设置 `"otlpProtocol": "http/protobuf"`，或设置环境变量 `OPENCODE_OTLP_PROTOCOL=http/protobuf`。插件选项优先于环境变量；不读取 `OTEL_EXPORTER_OTLP_PROTOCOL` 或 `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`。遥测开启时，不支持的协议值会报配置错误。
 
-`otlpHeaders` 在 HTTP 协议中作为请求头，在 gRPC 中作为 metadata 传递。三种协议共享下面的导出超时配置。
-
-### 导出超时与重试
-
-三个超时均接受 `1` 到 `2147483647` 的整数，单位为毫秒；插件选项优先于对应的 `OPENCODE_*` 环境变量，未配置时使用表中的默认值。这些值由插件配置控制，不读取 SDK 的 `OTEL_EXPORTER_OTLP_TIMEOUT`、`OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` 或 `OTEL_BSP_EXPORT_TIMEOUT`。
-
-建议 `batchExportTimeoutMillis` 大于 `otlpTimeoutMillis`，为导出收尾留出余量；`forceFlushTimeoutMillis` 不小于 `batchExportTimeoutMillis`。三者分别限制不同层的等待，不会累加；`forceFlushTimeoutMillis` 只限制主动刷新，不是插件关闭的总超时。增大导出超时可能延长退出时的等待。
-
-SDK 对可重试的网络错误和服务端响应进行有限的退避重试，重试同时受到时间预算和次数上限限制。超时不是每次重试独享的时长，增大它也不保证用满预算。最终发送失败的批次不会重新入队；缓存仅保留在内存中，不支持离线持久化或恢复后的可靠补报。
-
-### 启动日志与连通性探测
-
-遥测开启后，每个插件实例在首次配置完成时记录一条 `info` 日志 `Observer plugin initialized`，包含插件版本、可获取的 OpenCode 版本、导出协议和接收端地址。初始化成功表示插件已就绪，不代表数据已经上报成功。
-
-随后异步执行一次 TCP probe，最长 5 秒，不等待探测完成才返回配置回调。端口可达时记录 `info` 日志 `OTLP endpoint TCP reachable`；连接失败或超时时记录 `warn` 日志 `OTLP endpoint TCP unreachable; exports may fail`，包含耗时和错误原因。探测失败不禁用导出，也不阻止 OpenCode 执行任务；插件关闭时取消未完成的探测。遥测关闭时不记录这些日志或发起探测。
-
-日志通过 OpenCode 的 `client.app.log` 写入服务日志，service 为 `opencode-observer`。启动 OpenCode 时加 `--print-logs --log-level INFO` 可在终端查看。日志中的接收端地址省略用户名、密码、查询参数和片段，不记录 `otlpHeaders`。
-
-probe 只检查接收端主机和端口的 TCP 连通性，不发送 HTTP、gRPC 请求或测试 span，不验证 TLS、鉴权、OTLP 路径、协议兼容性或下游入库。它不是持续健康检查，后台上报的后续失败仍需结合接收端日志排查。
+`otlpHeaders` 在 HTTP 协议中作为请求头，在 gRPC 中作为 metadata 传递。
 
 ### 使用环境变量
 
-在 `opencode.json` 中只声明插件：
+使用 npm 安装时，在 `opencode.json` 中只声明插件；使用单文件 JS 自动加载时跳过此步骤：
 
 ```json
 {
@@ -101,10 +119,11 @@ probe 只检查接收端主机和端口的 TCP 连通性，不发送 HTTP、gRPC
 }
 ```
 
-在启动 OpenCode 的终端中设置环境变量：
+在启动 OpenCode 的终端中设置环境变量，协议和地址需与接收端匹配，以下以 HTTP/JSON 为例：
 
 ```sh
 export OPENCODE_ENABLE_TELEMETRY=true
+export OPENCODE_OTLP_PROTOCOL=http/json
 export OPENCODE_OTLP_ENDPOINT=http://localhost:4318
 export OPENCODE_CAPTURE_CONTENT=true
 opencode
