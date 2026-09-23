@@ -1,0 +1,37 @@
+docs/architecture.md
+  s_3e7903d4c9c958::t_6a274bb6c9c624 137-138
+tests/telemetry-export.test.ts
+  s_3e7903d4c9c958::t_6a274bb6c9c624 1-96
+README.md
+  s_3e7903d4c9c958::t_6a274bb6c9c624 53-59
+  s_3e7903d4c9c958::t_0a4535f40a8fc5 35-49
+  s_3e7903d4c9c958::t_9ccbf78f7c8f40 60
+tests/config.test.ts
+  s_3e7903d4c9c958::t_3145901566a1b9 18-20,24-29,33-45
+  s_3e7903d4c9c958::t_0a4535f40a8fc5 30-32
+  s_3e7903d4c9c958::t_138b0c72026165 46-47
+src/config.ts
+  s_3e7903d4c9c958::t_3145901566a1b9 47-58,67-74
+  s_3e7903d4c9c958::t_7918159469120d 75-76
+src/telemetry/factory.ts
+  s_3e7903d4c9c958::t_3145901566a1b9 17-19,49,56,58
+e2e/disposal.e2e.test.ts
+  s_3e7903d4c9c958::t_3145901566a1b9 35,38
+  s_3e7903d4c9c958::t_6a274bb6c9c624 50-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5b68fe35f2ded1b214e83d41fe94c4abe0857d22",
+  "prompts": {},
+  "sessions": {
+    "s_3e7903d4c9c958": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c350-39a4-78a2-90f6-0e484e446a1b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}

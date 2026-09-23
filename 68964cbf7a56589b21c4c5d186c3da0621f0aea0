@@ -1,0 +1,56 @@
+src/contract/observer.ts
+  s_4959805f3a4fa1::t_90bcbf968c3fc1 139-140
+tests/telemetry.test.ts
+  s_4959805f3a4fa1::t_cd5f560486d454 1581-1610
+src/telemetry/spans/llm.ts
+  s_4959805f3a4fa1::t_90bcbf968c3fc1 34,86,176,180-181
+  s_4959805f3a4fa1::t_39ca7a0c77b082 182-183
+tests/ai-sdk.test.ts
+  s_4959805f3a4fa1::t_90bcbf968c3fc1 325-349,1068-1075,1091,1363-1364
+e2e/run.e2e.test.ts
+  s_e6e1ae1ca4ad52::t_da0ddc78e2acd1 43,189
+e2e/support/fake-llm.ts
+  s_4959805f3a4fa1::t_90bcbf968c3fc1 18
+docs/architecture.md
+  s_4959805f3a4fa1::t_cd5f560486d454 90
+docs/adapter.md
+  s_4959805f3a4fa1::t_cd5f560486d454 84
+docs/schemas/trace-opencode.md
+  s_699e06704a3796::t_80432e28043175 209
+  s_4959805f3a4fa1::t_cd5f560486d454 225-226
+  s_4959805f3a4fa1::t_0eb03f7fdb3fec 471-472
+src/adapter/model/ai-sdk.ts
+  s_4959805f3a4fa1::t_90bcbf968c3fc1 21,144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "68964cbf7a56589b21c4c5d186c3da0621f0aea0",
+  "prompts": {},
+  "sessions": {
+    "s_4959805f3a4fa1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0be05-c56e-7602-bd05-4ae6001ab072",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    },
+    "s_699e06704a3796": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0be2f-1976-74f2-8293-3d42d9848997",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    },
+    "s_e6e1ae1ca4ad52": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0be30-6223-79e0-9cea-96397b701c11",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}

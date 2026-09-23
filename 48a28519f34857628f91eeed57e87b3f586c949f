@@ -1,0 +1,44 @@
+src/index.ts
+  s_aef05f2c646174::t_9fffe2ff53fdad 1,29-34,36-62,65-75,77,79-92
+  s_aef05f2c646174::t_eef8ec78c5446b 35,63,76,78
+  s_aef05f2c646174::t_1c6f93b0101372 64
+docs/architecture.md
+  s_aef05f2c646174::t_80a5d3b153e8dc 86,92,116,121,123,131
+docs/schemas/trace-opencode.md
+  s_aef05f2c646174::t_80a5d3b153e8dc 66,115
+e2e/user-id.e2e.test.ts
+  s_aef05f2c646174::t_5c01a3abc7fefc 62,76,162,187-210
+  s_aef05f2c646174::t_a5ba4f77cfca72 81
+  s_aef05f2c646174::t_65177e12336144 211-213
+e2e/support/fixture.ts
+  s_aef05f2c646174::t_5c01a3abc7fefc 5,13,94
+  s_aef05f2c646174::t_3d69c53a479ec0 98-102
+tests/plugin.test.ts
+  s_aef05f2c646174::t_011d21c8bddf2f 964-982,984,986-994,996-998
+  s_aef05f2c646174::t_2dc17a260efaef 983,985,995,999-1019
+  s_aef05f2c646174::t_23b988b12a74fe 93,381,592,797,911
+src/user/resolve.ts
+  s_aef05f2c646174::t_9fffe2ff53fdad 5,13-16
+e2e/support/disposal-plugin.ts
+  s_aef05f2c646174::t_d66d0148ed4f5b 16-19
+tests/user-resolve.test.ts
+  s_aef05f2c646174::t_3d69c53a479ec0 27-29
+  s_aef05f2c646174::t_eef8ec78c5446b 131
+  s_aef05f2c646174::t_5c01a3abc7fefc 8,37,70,79,90,102,108-130,132-160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "48a28519f34857628f91eeed57e87b3f586c949f",
+  "prompts": {},
+  "sessions": {
+    "s_aef05f2c646174": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c70c-2f9f-77c1-b90f-78982e5df92e",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
