@@ -1,0 +1,25 @@
+README.md
+  s_55761cf267137c::t_b15a11b83738b9 17-20,38-43,50,55,64,66,68,70,81,87,91
+  s_55761cf267137c::t_8e56faa1abf564 62
+  s_55761cf267137c::t_06b8e5a480e977 9,11,13-15,21-37,71-74,83,85,135
+  s_55761cf267137c::t_db4a2b2f2ca042 16
+docs/releasing.md
+  s_55761cf267137c::t_06b8e5a480e977 24,29
+  s_55761cf267137c::t_c465e70ccd37f3 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "079f9a23144a88b158670ba9d53a741a23da8f89",
+  "prompts": {},
+  "sessions": {
+    "s_55761cf267137c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0cd77-1c0c-7580-83a9-118f6f68472a",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "happy <sxh139726845@163.com>"
+    }
+  }
+}
