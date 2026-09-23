@@ -5,7 +5,7 @@ import {
   type CoordinatorOptions,
   type OpenCodeEvent,
 } from "../../src/adapter/opencode/coordinator.js";
-import type { LlmRequest } from "../../src/adapter/model/request.js";
+import type { ChatParamsHookArgs } from "../../src/adapter/model/request.js";
 
 export function createCoordinatorHarness(options: CoordinatorOptions) {
   const clock: { observedAt?: number } = {};
@@ -39,10 +39,10 @@ export function createCoordinatorHarness(options: CoordinatorOptions) {
       delete clock.observedAt;
       return observe(pending);
     },
-    params(...request: LlmRequest) {
+    params(...request: ChatParamsHookArgs) {
       return observe(coordinator.hooks["chat.params"](...request));
     },
-    async headers(input: LlmRequest[0]) {
+    async headers(input: ChatParamsHookArgs[0]) {
       const output = { headers: {} as Record<string, string> };
       await observe(coordinator.hooks["chat.headers"](input, output));
       return output.headers;

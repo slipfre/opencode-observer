@@ -61,7 +61,9 @@ test("runtime imports stay within each layer and its allowed dependencies", asyn
 
             if (
               layer === "telemetry" &&
-              (dependency.path.startsWith("@opentelemetry/") || dependency.path.startsWith("node:"))
+              (dependency.path.startsWith("@opentelemetry/") ||
+                dependency.path === "@grpc/grpc-js" ||
+                dependency.path.startsWith("node:"))
             ) {
               return [];
             }
@@ -100,7 +102,7 @@ test("lint applies the same SDK and telemetry import boundaries to every tracker
         `import type { UserMessage } from "@opencode-ai/sdk";
 import { nonNegativeNumber } from "../shared/number.js";
 export type { Observer } from "../../contract/observer.js";
-export { parseModelUsage } from "../model/usage.js";
+export { normalizeOpenCodeUsage } from "../model/usage.js";
 export function observedTime(input: UserMessage) {
   return nonNegativeNumber(input.time.created);
 }

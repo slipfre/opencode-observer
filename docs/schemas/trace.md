@@ -1,74 +1,62 @@
-# Trace Schema
+# Trace Schema：期望规范
 
-本文档定义 OpenCode v1 trace 监控插件通过 OTLP 导出的 trace 结构、span attributes 及字段口径。字段优先采用 OpenTelemetry（OTel）和 GenAI Semantic Conventions；标准未覆盖的 OpenCode 业务信息使用 `opencode.*` 扩展。新 schema 不再导出 OpenInference 属性。
+本文定义项目期望表达的 trace 结构、span 职责和属性语义，用于讨论观测目标。插件实现可能因各种限制导致部分字段在当前条件下无法实现，本文档记录的是最初的目标，不代表当前插件已经实现全部字段。另外，插件也可能实本文档未记录的字段。
 
-默认 span 名称前缀为 `opencode.`；设置 `OPENCODE_TRACE_PREFIX` 后替换此前缀。本文保留 `run`、`interaction`、`llm` 等 OpenCode 专用 span 名称，通过 `gen_ai.operation.name` 表达标准操作语义。这是 GenAI 规范允许的框架专用命名约定；前缀只影响 span 名称，不影响 attribute key 或 operation 值。
+trace-opencode.md 记录了当前实际导出的结构、字段来源、创建条件和降级口径，并在[实现差距](trace-opencode.md#14-与期望规范的差距)中列出尚未实现或只能近似观测的部分。两份文档沿用相同的 span 章节顺序，便于对照；读取现有 OTLP 数据或编写实现测试时，以实现文档为准。
 
 ## 1. Schema 约定
 
 ### 1.1 规范基线
 
 - 通用字段依据 [OTel Semantic Conventions v1.44.0][otel-semconv]。
-- GenAI 字段和消息结构依据独立的 [GenAI Semantic Conventions 仓库][genai-root]，本次固定到提交 `b5d8440f6f126738fd50f927752cd669772c517b`。GenAI 仍处于 Development，升级基线时需重新检查字段、单位和 JSON Schema，不能自动跟随 `main`。
-- 本文描述的必填条件是插件契约；标准的 `Required`、`Recommended`、`Opt-In` 等要求应结合具体 span 类型理解。普通 OTel span 不因携带会话关联字段而成为 GenAI inference span。
-- OTLP 负责传输；业务属性使用下文的点分命名。`trace_id`、`span_id`、`parent_span_id`、开始/结束时间、`kind`、`status`、events 属于 span envelope，resource 和 instrumentation scope 属于其外层上下文，均不重复导出为 span attributes。
+- GenAI 字段与消息结构依据独立的 [GenAI Semantic Conventions 仓库][genai-root]，固定到提交 `b5d8440f6f126738fd50f927752cd669772c517b`。GenAI 仍处于 Development，升级基线时需重新检查字段、单位和 JSON Schema，不能自动跟随 `main`。
+- 标准未覆盖的项目业务信息使用 `opencode.*` 扩展。下文的必填条件是项目约定，不等同于标准对所有 span 的统一要求。
+- `trace_id`、`span_id`、`parent_span_id`、开始/结束时间、`kind`、`status` 和 events 属于 span envelope；resource 与 instrumentation scope 属于外层上下文，不重复导出为 span attributes。
 
 ### 1.2 类型、内容采集与缺省值
 
-- `必有`：span 创建时或正常结束时一定写入；`条件`：仅在指定数据或关联存在时写入；`初始值`：创建时写入，结束前可能更新。
-- `int` 表示整数计数，`double` 表示浮点值；两者在 JavaScript 中均为 `number`。`string[]` 是原生 OTel 字符串数组，不序列化为 JSON 字符串。
-- `string(JSON)` 表示序列化一次的 JSON 值。GenAI 将消息、工具定义及调用参数/结果定义为结构化 `any`，支持结构化 span attributes 时优先使用结构化值；本插件 v1 的 JS SDK 导出约定使用规范允许的 JSON 字符串形式。不能笼统认为 OTLP 不支持嵌套对象，也不能把 JSON 字符串再次编码。本文 JSON 示例展示序列化前的值。
-- 缺失数据省略，不用 `0`、空字符串、空数组或 `unknown` 冒充实际值。`user.id` 是显式例外：身份查询最终失败且没有其他身份来源时，使用 `unknown` 标记身份未知。明确观察到的零用量、空输出，以及下文约定的重试初始状态不属于缺失值。
-- 成功结束保持 span status 为 `UNSET`，失败设置 `ERROR`。本文不主动写入 `OK`；`UNSET` 是 status code，不代表 span 尚未结束，结束由 `end()` / end time 表达。[OTel 错误记录规范][otel-errors]
+- `必有` 表示对应 span 应具备的字段；`条件` 表示仅在数据或关联存在时写入。未能可靠取得目标数据时必须省略或明确标记降级，不能为满足必填约定而猜测。
+- `int` 是整数计数，`double` 是浮点值，`string[]` 是原生字符串数组。`JSON` 表示遵循相应 schema 的结构化值；可用结构化 attributes，或序列化一次的 JSON 字符串承载。本文示例展示序列化前的值，实际编码见实现文档。
+- 缺失数据省略，不用 `0`、空字符串、空数组或 `unknown` 冒充实测值。已确认的零用量、空文本和空候选数组可以保留。`user.id=unknown` 是显式的身份未知标记，其使用条件见实现文档。
+- 遥测、`captureContent` 和 `captureHttpHeaders` 默认关闭。正文、系统指令、工具调用参数/结果和 LLM 工具定义受 `captureContent` 控制；下文这些字段的条件隐含“正文开启且取得数据”。模型请求/响应 HTTP headers（含错误响应）还要求 `captureHttpHeaders` 开启；任一开关关闭时省略，不能用空值表示未采集。
+- 输出类型、身份、模型、参数、用量、费用、计时和重试计数是元数据，不受正文开关控制。
+- 正常结束保持 status 为 `UNSET`，失败设置 `ERROR`，不主动写入 `OK`。`UNSET` 不表示 span 尚未结束，结束由 end time 表达。[OTel 错误记录规范][otel-errors]
 
-遥测和正文采集默认关闭，配置方式见 [README](../../README.md#配置)。下文所有输入、输出、系统指令及工具参数/结果字段均以开启正文采集且取得相应数据为前提；关闭正文采集时省略，不能用空值表示未采集。
+配置入口见 [README](../../README.md#配置)。
 
 ## 2. Resource 与 instrumentation scope
 
 ### 2.1 Resource attributes
 
-| 字段                          | 类型   | 默认值或来源                            | 说明                                                                |
-| ----------------------------- | ------ | --------------------------------------- | ------------------------------------------------------------------- |
-| `service.name`                | string | `opencode`                              | 遥测生产者服务名。                                                  |
-| `service.version`             | string | 当前 OpenCode 版本；无法识别时省略      | 插件包版本记录在 instrumentation scope。                            |
-| `os.type`                     | string | OS 检测结果，归一化为 OTel 值           | 例如 `windows`、`linux`、`darwin`；不能直接写入 Node 的 `win32`。   |
-| `host.arch`                   | string | 主机 CPU 架构检测结果，归一化为 OTel 值 | 例如 `amd64`、`x86`、`arm32`、`arm64`；不能直接写入 Node 的 `x64`。 |
-| `<custom-resource-attribute>` | string | `OPENCODE_RESOURCE_ATTRIBUTES`          | 同名字段覆盖默认值时仍须符合标准字段的类型和语义。                  |
+| 字段                          | 类型   | 期望语义                                                                             |
+| ----------------------------- | ------ | ------------------------------------------------------------------------------------ |
+| `service.name`                | string | 遥测生产者服务名，默认 `opencode`。                                                  |
+| `service.version`             | string | 运行中的 OpenCode 版本；未知时省略。                                                 |
+| `os.type`                     | string | 主机操作系统的 OTel 标准值，例如 `windows`、`linux`、`darwin`。                      |
+| `host.arch`                   | string | 主机 CPU 架构的 OTel 标准值，例如 `amd64`、`arm64`；不能将仿真进程架构当作主机架构。 |
+| `<custom-resource-attribute>` | string | 自定义资源属性；覆盖标准字段时仍需满足其类型和语义。                                 |
 
-常见归一化规则：`process.platform` 的 `win32 → windows`、`sunos → solaris`，`linux` / `darwin` 等保持原值；架构的 `x64 → amd64`、`ia32 → x86`、`arm → arm32`、`arm64 → arm64`。`process.arch` 表示当前进程架构，仅当确认可代表主机架构时用作 `host.arch` 来源；无法确认时省略，不把仿真进程架构当作主机架构。[OS 字段][otel-os]、[Host 字段][otel-host]
-
-启用遥测时，插件通过 OpenCode client 的请求通道查询一次 `/global/health`，将响应中的非空 `version` 写入 `service.version`。查询超时（1 秒）、失败或版本缺失时省略该字段，不影响后续采集。自定义 resource 属性仍可覆盖 `service.name` 和 `service.version`。
-
-Instrumentation scope：
-
-| 字段    | 值                  |
-| ------- | ------------------- |
-| name    | `opencode-observer` |
-| version | 当前插件包版本      |
-
-Scope 的名称和版本均读取插件 `package.json`，随构建嵌入产物。
-
-本插件混合使用 OTel、GenAI 和 OpenCode 扩展，不能仅以核心 OTel schema URL 声称所有扩展都有自动迁移规则；GenAI 提交号也不是一个已发布的 schema URL。
+插件名称 `opencode-observer` 与插件包版本记录在 instrumentation scope 的 `name` / `version`，不与 OpenCode 的 `service.version` 混用。[OS 字段][otel-os]、[Host 字段][otel-host]
 
 ### 2.2 公共 attributes
 
-| 字段                         | 类型   | 出现条件                         | 说明                                                                                                                     |
-| ---------------------------- | ------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `session.id`                 | string | 所有 span 必有                   | OpenCode session ID；也是 OTel 标准会话关联字段。                                                                        |
-| `gen_ai.conversation.id`     | string | 所有 span 必有                   | 与 `session.id` 相同，用于 GenAI 会话关联。                                                                              |
-| `opencode.session.parent_id` | string | 父 session 可识别时              | subagent 的父 session ID。不能改为表示“前一个会话”的 `session.previous_id`。                                             |
-| `user.id`                    | string | 已发起查询、配置或契约提供身份时 | 契约显式非空身份优先，其次是初始化查询结果、静态配置；查询失败且没有其他身份时为 `unknown`，未查询且没有其他身份时省略。 |
-| `<custom-span-attribute>`    | string | 配置存在时                       | 来自 `OPENCODE_SPAN_ATTRIBUTES`；除 `user.id` 外，不能覆盖插件维护的身份、类型、标准操作值或其他派生字段。               |
+| 字段                         | 类型   | 出现条件                 | 期望语义                                                                      |
+| ---------------------------- | ------ | ------------------------ | ----------------------------------------------------------------------------- |
+| `session.id`                 | string | 所有 span 必有           | 当前操作所属的会话 ID。                                                       |
+| `gen_ai.conversation.id`     | string | 所有 span 必有           | 与 `session.id` 相同，用于 GenAI 会话关联。                                   |
+| `opencode.session.parent_id` | string | 父会话可识别             | 子 agent 的父会话 ID。                                                        |
+| `user.id`                    | string | 已配置身份或发起身份解析 | 操作所属用户的身份；解析与未知值规则由实现文档明确。                          |
+| `<custom-span-attribute>`    | string | 配置存在                 | 自定义属性；除显式配置的 `user.id` 外，不覆盖内建身份、类型、操作或派生字段。 |
 
-子 agent 的所有 span 使用自己的 `session.id` 和 `gen_ai.conversation.id`，父 session ID 只记录在 `opencode.session.parent_id`。[Session 字段][otel-session]、[User 字段][otel-user]
-
-`user.id` 由插件入口在初始化阶段直接调用独立 user 模块解析，使用 `OPENCODE_USER_ID_TOKEN` 调用 `OPENCODE_USER_ID_ENDPOINT`，从成功响应的 `result.ssicNo` 取得 ID；接口返回空值或 `unknown` 时视为未取得有效身份。入口等待查询和重试完成后，将有效 ID 合并进 `spanAttributes`；未查询或查询失败时保留静态配置的 `user.id`。没有静态配置时，查询最终失败使用 `unknown` 兜底，因开关关闭、地址无效或 token 为空而跳过查询则省略。六类 span 从创建起使用此配置快照，契约显式提供的非空身份优先。正文采集开关不控制该属性，身份不会自动刷新或写入 resource。模型请求头中的动态身份传播由 adapter 单独完成，规则见第 3.3 节。配置与重试规则见 [README](../../README.md#用户身份解析)。
-
-默认每个 span 最多保留 4096 个 attributes，可通过 `OPENCODE_SPAN_ATTRIBUTE_COUNT_LIMIT` 调整。超过限制时由 OTel SDK 丢弃多余字段；此数量上限不代表单个属性值或整个 OTLP 请求可以无限大。
+子 agent 使用自己的会话 ID，不能用父会话 ID 替代。
 
 ## 3. Trace 拓扑
 
 ### 3.1 主会话
+
+span 名称前缀由 `tracePrefix` / `OPENCODE_TRACE_PREFIX` 配置，默认 `opencode.`，只改变 span 名称。插件生成的内建 `opencode.*` span 属性键另由 `attributePrefix` / `OPENCODE_ATTRIBUTE_PREFIX` 配置，默认同为 `opencode.`，两者独立且不互相继承。两项均原样拼接，不自动补 `.`，空字符串表示移除对应前缀。
+
+下文属性表沿用默认 `opencode.*` 键名；自定义属性前缀时只替换内建键名的 `opencode.` 部分，不改变属性值、operation 值、标准字段或 `ai.agent.skill.name`，也不同时导出旧键。用户显式配置的 `spanAttributes` 和 `resourceAttributes` 保留原键名；默认前缀与配置前缀下受保护的内建 span 字段均不能通过 `spanAttributes` 注入。
 
 ```text
 opencode.run                         invoke_workflow / INTERNAL
@@ -76,21 +64,20 @@ opencode.run                         invoke_workflow / INTERNAL
     ├── opencode.llm                 chat 等实际操作 / CLIENT
     ├── opencode.tool.<tool-name>    execute_tool / INTERNAL
     │   └── opencode.permission.check             INTERNAL
+    ├── opencode.skill.load          execute_tool / INTERNAL
+    │   └── opencode.permission.check             INTERNAL
     └── opencode.compaction                       INTERNAL
         └── opencode.llm             chat 等实际操作 / CLIENT
 ```
 
-- 一个 `run` 对应 session 中一个任务的执行周期，一个 `interaction` 对应任务中的一次真实用户交互。
-- 同一个 run 可以包含多个 interaction。用户通过 steer 输入新的消息时，创建新 interaction，run 保持打开。
-- steer 到来时，旧 interaction 正常结束，status 保持 `UNSET`，结束时间等于新 interaction 的开始时间；正文开启时输出为空消息数组 `[]`，不保留中途生成的文本。
-- interaction 以 owner 用户消息 ID 为稳定标识，可包含多次 LLM 请求、工具调用和自动压缩。
-- LLM span 和 tool span 直接挂在拥有它们的 interaction 下；tool span 不是 LLM span 的子节点。
-- permission span 只在人工权限请求可以精确关联到活动 tool 时创建，挂在对应 tool 下。
-- 自动压缩挂在当前 interaction 下；摘要 LLM span 挂在 compaction 下。
+- 一个 run 对应一个任务执行周期，同一 session 可以先后产生多个独立 run。
+- 一个 interaction 对应一次真实用户交互；同一 run 可包含多个 interaction。追加输入（steer）创建新 interaction，run 保持打开。
+- LLM、tool 和 skill.load 同属 interaction，不将工具或技能加载挂在 LLM 下。正文中的 tool call 通过调用 ID 关联对应的 tool 或 skill.load span。
+- 技能加载单独生成 skill.load，不再重复生成 tool.skill；后续 LLM 和工具不因加载技能而改挂到 skill.load 下。
+- 权限检查挂在被检查的 tool 或 skill.load 下；自动压缩挂在所属 interaction 下；生成摘要的 LLM 挂在 compaction 下。
+- 父子关系表达操作归属。steer 后仍在完成的旧操作保留原 parent，不能随当前交互改变归属，也不要求所有子 span 的结束时间早于父 span。
 
 ### 3.2 前台 subagent
-
-存在 `task` 工具关联信息时：
 
 ```text
 父 interaction
@@ -101,43 +88,42 @@ opencode.run                         invoke_workflow / INTERNAL
             └── 子 opencode.tool.<tool-name>
 ```
 
-子 interaction 使用 `opencode.agent.type=subagent`。父 task tool 的 `gen_ai.tool.call.id` 与 `state.metadata.sessionId` 用于建立 tool call 到子 session 的关联，不额外导出 `task.call_id`。
+前台子任务继承实际触发它的 task tool 上下文，形成同一 trace。子交互及其操作使用 `opencode.agent.type=subagent`。后台或无法证明调用关系的任务不能强行挂到前台 task tool。
 
 ### 3.3 根上下文与下游传播
 
-- 每个顶层 run 从空上下文创建独立 trace；子 run 通过已关联的 task tool 继承父 trace。
-- 插件不读取 `traceparent` / `tracestate` 选项或 `OPENCODE_TRACEPARENT` / `OPENCODE_TRACESTATE` 环境变量。
-- 遥测开启时，在可唯一关联的模型请求中注入当前 LLM span 的 W3C `traceparent`，使用该 span 的 trace ID、span ID 和采样标记。遥测层将非空 `traceState` 序列化为 `tracestate`；当前默认根上下文没有该值。
-- `OPENCODE_USER_ID_ENABLED` 同时控制动态身份查询和 adapter 的出站身份写入，默认开启。开启时在 `tracestate` 首位写入 `user_id=<动态查询结果>`；配置不完整、结果缺失、查询失败或 ID 无法合法表示时写入 `user_id=unknown`，不使用静态 span 属性兜底。ID 去除首尾空白后须为不含逗号或等号的 1～256 个可打印 ASCII 字符。已有同键替换，其余厂商项顺序保留，最多 32 项。身份拼装只发生在 adapter，不回写 SpanContext 或 OTLP traceState；关闭开关时只传播原有 trace 上下文。
-- 下游传播不依赖正文采集开关。AI SDK 和 native LLM 路径均在 `chat.headers` 准备字段，但当前 OpenCode native HTTP 层会另行注入并覆盖 traceparent，尚不能保证下游关联到本插件 trace；native 自动回退到 AI SDK 时可正常传播。标题、未知或歧义归属、缺少父节点的调用省略注入。模型配置、其他插件及底层传输的同名 headers 冲突处理暂未覆盖。
+顶层 run 从空上下文创建独立 trace；已关联的子 run 继承父 task tool。
+
+可关联的模型请求应传播当前 LLM span 的 W3C `traceparent` 及非空 `tracestate`，以关联下游服务。身份传播与正文采集相互独立。未知或歧义归属不得传播猜测出的上下文；具体身份拼装、开关与宿主传输限制见实现文档。
 
 ## 4. Span 总览
 
-所有 span 均包含第 2.2 节的公共属性。下文属性表只列各 span 的额外字段；公共错误规则见第 11 节。
+所有 span 包含公共 attributes；下表的 operation 写入 `gen_ai.operation.name`。它不替代 OTel SpanKind。
 
-| Span 名称                  | OTel kind  | `gen_ai.operation.name`                                  | 常规 parent                           | 创建数量                                                            |
-| -------------------------- | ---------- | -------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------- |
-| `<prefix>run`              | `INTERNAL` | `invoke_workflow`                                        | 无（顶层）或父 `task` tool            | session 中每个任务执行周期 1 个                                     |
-| `<prefix>interaction`      | `INTERNAL` | `invoke_agent`                                           | 当前 session 的 run                   | 每次真实用户交互 1 个                                               |
-| `<prefix>compaction`       | `INTERNAL` | 不设置                                                   | interaction                           | 每次压缩 1 个                                                       |
-| `<prefix>llm`              | `CLIENT`   | `chat`、`generate_content`、`text_completion` 等实际操作 | interaction、compaction               | 每条有请求准备或模型 step 证据的 assistant message 1 个，覆盖其重试 |
-| `<prefix>tool.<tool-name>` | `INTERNAL` | `execute_tool`                                           | 所属 assistant message 的 interaction | 每次 tool call 1 个                                                 |
-| `<prefix>permission.check` | `INTERNAL` | 不设置                                                   | 精确关联的活动 tool span              | 每次可关联的人工权限检查 1 个                                       |
+| Span 名称                  | OTel kind  | operation                                                | Parent                        | 期望粒度                             |
+| -------------------------- | ---------- | -------------------------------------------------------- | ----------------------------- | ------------------------------------ |
+| `<prefix>run`              | `INTERNAL` | `invoke_workflow`                                        | 顶层无 parent，或父 task tool | 每个任务执行周期一个。               |
+| `<prefix>interaction`      | `INTERNAL` | `invoke_agent`                                           | run                           | 每次真实用户交互一个。               |
+| `<prefix>compaction`       | `INTERNAL` | 不设置                                                   | interaction                   | 每次上下文压缩一个。                 |
+| `<prefix>llm`              | `CLIENT`   | `chat`、`generate_content`、`text_completion` 等实际操作 | interaction 或 compaction     | 每次逻辑模型调用一个，包含其重试。   |
+| `<prefix>tool.<tool-name>` | `INTERNAL` | `execute_tool`                                           | interaction                   | 每次普通工具调用一个，不含技能加载。 |
+| `<prefix>skill.load`       | `INTERNAL` | `execute_tool`                                           | interaction                   | 每次技能加载调用一个。               |
+| `<prefix>permission.check` | `INTERNAL` | 不设置                                                   | tool 或 skill.load            | 每次人工权限检查一个。               |
 
-`gen_ai.operation.name` 不是 OTel `SpanKind` 的替代品。run 表示工作流执行，interaction 表示本地 agent 调用；compaction 和 permission 是普通 OTel 内部操作，本基线没有可直接对应它们的 GenAI 标准操作值，不伪造 `CHAIN`、`GUARDRAIL` 或新的标准操作值。[Agent / workflow span 规范][genai-agents]、[模型 / tool span 规范][genai-spans]
+compaction 与 permission 是普通内部操作，本规范基线没有与之直接对应的 GenAI 操作值，不伪造 `CHAIN`、`GUARDRAIL` 等值。[Agent / workflow span 规范][genai-agents]、[模型 / tool span 规范][genai-spans]
 
 ## 5. `<prefix>run`
 
-### 5.1 Attributes
+run 覆盖任务从首个真实用户输入开始，到任务正常结束或终止失败的整个执行周期；steer 和可恢复的上下文溢出不结束 run。
 
-| 字段                     | 类型         | 出现条件     | 值与口径                                                                           |
-| ------------------------ | ------------ | ------------ | ---------------------------------------------------------------------------------- |
-| `gen_ai.operation.name`  | string       | 必有         | `invoke_workflow`。                                                                |
-| `opencode.run.id`        | string       | 必有         | 本次任务执行的首个真实用户消息 ID；不是 provider response ID。                     |
-| `gen_ai.input.messages`  | string(JSON) | 必有         | 按 interaction 顺序记录工作流收到的用户消息，采用第 8.2 节的 `role + parts` 结构。 |
-| `gen_ai.output.messages` | string(JSON) | 任务正常结束 | 最后一个 interaction 的最终答复消息数组。                                          |
+| 字段                     | 类型   | 出现条件                 | 期望语义                                        |
+| ------------------------ | ------ | ------------------------ | ----------------------------------------------- |
+| `gen_ai.operation.name`  | string | 必有                     | `invoke_workflow`。                             |
+| `opencode.run.id`        | string | 必有                     | 本次任务的稳定标识，不是 provider response ID。 |
+| `gen_ai.input.messages`  | JSON   | 取得完整的任务级文本输入 | 按 interaction 顺序记录真实用户输入消息。       |
+| `gen_ai.output.messages` | JSON   | 正常结束且最终答复已知   | 最后一个 interaction 的最终答复消息数组。       |
 
-run 的 `gen_ai.input.messages` 示例：
+run 和 interaction 的正文范围是用户文本与最终 assistant 文本，不包含系统生成的续接文本、压缩摘要或未完成的中间回答。无法取得任务级完整文本输入时省略 run 输入，避免将部分输入表示为完整任务。
 
 ```json
 [
@@ -146,107 +132,76 @@ run 的 `gen_ai.input.messages` 示例：
 ]
 ```
 
-这里记录工作流层面的输入，LLM span 上的同名字段记录实际模型请求内容，两者观察范围不同。
-
-run 和 interaction 只聚合真实用户文本及最终 assistant 文本，过滤 synthetic / ignored 文本和压缩摘要。只有附件而没有可用文本的用户输入不伪造空文本：对应 interaction 省略输入属性，包含此类输入的 run 省略整个 `gen_ai.input.messages`，避免将不完整输入表示为完整任务。未知或未完成的输出省略，明确观察到的空文本输出保留。
-
-### 5.2 生命周期
-
-- 开始时间为本次任务首个用户消息的创建时间。
-- 正常结束以 `session.status` 的 `status.type=idle` 判断，兼容已弃用的 `session.idle`；两者可能连续到达，必须去重结束。status 保持 `UNSET`。
-- 终止性 `session.error` 或无法恢复的 context overflow 导致 `ERROR` 结束，记录 `error.type` 和 status message。
+同名 messages 属性在 LLM 上表示模型请求/响应，在 run 上表示任务输入/最终答复，观察范围不同。
 
 ## 6. `<prefix>interaction`
 
-### 6.1 Attributes
+interaction 从本次真实用户输入开始，到任务结束、终止失败或下一次 steer 输入开始时结束。steer 时旧 interaction 正常结束，结束时间等于新 interaction 开始时间，已确定的子操作归属保持不变。
 
-| 字段                      | 类型         | 出现条件                  | 值与口径                                                           |
-| ------------------------- | ------------ | ------------------------- | ------------------------------------------------------------------ |
-| `gen_ai.operation.name`   | string       | 必有                      | `invoke_agent`。                                                   |
-| `opencode.interaction.id` | string       | 必有                      | owner 用户消息 ID。                                                |
-| `gen_ai.agent.name`       | string       | 必有                      | 用户消息指定的 agent 名称。                                        |
-| `opencode.agent.type`     | string       | 必有                      | `primary` 或 `subagent`。                                          |
-| `gen_ai.input.messages`   | string(JSON) | 必有                      | 单条 `role=user` 消息；拼接后的用户文本放在 `parts[].content` 中。 |
-| `gen_ai.output.messages`  | string(JSON) | 正常结束，包括 steer 结束 | 正常答复为最终 assistant 消息；steer 结束时为 `[]`。               |
+| 字段                      | 类型   | 出现条件                              | 期望语义                                                 |
+| ------------------------- | ------ | ------------------------------------- | -------------------------------------------------------- |
+| `gen_ai.operation.name`   | string | 必有                                  | `invoke_agent`。                                         |
+| `opencode.interaction.id` | string | 必有                                  | 本次用户交互的稳定标识。                                 |
+| `gen_ai.agent.name`       | string | 必有                                  | 接收本次用户交互的 agent 名称。                          |
+| `opencode.agent.type`     | string | 必有                                  | `primary` 或 `subagent`。                                |
+| `gen_ai.input.messages`   | JSON   | 用户文本可用                          | 单条 `role=user` 消息，文本放在 `parts[].content`。      |
+| `gen_ai.output.messages`  | JSON   | 正常结束且最终答复已知，或 steer 结束 | 最终 assistant 消息；steer 时为 `[]`，表示没有最终答复。 |
 
-实际生成了空文本答复时可以记录 `[{"role":"assistant","parts":[{"type":"text","content":""}]}]`；steer 的 `[]` 表示这次交互没有最终答复。正文关闭或数据未知时省略属性，不能用 `[]` 表示“未采集”。
-
-### 6.2 生命周期
-
-- 开始时间为 owner 用户消息的 `time.created`。synthetic 自动续接消息和 compaction marker 用户消息不会创建 interaction；v1 的 `synthetic` 位于 text part 上，不能读取不存在的 message 级字段。含真实用户输入的混合消息仍创建 interaction。
-- 收到同一 run 的新 steer 用户消息时，旧 interaction 正常结束，结束时间严格等于新 interaction 的开始时间，status 保持 `UNSET`；正文开启时写入 `gen_ai.output.messages=[]`。
-- 未被 steer 结束的 interaction 在 session idle 时正常结束，结束时间为对应用户消息最后一次 assistant 的 `time.completed`。
-- 若最后一次非摘要 assistant 缺少 `time.completed`，或只有 `tool-calls` 而未取得最终答复，则以 idle 观察时间作 `ERROR` 清理，`error.type=_OTHER`，status message 为 `session ended before interaction completed`；不伪造正常完成时间，也不回退到更早 assistant 的答复。已确认完成但未采集正文时仍可正常结束，省略输出属性。
-- 旧 interaction 结束后不再回填输出或修改结束时间。已归属旧 interaction 的 LLM/tool span 保持原 parent，即使其完成事件晚于 steer 到达，也不改挂到新 interaction。
-- 发生终止错误时以 `ERROR` 结束。可恢复的 context overflow 期间保持打开。
+已完成的空文本答复是 `[{"role":"assistant","parts":[{"type":"text","content":""}]}]`；它与 steer 的空数组、未采集而省略属性具有不同含义。自动续接和压缩标记不创建用户交互。
 
 ## 7. `<prefix>compaction`
 
-### 7.1 Attributes
+compaction 覆盖一次上下文压缩从开始到成功或失败的周期；摘要生成是其子 LLM 操作。
 
-| 字段                                     | 类型    | 出现条件                  | 值与口径                                                                       |
-| ---------------------------------------- | ------- | ------------------------- | ------------------------------------------------------------------------------ |
-| `opencode.compaction.id`                 | string  | 必有                      | compaction marker 用户消息 ID。                                                |
-| `opencode.compaction.auto`               | boolean | 必有                      | 是否为自动压缩。                                                               |
-| `opencode.compaction.overflow`           | boolean | 必有                      | compaction part 的 `overflow === true`；源字段缺省时为 `false`。               |
-| `opencode.compaction.trigger_message.id` | string  | overflow 触发且消息可识别 | 发生 overflow 的 assistant message ID。                                        |
-| `opencode.compaction.prompt_tokens`      | int     | 压缩成功且摘要 usage 可用 | 摘要 assistant 的 `tokens.input + tokens.cache.read + tokens.cache.write`。    |
-| `opencode.compaction.summary_tokens`     | int     | 压缩成功且摘要 usage 可用 | 摘要 assistant 的 `tokens.output`，保留“不包含 reasoning”的原业务口径。        |
-| `gen_ai.usage.*`                         | int     | 压缩成功且摘要 usage 可用 | 镜像摘要 LLM 的归一化 input / output、reasoning 与 cache 分量，口径见第 8 节。 |
+| 字段                                     | 类型    | 出现条件                  | 期望语义                                    |
+| ---------------------------------------- | ------- | ------------------------- | ------------------------------------------- |
+| `gen_ai.agent.name`                      | string  | agent 可识别              | 所属 agent 名称。                           |
+| `opencode.agent.type`                    | string  | agent 类型可识别          | `primary` 或 `subagent`。                   |
+| `opencode.compaction.id`                 | string  | 必有                      | 本次压缩的稳定标识，同时用于关联摘要 LLM。  |
+| `opencode.compaction.auto`               | boolean | 必有                      | 是否自动压缩。                              |
+| `opencode.compaction.overflow`           | boolean | 必有                      | 是否由上下文溢出触发。                      |
+| `opencode.compaction.trigger_message.id` | string  | overflow 触发且消息可识别 | 导致溢出的模型调用所对应的消息标识。        |
+| `opencode.compaction.prompt_tokens`      | int     | 压缩成功且用量可用        | 摘要模型的输入 token 数，包含缓存输入。     |
+| `opencode.compaction.summary_tokens`     | int     | 压缩成功且用量可用        | 摘要模型的输出 token 数，不包含 reasoning。 |
 
-compaction 上的标准 usage 是子摘要 LLM 用量的镜像。
-
-### 7.2 生命周期
-
-- 开始时间优先使用 compaction marker 用户消息创建时间，否则使用当前观察时间。
-- 收到 `session.compacted` 时正常结束，status 保持 `UNSET`。该事件只有 `sessionID`，不携带 compaction ID 或 token usage，需与该 session 的活动 compaction 和摘要 assistant 关联。
-- 压缩期间又出现 context overflow、被新的压缩覆盖、会话终止或摘要 assistant 出错时，以 `ERROR` 结束。
-- 摘要 LLM span 携带相同 `opencode.compaction.id`，并以 compaction span 为 parent。
+compaction 保留上述 prompt / summary tokens 业务字段，统计总用量时不能与子 LLM 重复相加。summary tokens 不包含 reasoning，标准 output tokens 包含 reasoning，两者不可互换。
 
 ## 8. `<prefix>llm`
 
 ### 8.1 身份、模型和用量
 
-| 字段                                                  | 类型     | 出现条件                           | 值与口径                                                                                                                                                                   |
-| ----------------------------------------------------- | -------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gen_ai.operation.name`                               | string   | 必有                               | 按实际模型 API 操作设置：聊天补全为 `chat`，内容生成为 `generate_content`，传统文本补全为 `text_completion`。遵循对应 provider 的约定，不因 span 名为 `llm` 就写入 `llm`。 |
-| `gen_ai.provider.name`                                | string   | 必有                               | 插件识别的 provider 标准名；例如 `openai`、`anthropic`、`aws.bedrock`、`azure.ai.openai`、`gcp.gemini`、`gcp.vertex_ai`。                                                  |
-| `opencode.provider.id`                                | string   | 必有                               | OpenCode 原始 provider ID，用于保留配置身份。                                                                                                                              |
-| `gen_ai.request.model`                                | string   | 必有                               | 请求的 model ID。                                                                                                                                                          |
-| `gen_ai.response.model`                               | string   | 实际响应提供时                     | 响应中确认的模型名，不能用请求 model ID 补造。                                                                                                                             |
-| `gen_ai.response.id`                                  | string   | 实际响应提供时                     | Provider response ID，不能用 OpenCode assistant message ID 替代。                                                                                                          |
-| `opencode.message.id`                                 | string   | 必有                               | OpenCode assistant message ID。                                                                                                                                            |
-| `gen_ai.agent.name`                                   | string   | agent 可识别时                     | 优先使用 assistant 的 `agent`，兼容 `mode`；未知时省略。                                                                                                                   |
-| `opencode.agent.type`                                 | string   | 必有                               | `primary` 或 `subagent`。                                                                                                                                                  |
-| `gen_ai.usage.input_tokens`                           | int      | 模型请求成功且 usage 可用          | OpenCode 归一化后的 `tokens.input + tokens.cache.read + tokens.cache.write`，包含缓存输入。                                                                                |
-| `gen_ai.usage.output_tokens`                          | int      | 模型请求成功且 usage 可用          | OpenCode 归一化后的 `tokens.output + tokens.reasoning`，包含 reasoning。                                                                                                   |
-| `gen_ai.usage.reasoning.output_tokens`                | int      | 模型请求成功且对应 usage 可用      | `tokens.reasoning`，是 output tokens 的子集。                                                                                                                              |
-| `gen_ai.usage.cache_read.input_tokens`                | int      | 模型请求成功且对应 usage 可用      | `tokens.cache.read`，是 input tokens 的子集。                                                                                                                              |
-| `gen_ai.usage.cache_write.input_tokens`               | int      | 模型请求成功且对应 usage 可用      | `tokens.cache.write`，是 input tokens 的子集；本基线使用 `cache_write`。                                                                                                   |
-| `opencode.llm.cost.total`                             | double   | 模型请求成功且 cost 可用           | OpenCode assistant 的 `cost`，单位 USD。通常为计价估算；缺少价格时源数据可能为 `0`，不代表账单实付金额。                                                                   |
-| `gen_ai.response.finish_reasons`                      | string[] | 存在结束原因，或生成异常终止       | 单候选时为 `[assistant.finish]`；缺失预期的结束原因且生成失败、取消或流异常结束时，对应位置写入 `error`。                                                                  |
-| `gen_ai.response.time_to_first_chunk`                 | double   | 实际探测到请求发起和首 chunk       | 秒。当前逻辑模型请求发起到首次收到响应流 chunk 的时间；不要求 chunk 含非空文本。计时起点不随重试重置，包含首 chunk 前的重试和退避。                                        |
-| `opencode.llm.successful_attempt.time_to_first_chunk` | double   | 请求最终成功且可精确测量该 attempt | 秒。最终成功 attempt 开始到该 attempt 首 chunk 的时间，保留原文档的 attempt 级指标；与上一行的逻辑请求口径不同。                                                           |
+| 字段                                    | 类型     | 出现条件                     | 期望语义                                                                |
+| --------------------------------------- | -------- | ---------------------------- | ----------------------------------------------------------------------- |
+| `gen_ai.operation.name`                 | string   | 必有                         | 实际模型 API 操作，例如 `chat`、`generate_content`、`text_completion`。 |
+| `gen_ai.provider.name`                  | string   | 必有                         | 标准 provider 名称；不能仅凭兼容协议认定供应商。                        |
+| `gen_ai.request.model`                  | string   | 必有                         | 请求的模型 ID。                                                         |
+| `gen_ai.response.model`                 | string   | 实际响应提供                 | 响应确认的模型名，不能用请求模型补造。                                  |
+| `gen_ai.response.id`                    | string   | 实际响应提供                 | Provider response ID，不能用宿主消息 ID 替代。                          |
+| `opencode.message.id`                   | string   | 必有                         | 逻辑模型调用对应的宿主 assistant 消息 ID。                              |
+| `gen_ai.agent.name`                     | string   | agent 可识别                 | 所属 agent 名称。                                                       |
+| `opencode.agent.type`                   | string   | 必有                         | `primary` 或 `subagent`。                                               |
+| `opencode.compaction.id`                | string   | 摘要调用                     | 与父 compaction 相同的标识。                                            |
+| `gen_ai.usage.input_tokens`             | int      | 请求成功且用量可用           | 输入总 token 数，包含缓存读取和写入。                                   |
+| `gen_ai.usage.output_tokens`            | int      | 请求成功且用量可用           | 输出总 token 数，包含 reasoning。                                       |
+| `gen_ai.usage.reasoning.output_tokens`  | int      | 对应分量可用                 | output tokens 的 reasoning 子集。                                       |
+| `gen_ai.usage.cache_read.input_tokens`  | int      | 对应分量可用                 | input tokens 的缓存读取子集。                                           |
+| `gen_ai.usage.cache_write.input_tokens` | int      | 对应分量可用                 | input tokens 的缓存写入子集。                                           |
+| `opencode.llm.cost.total`               | double   | 请求成功且费用可用           | 费用，单位 USD；应说明是估算还是实际账单及其覆盖范围。                  |
+| `gen_ai.response.finish_reasons`        | string[] | 结束原因已知，或生成异常终止 | 按输出候选顺序排列；异常缺失预期结束原因时使用 `error`。                |
+| `gen_ai.response.time_to_first_chunk`   | double   | 首 chunk 可测量              | 秒，从逻辑调用开始到收到首个响应 chunk；不要求非空文本。                |
 
-usage 公式适用于 OpenCode 已归一化的 token 数据；如果另取 provider 原始 usage，需先理解其缓存和 reasoning 是否已经包含在总量中，不能再次相加。本文基线没有通用的 `gen_ai.usage.total_tokens` 或费用属性；总 token 数直接由 input + output 计算，不另造标准字段。LLM span 覆盖重试，但源 assistant usage/cost 不保证包含所有失败 attempt 的消耗，不将其描述为完整重试账单。
+五个用量字段都只在请求成功且对应数据可用时写入。缓存与 reasoning 已包含在总量中，不能再次相加。总 token 数由 input + output 计算；本基线没有通用的 `gen_ai.usage.total_tokens` 或费用字段。
 
-`gen_ai.response.finish_reasons` 按返回候选顺序排列，不能把各次 retry 的 finish reason 混入这个数组。正文数组经过过滤时，finish reasons 仍对应原候选顺序。不再把 `finish_reason` 写到输出消息对象中，该 JSON 属性在本基线已弃用。
+finish reasons 对应输出候选，不对应各次 retry。输出消息不再携带已弃用的 `finish_reason` JSON 属性。
 
 ### 8.2 消息与系统指令
 
-| 字段                         | 类型         | 出现条件                           | 值与口径                                                                                                    |
-| ---------------------------- | ------------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `gen_ai.input.messages`      | string(JSON) | 正文开启且取得输入内容             | 使用 GenAI InputMessages 结构；实际请求消息按发送顺序记录。                                                 |
-| `gen_ai.output.messages`     | string(JSON) | 正文开启且取得输出内容或确认空输出 | 使用 GenAI OutputMessages 结构；每个元素代表一个输出候选，该候选的多个内容片段放在同一 `parts` 数组。       |
-| `gen_ai.system_instructions` | string(JSON) | 正文开启且取得单独传入的系统指令   | 使用 SystemInstructions 的 part 数组；如果系统指令本来位于聊天历史中，则保留在 input messages，不重复拆出。 |
+| 字段                     | 类型 | 出现条件             | 期望语义                                                                              |
+| ------------------------ | ---- | -------------------- | ------------------------------------------------------------------------------------- |
+| `gen_ai.input.messages`  | JSON | 取得输入             | 实际模型请求消息，按发送顺序记录，采用 InputMessages 结构。                           |
+| `gen_ai.output.messages` | JSON | 取得输出或确认空输出 | 当前生成的候选，采用 OutputMessages 结构；每个候选的内容片段放在同一个 `parts` 数组。 |
 
-消息必须遵循官方 [InputMessages][genai-input-schema] / [OutputMessages][genai-output-schema] JSON Schema。下面是纯文本输入示例；实际内容可含更多已定义的 part 类型：
-
-```json
-[{ "role": "user", "parts": [{ "type": "text", "content": "读取项目配置" }] }]
-```
-
-模型请求工具时的输出示例：
+消息遵循 [InputMessages][genai-input-schema] / [OutputMessages][genai-output-schema]。支持的正文包括文本、reasoning、工具调用、工具响应和相应 schema 定义的多模态 part；保留片段顺序，不将未知对象整体透传。
 
 ```json
 [
@@ -265,7 +220,7 @@ usage 公式适用于 OpenCode 已归一化的 token 数据；如果另取 provi
 ]
 ```
 
-后续模型请求中的工具结果消息示例：
+后续输入中的工具结果使用 `role=tool` 与 `type=tool_call_response`，并保留同一 call ID：
 
 ```json
 [
@@ -278,40 +233,25 @@ usage 公式适用于 OpenCode 已归一化的 token 数据；如果另取 provi
 ]
 ```
 
-单独传入的 `gen_ai.system_instructions` 示例：
-
-```json
-[{ "type": "text", "content": "根据当前项目上下文回答用户问题。" }]
-```
-
-转换和降级规则：
-
-- 当前实现从 AI SDK `onStepStart` 采集 SDK 可见的请求消息与独立 system，从 `onStepFinish.content` 采集当前 step 的生成内容；只在后者不可用时取 `response.messages` 的最后一个 assistant。输出不包含历史 step 或本地工具执行结果。采集通道和关联约束见 [适配层设计 §3](../adapter.md#3-llm-关联与采集)。
-- OpenAI 风格的 `content` / `tool_calls` 要转换为 GenAI `parts`；不能只改外层 attribute key。工具调用的 `arguments` 尽量解析为结构化 JSON，并保持 call ID 与工具 span、工具结果消息一致。
-- 保留文本、tool call、tool response 等已采集片段的顺序；多模态内容按相应 part schema 处理。文本的类型由 `type=text` 表达，不再导出通用的 input/output MIME attributes。
-- reasoning 使用 `reasoning` part；媒体 URL 使用 `uri`，二进制和 data URI 使用 base64 `blob`。不下载媒体内容，不将未知片段或整个 SDK 对象作为正文透传。
-- 未取得完整 AI SDK lifecycle 数据时，输入 fallback 只记录 owner 用户消息文本，输出 fallback 只记录可观察到的 assistant 文本，二者仍转换为相同 GenAI 消息结构。此时不表示取得了完整系统提示词、历史上下文或原始响应。
-- 不在 LLM span 创建时预填空输出数组；尚未观察到输出应省略。已知没有返回候选时可以记录 `[]`，实际空文本候选可以记录一个内容为空的 text part。
+系统指令保留在 input messages 的 `role=system` 消息中，例如 `{"role":"system","parts":[{"type":"text","content":"根据当前项目上下文回答用户问题。"}]}`，不单独导出系统指令字段。reasoning 使用 `reasoning` part，媒体 URL 使用 `uri`，二进制和 data URI 使用 base64 `blob`，不额外下载媒体。
 
 ### 8.3 请求参数、工具定义和 HTTP 属性
 
-原先聚合在 invocation JSON 中、有标准对应项的参数拆成独立 attributes。只写入实际取得的有效值，不把未配置参数的假定默认值当作实测值。
+| 字段                         | 类型     | 期望语义                                                                                             |
+| ---------------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `gen_ai.request.max_tokens`  | int      | 请求的最大输出 token 数。                                                                            |
+| `gen_ai.request.temperature` | double   | 请求的 temperature。                                                                                 |
+| `gen_ai.request.top_p`       | double   | 请求的 top-p。                                                                                       |
+| `gen_ai.request.top_k`       | int      | 请求的 top-k。                                                                                       |
+| `gen_ai.request.stream`      | boolean  | 本次请求是否使用流式响应。                                                                           |
+| `gen_ai.output.type`         | string   | 请求的输出类型，例如 `text`、`json`；可记录由 SDK 配置和已知默认行为确认的类型，不根据生成文本猜测。 |
+| `gen_ai.tool.definitions`    | JSON     | 当前请求可调用的有效工具集合，含可取得的描述和参数 schema。                                          |
+| `http.request.header.<key>`  | string[] | 可关联的模型请求 headers，key 为小写 header 名。                                                     |
+| `http.response.header.<key>` | string[] | 可关联的模型响应 headers，包括错误响应。                                                             |
 
-`gen_ai.output.type` 独立于正文采集开关。工具定义和模型请求／响应 headers 与输入输出正文共用 `captureContent`，默认关闭，不提供额外开关。`gen_ai.request.seed` 不采集。
+参数仅记录实际取得的有效值，不能推测默认值。输出类型允许使用已确认的 SDK 默认行为：AI SDK 回调确认未配置 `output` 时记录 `text`；没有 SDK 快照或显式格式无法取得时省略。工具定义、headers 受正文开关控制；输出类型不受控制；不采集 seed。
 
-| 字段                         | 类型         | 来源                                                                                             |
-| ---------------------------- | ------------ | ------------------------------------------------------------------------------------------------ |
-| `gen_ai.request.max_tokens`  | int          | 取得 `maxOutputTokens`。                                                                         |
-| `gen_ai.request.temperature` | double       | 取得 `temperature`。                                                                             |
-| `gen_ai.request.top_p`       | double       | 取得 `topP`。                                                                                    |
-| `gen_ai.request.top_k`       | int          | 取得 `topK`。                                                                                    |
-| `gen_ai.request.stream`      | boolean      | 确认本次请求是否使用流式响应。                                                                   |
-| `gen_ai.output.type`         | string       | 取得 AI SDK 显式 `output.responseFormat.type`，当前支持 `text`、`json`；未指定或无法识别时省略。 |
-| `gen_ai.tool.definitions`    | string(JSON) | `captureContent=true` 时，取得当前 SDK step 经 `activeTools` 筛选的工具定义。                    |
-| `http.request.header.<key>`  | string[]     | `captureContent=true` 时取得的 SDK step 请求 headers；key 为小写 header 名。                     |
-| `http.response.header.<key>` | string[]     | `captureContent=true` 时取得的 SDK 响应或可关联 API 错误的响应 headers；key 为小写 header 名。   |
-
-`gen_ai.tool.definitions` 使用 [ToolDefinitions JSON Schema][genai-tools-schema]，替代逐项展开的工具属性。函数工具直接使用顶层 `type=function` / `name`，不能保留 OpenAI 的外层 `function` 包装；开启 `captureContent` 后一并记录可取得的 `description` 和 `parameters`。参数定义使用 AI SDK 的 Schema 转换结果，采用 JSON Schema draft-07；转换失败时保留工具身份并省略参数，不影响其他工具。provider 工具使用 SDK 的 provider tool ID 作为 `type`，保留调用名称 `name`，不伪装成函数工具。已知有效工具集合为空时记录 `[]`，没有工具快照时省略。例如：
+工具定义遵循 [ToolDefinitions][genai-tools-schema]。函数工具使用顶层 `type=function` / `name`，参数采用 JSON Schema draft-07；provider 工具保留真实类型，不伪装为函数工具。已确认空工具集合为 `[]`，未知则省略。
 
 ```json
 [
@@ -327,138 +267,103 @@ usage 公式适用于 OpenCode 已归一化的 token 数据；如果另取 provi
 ]
 ```
 
-HTTP header 示例是原生 attribute 值：`http.request.header.content-type=["application/json"]`。即使只有一个值也必须是 `string[]`，保留 header 名中的连字符；多值按 HTTP 库提供的形式记录，不能任意按逗号拆分。[HTTP 字段规范][otel-http]
-
-请求 headers 反映 SDK 可见值，不补造 provider 或底层 HTTP 库稍后追加的 headers；响应 headers 不要求成功状态，但必须能关联到对应 LLM。内部关联标识 `x-opencode-observer-request` 不采集。模型 headers 与 `otlpHeaders` 配置的 collector 导出 headers 相互独立。
-
-这些字段使用当前 step 的快照；新请求清理旧工具定义、输出类型和响应 headers。不能取得 SDK 回调（例如 native 路径）时省略相应字段，不根据工具执行记录、回答文本或其他请求推测。异步解析、快照提交及迟到结果处理见 [适配层设计 §3.3](../adapter.md#33-数据转换与快照提交)。
+HTTP header 即使只有一个值也是 `string[]`，例如 `http.request.header.content-type=["application/json"]`；保留名称中的连字符，不任意按逗号拆分多值。模型 headers 与 OTLP collector 的导出 headers 分开。[HTTP 字段规范][otel-http]
 
 ### 8.4 Retry attributes
 
-| 字段                         | 类型         | 出现条件        | 值与口径                                              |
-| ---------------------------- | ------------ | --------------- | ----------------------------------------------------- |
-| `opencode.llm.retry_count`   | int          | 必有，初始 `0`  | 已确认实际开始的 retry attempt 数，不含初次 attempt。 |
-| `opencode.llm.retry_history` | string(JSON) | 必有，初始 `[]` | 按 attempt 升序排列的已开始重试记录。                 |
+| 字段                       | 类型 | 出现条件       | 期望语义                                                                   |
+| -------------------------- | ---- | -------------- | -------------------------------------------------------------------------- |
+| `opencode.llm.retry_count` | int  | 必有，初始 `0` | 宿主重试流程通知的次数，不含初次执行；包含已进入退避但尚未发出请求的重试。 |
 
-`opencode.llm.retry_history` 的结构：
-
-```ts
-type RetryHistory = Array<{
-  attempt: number;
-  reason: string;
-  start_offset_ms: number;
-}>;
-```
-
-`session.status` 的 retry 通知携带 `attempt`、`message` 和预计重试时间 `next`，在退避前发送，不代表重试已经开始。先保存待执行记录，观察到新 attempt 实际开始后才增加计数并写入 history；`reason` 取通知的 `message`，`start_offset_ms` 为实际开始时间相对本 LLM span 开始时间的毫秒偏移。
-
-等待期间取消不计入已开始次数；没有请求边界探测时不能用 `next` 伪造时间，初始 `0` / `[]` 仅表示尚未确认到重试开始。这里是 GenAI 逻辑请求层的重试，不等同于 HTTP 单次重发序号，因此不改为 `http.request.resend_count`。
+此字段的目标范围就是宿主重试流程，不统计 SDK、鉴权或传输层的内部重发，也不以它推算实际网络请求数。仅记录计数，不扩展为重试原因、历史、预计时间或偏移量。精确 attempt 首块计时仍需独立的 attempt 边界证据。
 
 ### 8.5 生命周期与状态
 
-- 仅为有请求准备或模型 step 证据的 assistant message 创建 span。OpenCode 的 subtask / 命令路径也可能直接构造 assistant message，不能仅凭 `role=assistant` 创建 LLM span。
-- 精确开始时间取逻辑模型调用发起时刻，结束时间取响应流完成或该调用终止时刻；span 覆盖期间发生的重试和退避，不包含对应工具的执行或等待时间。
-- `assistant.time.created/completed` 是消息处理时间；`time.completed` 在工具等待和清理之后写入，不能作为纯 LLM 结束时间。普通消息/part 事件只能提供近似观察边界，精确边界需要额外 lifecycle 探测。
-- 当前实现优先在 `chat.headers` 唯一匹配 assistant 和 parent 后创建 span，以便发送前传播上下文；起点是请求准备的本地观察时间，不保证请求最终到达网络。没有取得该关联时降级为首个 `step-start` 的观察时间。结束使用 `step-finish` 或终止事件的观察时间；这可能包含请求准备、事件处理、快照及工具等待开销，不能声称是纯模型请求耗时。只有结束事件且没有请求准备或 step 开始证据时不补造起点。
-- 无法测量首 chunk 时，不导出标准或 attempt 级首 chunk 耗时。不能用首个 assistant 文本事件的观察时间伪造精确值。
-- 正常完成保持 `UNSET`，provider / OpenCode 错误终止时设置 `ERROR`、`error.type` 和 status message。重试后成功的逻辑 LLM span 不残留终态 `error.type` 或 `ERROR`；重试原因保留在 history。
-- session 结束时仍未完成的 LLM span 以 `ERROR` 清理，status message 为 `session ended before message completed` 或具体会话错误。
+期望通过 LLM span 描述逻辑模型调用的客户端耗时：从开始请求到响应流结束或终止失败，覆盖该调用的重试与退避。它不代表服务端纯推理时间，也不应将后续本地工具执行当作模型处理时间。
+
+没有可靠请求边界时，实现必须说明采用的替代时间及其局限；首 chunk 近似值也必须标明来源，不能称为精确网络计时。时间戳无效或证据缺失时不补造测量。
+
+最终成功的重试保持 `UNSET`，不保留终态 `error.type`；最终失败设置 `ERROR`。可恢复的模型错误独立结束该 LLM，父 run / interaction 可以继续。
 
 ## 9. `<prefix>tool.<tool-name>`
 
-### 9.1 Attributes
+tool 从实际执行开始，到完成或失败时结束。调用身份、参数和结果应能与 LLM 消息中的工具调用对应。
 
-| 字段                         | 类型         | 出现条件                 | 值与口径                                                        |
-| ---------------------------- | ------------ | ------------------------ | --------------------------------------------------------------- |
-| `gen_ai.operation.name`      | string       | 必有                     | `execute_tool`。                                                |
-| `gen_ai.tool.call.id`        | string       | 必有                     | tool part 的 `callID`，不是 part 的 `id`。                      |
-| `gen_ai.tool.name`           | string       | 必有                     | tool part 的 `tool`，同时参与 span 名称。                       |
-| `gen_ai.tool.call.arguments` | string(JSON) | 正文开启且参数可用       | tool part 的 `state.input` 对象。                               |
-| `gen_ai.tool.call.result`    | string(JSON) | 正文开启且 tool 成功完成 | `state.output` 经下述规则转换后的结果对象；失败时不填写此属性。 |
-| `gen_ai.agent.name`          | string       | 所属 agent 可识别时      | 所属 assistant 的 `agent`，兼容 `mode`；未知时省略。            |
-| `opencode.agent.type`        | string       | 完成后的 span 必有       | `primary` 或 `subagent`。                                       |
+| 字段                         | 类型   | 出现条件           | 期望语义                                 |
+| ---------------------------- | ------ | ------------------ | ---------------------------------------- |
+| `gen_ai.operation.name`      | string | 必有               | `execute_tool`。                         |
+| `gen_ai.tool.call.id`        | string | 必有               | 工具调用 ID，不是存储该调用的 part ID。  |
+| `gen_ai.tool.name`           | string | 必有               | 工具名称，同时用于 span 名称。           |
+| `gen_ai.tool.description`    | string | 正文开启且描述可用 | 本次执行工具的描述。                     |
+| `gen_ai.tool.call.arguments` | JSON   | 参数可用           | 调用参数对象。                           |
+| `gen_ai.tool.call.result`    | JSON   | 成功且结果可用     | 工具结果对象；失败文本不能作为成功结果。 |
+| `gen_ai.agent.name`          | string | agent 可识别       | 所属 agent 名称。                        |
+| `opencode.agent.type`        | string | 必有               | `primary` 或 `subagent`。                |
 
-参数和结果分别遵循 [ToolCallArguments][genai-tool-args-schema] / [ToolCallResult][genai-tool-result-schema] JSON Schema。本基线要求对象：`state.output` 若可解析为 JSON 对象，则使用该对象；否则使用插件定义的 `{ "content": state.output }` 包装，保留原始文本。`content` 是本插件结果对象的约定，并非新增的 GenAI attribute。
+参数与结果遵循 [ToolCallArguments][genai-tool-args-schema] / [ToolCallResult][genai-tool-result-schema]，本基线要求对象。纯文本结果可包装为 `{"content":"配置文件内容"}`；`content` 是本项目的结果对象约定。成功/失败由 span status 表达，不再导出重复的 `tool.success`。
 
-参数示例：
+## 10. `<prefix>skill.load`
 
-```json
-{ "filePath": "package.json" }
-```
+skill.load 表示一次技能加载调用，沿用标准工具执行语义。它只覆盖加载操作，不表示执行该技能指导的整个任务。通过底层调用 ID 与模型消息及权限检查关联；同名技能的不同调用分别记录。
 
-文本工具结果的转换示例：
+| 字段                              | 类型    | 出现条件                     | 期望语义                                                                                              |
+| --------------------------------- | ------- | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `gen_ai.operation.name`           | string  | 必有                         | `execute_tool`。                                                                                      |
+| `gen_ai.tool.name`                | string  | 必有                         | `skill`，具体技能名使用下方独立字段。                                                                 |
+| `gen_ai.tool.call.id`             | string  | 必有                         | 底层调用 ID。                                                                                         |
+| `gen_ai.agent.name`               | string  | agent 可识别                 | 所属 agent 名称。                                                                                     |
+| `opencode.agent.type`             | string  | 必有                         | `primary` 或 `subagent`。                                                                             |
+| `opencode.skill.name`             | string  | 名称可用                     | 所加载的技能名称，不受 `captureContent` 控制。                                                        |
+| `ai.agent.skill.name`             | string  | 名称可用                     | 项目约定的额外名称字段，与 `opencode.skill.name` 同值并同步更新；不受正文开关控制，非 OTel 标准字段。 |
+| `opencode.skill.directory`        | string  | 目录可用                     | 宿主报告的技能目录，不推导原始文件路径。                                                              |
+| `opencode.skill.output`           | string  | 正文开启、加载成功且输出可用 | 实际返回文本，可包含说明、资源列表或截断提示，不等同于完整原始技能文件。                              |
+| `opencode.skill.output.truncated` | boolean | 截断状态可用                 | 宿主是否截断返回文本；未知时省略。                                                                    |
 
-```json
-{ "content": "配置文件内容" }
-```
+名称、目录和截断状态是元数据，关闭正文仍可采集；不导出 `opencode.skill.trigger`，不重复记录完整工具参数和 `gen_ai.tool.call.result`。模型消息中的工具调用与响应保留原有格式，仍受正文开关控制。加载时长包含权限等待和结果准备，不等同于纯文件读取耗时；不推算技能 token、费用、版本或后续执行归属。
 
-失败的 `state.error` 写入 span status message，`error.type` 记录错误分类；不将错误文本伪装为成功工具结果。不再导出重复的 `tool.success`，成功/失败由 span 的结束状态判断。
+加载成功保持 `UNSET`，加载失败或提前终止设置 `ERROR`；已完成的权限拒绝检查保持 `UNSET`，因此失败的加载记录 `PermissionRejectedError`。缺失数据省略，重复和迟到事件不重建或改写已结束 span。
 
-### 9.2 生命周期与状态
+## 11. `<prefix>permission.check`
 
-- 开始/结束时间来自 tool state 的 `time.start` / `time.end`。
-- 工具归属通过 tool part 的 `messageID` 查找 assistant，再由 assistant 的 `parentID` 关联 owner 用户消息；不能在完成事件到达时直接使用当前 interaction。
-- `completed` 时正常结束，status 保持 `UNSET`；`error` 时设置 `ERROR`，status message 为 tool error 文本。
-- `state.error` 只有文本，不含结构化异常类型。已关联的人工权限拒绝导致失败时使用 `error.type=PermissionRejectedError`；普通工具执行失败使用 `ExecutionError`；无法归类的清理错误使用 `_OTHER`。这些具体错误分类是插件约定，attribute key 是 OTel 标准。
-- 缺失 `running` 事件时，完成事件补建 span 后立即结束。
-- session 结束但 tool 未完成时，以 `ERROR` 清理，status message 为 `session ended before tool completed`；完成态字段可能不存在。
+permission.check 覆盖人工权限请求的等待周期，从发起请求到收到答复或异常终止。它表示检查过程，不表示又执行一次工具，也不涵盖未进入人工等待的静默授权。
 
-## 10. `<prefix>permission.check`
+| 字段                               | 类型     | 出现条件     | 期望语义                                |
+| ---------------------------------- | -------- | ------------ | --------------------------------------- |
+| `gen_ai.agent.name`                | string   | agent 可识别 | 被检查工具所属 agent 名称。             |
+| `opencode.agent.type`              | string   | 必有         | `primary` 或 `subagent`。               |
+| `opencode.permission.tool.call.id` | string   | 必有         | 与父 tool 或 skill.load 相同的调用 ID。 |
+| `opencode.permission.tool.name`    | string   | 必有         | 被检查的工具名；skill.load 为 `skill`。 |
+| `opencode.permission.name`         | string   | 必有         | 权限类型。                              |
+| `opencode.permission.patterns`     | string[] | 必有         | 请求匹配的 patterns。                   |
+| `opencode.permission.reply`        | string   | 收到答复     | `once`、`always` 或 `reject`。          |
+| `opencode.permission.granted`      | boolean  | 收到答复     | reply 不为 `reject` 时为 `true`。       |
 
-### 10.1 Attributes
+工具关联使用 `opencode.permission.tool.*` 自定义属性，不设置 `gen_ai.tool.name`、`gen_ai.tool.call.id` 或 `gen_ai.operation.name=execute_tool`，避免观测后端将权限检查识别为工具执行或用工具名覆盖 span 名称。
 
-| 字段                           | 类型     | 出现条件       | 值与口径                                                     |
-| ------------------------------ | -------- | -------------- | ------------------------------------------------------------ |
-| `gen_ai.agent.name`            | string   | agent 可识别时 | 关联工具所属 assistant 的 `agent`，兼容 `mode`；未知时省略。 |
-| `opencode.agent.type`          | string   | 必有           | `primary` 或 `subagent`。                                    |
-| `gen_ai.tool.call.id`          | string   | 必有           | 被检查的工具调用 ID，与父 tool span 相同。                   |
-| `gen_ai.tool.name`             | string   | 必有           | 从对应 tool part 的 `tool` 取得，与父 tool span 相同。       |
-| `opencode.permission.name`     | string   | 必有           | 权限类型。                                                   |
-| `opencode.permission.patterns` | string[] | 必有           | 请求匹配的 patterns。                                        |
-| `opencode.permission.reply`    | string   | 收到 reply     | `once`、`always` 或 `reject`。                               |
-| `opencode.permission.granted`  | boolean  | 收到 reply     | reply 不为 `reject` 时为 `true`。                            |
+收到拒绝也是检查流程正常完成，status 保持 `UNSET`，通过 `granted=false` 表示决策。调用因此失败时，由 tool 或 skill.load span 记录失败。检查尚未得到答复却提前终止时，permission span 才是 `ERROR`。
 
-此 span 的 GenAI tool 字段仅引用被检查的工具调用，不表示又执行了一次工具，因此不设置 `gen_ai.operation.name=execute_tool`。权限模式、人工决策和 patterns 没有等价的标准 GenAI 字段，保留 OpenCode 扩展。
+## 12. 状态与错误汇总
 
-### 10.2 生命周期与状态
+| 字段 / 位置                      | 类型   | 出现条件     | 期望语义                                                             |
+| -------------------------------- | ------ | ------------ | -------------------------------------------------------------------- |
+| `error.type`（attribute）        | string | `ERROR` 结束 | 源错误类型或稳定错误码，无法分类时为 `_OTHER`，不使用完整错误文本。  |
+| `exception.message`（attribute） | string | `ERROR` 结束 | 与 `status.message` 相同的非空错误摘要，不受 `captureContent` 控制。 |
+| `status.code`（envelope）        | enum   | 所有 span    | 正常为 `UNSET`，失败为 `ERROR`。                                     |
+| `status.message`（envelope）     | string | `ERROR` 结束 | 非空错误摘要，不写成同名 span attribute。                            |
 
-- 开始/结束时间使用本地 `Date.now()`，测量插件观察到的权限等待时间。
-- `permission.asked` 的 `id` 与 `permission.replied` 的 `requestID` 配对。asked 中的 `tool` 可选，且只有 `messageID` / `callID`，不包含工具名称；必须精确关联活动 tool 后才创建 permission span。
-- 收到任何 reply 都表示检查流程正常结束，status 保持 `UNSET`。`reject` 通过 `opencode.permission.granted=false` 表达；随后关联 tool 若因该拒绝而失败，使用 `error.type=PermissionRejectedError`。
-- tool 或 session 在 reply 前结束，或 pending map 淘汰该请求时，permission span 以 `ERROR` 清理。
+两个摘要字段优先保留有效源文本的原文。缺失、空字符串或纯空白摘要使用 `<error.type>: no error message provided`；类型为 `_OTHER` 或空白时使用 `Operation failed: no error message provided`。默认文本明确表示源摘要不可用，不推断具体失败原因；成功 span 不写入这两个字段。
 
-## 11. 状态与错误汇总
+子操作失败不自动使父操作失败；各 span 依据自身业务结果结束。重复或迟到数据不能修改已结束 span。进程崩溃等无法观察的终点不能补造为成功结束。
 
-| Span             | 正常结束 status | 常见 ERROR 条件                                  |
-| ---------------- | --------------- | ------------------------------------------------ |
-| run              | `UNSET`         | 终止 session error、overflow 恢复失败            |
-| interaction      | `UNSET`         | 所属 session / assistant 终止错误                |
-| compaction       | `UNSET`         | 摘要错误、被新压缩覆盖、session 提前结束         |
-| llm              | `UNSET`         | 模型调用最终失败、session 提前结束               |
-| tool             | `UNSET`         | tool error、session 提前结束                     |
-| permission.check | `UNSET`         | tool / session 在 reply 前结束、pending map 淘汰 |
-
-所有 span 共用以下错误规则：
-
-| 字段 / 位置                       | 类型   | 出现条件                 | 口径                                                                                                             |
-| --------------------------------- | ------ | ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `error.type`（span attribute）    | string | `ERROR` 结束时必有       | 优先用源错误类型或稳定错误码；无法识别且未定义具体分类时用 OTel `_OTHER`。不把完整错误文本当作类型。             |
-| `status.code`（span envelope）    | enum   | 所有 span                | 正常保持 `UNSET`，失败为 `ERROR`。                                                                               |
-| `status.message`（span envelope） | string | `ERROR` 结束时有错误摘要 | 记录错误摘要；SDK 中通常通过 `setStatus({ code, message })` 写入，不调用 `setAttribute("status.message", ...)`。 |
-
-子操作失败不自动使父操作失败：可恢复的 overflow 不结束 run/interaction；最终成功的重试不把逻辑 LLM span 标为失败；人工拒绝不把已完成的 permission 检查标为失败。清理时必须去重，已结束的 span 不再次修改。
-
-## 12. 最小成功 Trace 示例
-
-一次无工具调用的主会话：
+## 13. 最小成功 Trace 示例
 
 ```text
 opencode.run                  gen_ai.operation.name=invoke_workflow
-└── opencode.interaction      gen_ai.operation.name=invoke_agent
-    └── opencode.llm          gen_ai.operation.name=chat
+└── opencode.interaction       gen_ai.operation.name=invoke_agent
+    └── opencode.llm           gen_ai.operation.name=chat
 ```
 
-三个 span 均包含相同的 `session.id` / `gen_ai.conversation.id`，正常结束后 status 保持 `UNSET`。LLM messages 描述单次逻辑模型调用；interaction messages 描述一次用户交互；run input messages 按顺序包含任务内所有 interaction 的用户输入，run output messages 为最后一次 interaction 的最终输出。
+三个 span 使用相同的 session/conversation ID，正常结束后 status 为 `UNSET`。开启正文时，LLM messages 表示模型请求与生成内容，interaction messages 表示一次交互，run messages 表示整个任务的输入与最终答复。完整目标字段能否出现，需结合[当前实现及其差距](trace-opencode.md#14-与期望规范的差距)判断。
 
 [otel-semconv]: https://github.com/open-telemetry/semantic-conventions/tree/v1.44.0/docs
 [otel-errors]: https://github.com/open-telemetry/semantic-conventions/blob/v1.44.0/docs/general/recording-errors.md

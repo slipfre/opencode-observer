@@ -2,15 +2,14 @@ import type { ModelMessage, ModelPart } from "../../contract/messages.js";
 
 export function encodeModelMessages(messages: ModelMessage[]) {
   return JSON.stringify(
-    messages.map((message) => ({ role: message.role, parts: message.parts.map(encodeModelPart) })),
+    messages.map((message) => ({
+      role: message.role,
+      parts: message.parts.map(toSpanMessagePart),
+    })),
   );
 }
 
-export function encodeSystemInstructions(parts: ModelPart[]) {
-  return JSON.stringify(parts.map(encodeModelPart));
-}
-
-function encodeModelPart(part: ModelPart) {
+function toSpanMessagePart(part: ModelPart) {
   if (part.type === "text" || part.type === "reasoning") {
     return { type: part.type, content: part.text };
   }

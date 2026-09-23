@@ -19,11 +19,12 @@ afterEach(async () => {
 
 function setup(
   options: Partial<
-    Omit<CoordinatorOptions, "observer"> & Omit<ObserverOptions, "provider" | "scope">
+    Omit<CoordinatorOptions, "observer"> &
+      Omit<ObserverOptions, "tracerProvider" | "instrumentationScope">
   > = {},
 ) {
   const spans: ReadableSpan[] = [];
-  const provider = new BasicTracerProvider({
+  const tracerProvider = new BasicTracerProvider({
     spanLimits: { attributeCountLimit: 4096 },
     spanProcessors: [
       new SimpleSpanProcessor({
@@ -37,8 +38,8 @@ function setup(
   });
 
   const observer = createObserver({
-    provider,
-    scope: { name: "test" },
+    tracerProvider,
+    instrumentationScope: { name: "test" },
     captureContent: true,
     now: () => 2000,
     ...options,
@@ -522,9 +523,33 @@ test("errors without a session do not affect runs; unknown error types use _OTHE
   expect((await h.spans())[0]?.status.message).toBe("unclassified");
 });
 
+test.each([
+  { error: undefined, type: "_OTHER", message: "Operation failed: no error message provided" },
+  {
+    error: { name: "MessageOutputLengthError", data: {} },
+    type: "MessageOutputLengthError",
+    message: "MessageOutputLengthError: no error message provided",
+  },
+  {
+    error: { name: "APIError", data: {}, message: "connection failed" },
+    type: "APIError",
+    message: "connection failed",
+  },
+])("session errors export source details or a fallback: %j", async ({ error, type, message }) => {
+  const h = setup({ captureContent: false });
+  await h.coordinator.message(user(), [text("u1", "question")]);
+
+  await h.coordinator.event({ type: "session.error", properties: { sessionID: "s1", error } });
+
+  const spans = await h.spans();
+  expect(spans).toHaveLength(1);
+  expect(spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR, message });
+  expect(spans[0]?.attributes).toMatchObject({ "error.type": type, "exception.message": message });
+});
+
 test("custom attributes allow user.id but cannot override other derived or error attributes", async () => {
   const h = setup({
-    tracePrefix: "custom.",
+    spanNamePrefix: "custom.",
     spanAttributes: {
       "tenant.id": "test",
       "session.id": "fake",
@@ -553,23 +578,6 @@ test("custom attributes allow user.id but cannot override other derived or error
   expect(span?.attributes["opencode.session.parent_id"]).toBeUndefined();
   expect(span?.attributes["error.type"]).toBeUndefined();
   expect(span?.attributes["openinference.span.kind"]).toBeUndefined();
-});
-
-test("resolved user identity is only used on newly created spans", async () => {
-  const identity: { value?: string } = {};
-  const h = setup({ userID: () => identity.value });
-
-  await h.coordinator.message(user(), [text("u1", "first")]);
-  identity.value = "alice";
-  await idle(h.coordinator);
-
-  await h.coordinator.message(user("u2", 1500), [text("u2", "next")]);
-  await idle(h.coordinator);
-
-  const spans = await h.spans();
-
-  expect(spans[0]?.attributes["user.id"]).toBeUndefined();
-  expect(spans[1]?.attributes["user.id"]).toBe("alice");
 });
 
 test("dispose exports an unfinished run once and ignores later events", async () => {

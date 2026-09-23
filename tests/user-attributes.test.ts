@@ -13,7 +13,7 @@ const run = {
   id: "u1",
   sessionID: "s1",
   startedAt: 1000,
-  parent: undefined,
+  parentTool: undefined,
   parentSessionID: undefined,
 };
 const interaction = {
@@ -32,7 +32,7 @@ afterEach(async () => {
 
 function setup(spanAttributes: Record<string, string>) {
   const spans: ReadableSpan[] = [];
-  const provider = new BasicTracerProvider({
+  const tracerProvider = new BasicTracerProvider({
     spanProcessors: [
       new SimpleSpanProcessor({
         export(batch, callback) {
@@ -44,8 +44,8 @@ function setup(spanAttributes: Record<string, string>) {
     ],
   });
   const observer = createObserver({
-    provider,
-    scope: { name: "test" },
+    tracerProvider,
+    instrumentationScope: { name: "test" },
     captureContent: false,
     now: () => 2000,
     spanAttributes,
@@ -55,23 +55,19 @@ function setup(spanAttributes: Record<string, string>) {
   return { observer, spans };
 }
 
-test.each(
-  ["configured-user", "unknown"].flatMap((configuredUserID) =>
-    [undefined, "", "explicit-user"].map((userID) => ({ configuredUserID, userID })),
-  ),
-)(
-  "all six span types preserve $configuredUserID with contract identity $userID",
-  async ({ configuredUserID, userID }) => {
+test.each([undefined, "configured-user", "unknown"])(
+  "all seven span types use only the configured user identity %j",
+  async (configuredUserID) => {
     const h = setup({
-      "user.id": configuredUserID,
+      ...(configuredUserID ? { "user.id": configuredUserID } : {}),
       "custom.attribute": "retained",
       "session.id": "forged",
       "gen_ai.input.messages": "forged",
     });
     const tool = { interaction, messageID: "a1", callID: "tool1" };
 
-    h.observer.startRun({ ...run, userID });
-    h.observer.startInteraction({ ...interaction, userID });
+    h.observer.startRun(run);
+    h.observer.startInteraction(interaction);
     h.observer.startLlm({
       interaction,
       id: "a1",
@@ -81,13 +77,13 @@ test.each(
       model: "model",
       operation: "chat",
       stream: true,
-      input: undefined,
+      fallbackInputText: undefined,
       agentType: undefined,
       parentSessionID: undefined,
       compactionID: undefined,
-      userID,
     });
-    h.observer.startTool({ ...tool, name: "read", startedAt: 1200, userID });
+    h.observer.startTool({ ...tool, name: "read", startedAt: 1200 });
+    h.observer.startSkill({ ...tool, callID: "skill1", name: "review", startedAt: 1200 });
     h.observer.startPermission({
       tool,
       requestID: "p1",
@@ -95,7 +91,6 @@ test.each(
       name: "read",
       patterns: ["*"],
       startedAt: 1300,
-      userID,
     });
     h.observer.startCompaction({
       interaction,
@@ -103,7 +98,6 @@ test.each(
       startedAt: 1400,
       auto: true,
       overflow: false,
-      userID,
     });
     await h.observer.shutdown();
 
@@ -113,10 +107,11 @@ test.each(
       "opencode.llm",
       "opencode.permission.check",
       "opencode.run",
+      "opencode.skill.load",
       "opencode.tool.read",
     ]);
     h.spans.forEach((span) => {
-      expect(span.attributes["user.id"]).toBe(userID || configuredUserID);
+      expect(span.attributes["user.id"]).toBe(configuredUserID);
       expect(span.attributes["session.id"]).toBe("s1");
       expect(span.attributes["custom.attribute"]).toBe("retained");
       expect(span.attributes["gen_ai.input.messages"]).toBeUndefined();
@@ -125,16 +120,23 @@ test.each(
   },
 );
 
-test("user.id is an initialization snapshot like other configured span attributes", async () => {
+test("configured attributes stay isolated across instances and consecutive runs", async () => {
   const attributes = { "user.id": "first", team: "original" };
   const h = setup(attributes);
 
   h.observer.startRun(run);
   attributes["user.id"] = "second";
   attributes.team = "changed";
+  const other = setup(attributes);
+  other.observer.startRun(run);
   h.observer.startInteraction(interaction);
+  h.observer.finishRun({ ...run, endedAt: 1500, output: undefined });
+  h.observer.startRun({ ...run, id: "u2", startedAt: 1600 });
   await h.observer.shutdown();
+  await other.observer.shutdown();
 
-  expect(h.spans.map((span) => span.attributes["user.id"])).toEqual(["first", "first"]);
-  expect(h.spans.map((span) => span.attributes.team)).toEqual(["original", "original"]);
+  expect(h.spans.map((span) => span.attributes["user.id"])).toEqual(["first", "first", "first"]);
+  expect(h.spans.map((span) => span.attributes.team)).toEqual(["original", "original", "original"]);
+  expect(other.spans.map((span) => span.attributes["user.id"])).toEqual(["second"]);
+  expect(other.spans.map((span) => span.attributes.team)).toEqual(["changed"]);
 });

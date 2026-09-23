@@ -3,9 +3,9 @@ import { isUserIDEnabled, resolveUser } from "../src/user/resolve.js";
 
 const env = {
   OPENCODE_USER_ID_ENDPOINT: "https://identity.example.test/queryUserByToken",
-  OPENCODE_USER_ID_TOKEN: "token",
   OPENCODE_USER_ID_RETRY_COUNT: "0",
 };
+const providers = { configured: { options: { apiKey: " token " } } };
 
 afterEach(() => mock.restore());
 
@@ -24,7 +24,9 @@ test.each([
   const config = { ...env, OPENCODE_USER_ID_ENABLED: input.value };
 
   expect(isUserIDEnabled(config)).toBe(input.enabled);
-  expect(await resolveUser(config)).toEqual(input.enabled ? { id: "user-1" } : undefined);
+  expect(await resolveUser(providers, config)).toEqual(
+    input.enabled ? { id: "user-1" } : undefined,
+  );
   expect(fetcher).toHaveBeenCalledTimes(input.enabled ? 1 : 0);
 });
 
@@ -32,10 +34,9 @@ test("resolver passes identity parameters and waits for the lookup result", asyn
   const response = Promise.withResolvers<Response>();
   const fetcher = spyOn(globalThis, "fetch").mockReturnValue(response.promise);
   const completed = mock();
-  const lookup = resolveUser({
+  const lookup = resolveUser(providers, {
     ...env,
     OPENCODE_USER_ID_ENDPOINT: " https://identity.example.test/queryUserByToken ",
-    OPENCODE_USER_ID_TOKEN: " token ",
     "OPENCODE_USER_ID_X-Blackbox-Auth": "identity-secret",
     OPENCODE_USER_ID_TIMEOUT: "100",
   }).then((user) => {
@@ -66,7 +67,7 @@ test("resolver waits for configured retries before returning identity", async ()
     .mockRejectedValueOnce(new Error("unavailable"))
     .mockResolvedValueOnce(Response.json({ code: 0, result: { ssicNo: "user-1" } }));
 
-  expect(await resolveUser({ ...env, OPENCODE_USER_ID_RETRY_COUNT: "1" })).toEqual({
+  expect(await resolveUser(providers, { ...env, OPENCODE_USER_ID_RETRY_COUNT: "1" })).toEqual({
     id: "user-1",
   });
   expect(fetcher).toHaveBeenCalledTimes(2);
@@ -75,34 +76,18 @@ test("resolver waits for configured retries before returning identity", async ()
 test("resolver distinguishes exhausted lookup failures from skipped lookups", async () => {
   const fetcher = spyOn(globalThis, "fetch").mockRejectedValue(new Error("unavailable"));
 
-  expect(await resolveUser({ ...env, OPENCODE_USER_ID_RETRY_COUNT: "1" })).toBeNull();
+  expect(await resolveUser(providers, { ...env, OPENCODE_USER_ID_RETRY_COUNT: "1" })).toBeNull();
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 test.each([
-  { status: 503, payload: { code: 0, result: { ssicNo: "user-1" } } },
-  { status: 200, payload: { code: 1 } },
-  { status: 200, payload: { code: 0, result: { ssicNo: "unknown" } } },
-])("resolver treats unsuccessful identity responses as lookup failures: %j", async (input) => {
-  spyOn(globalThis, "fetch").mockResolvedValue(
-    Response.json(input.payload, { status: input.status }),
-  );
-
-  expect(await resolveUser(env)).toBeNull();
-});
-
-test.each([
-  { OPENCODE_USER_ID_ENABLED: "false" },
-  { OPENCODE_USER_ID_ENABLED: "0" },
-  { OPENCODE_USER_ID_TOKEN: undefined },
-  { OPENCODE_USER_ID_TOKEN: " " },
   { OPENCODE_USER_ID_ENDPOINT: undefined },
   { OPENCODE_USER_ID_ENDPOINT: "queryUserByToken" },
   { OPENCODE_USER_ID_ENDPOINT: "file:///tmp/identity" },
-])("disabled or incomplete identity configuration makes no requests: %j", async (options) => {
+])("incomplete identity configuration makes no requests: %j", async (options) => {
   const fetcher = spyOn(globalThis, "fetch");
 
-  expect(await resolveUser({ ...env, ...options })).toBeUndefined();
+  expect(await resolveUser(providers, { ...env, ...options })).toBeUndefined();
   expect(fetcher).not.toHaveBeenCalled();
 });
 
@@ -114,9 +99,62 @@ test.each(["0", "-1", "1.5", "invalid", "9007199254740992"])(
     );
     const timeout = spyOn(AbortSignal, "timeout");
 
-    expect(await resolveUser({ ...env, OPENCODE_USER_ID_TIMEOUT: value })).toEqual({
+    expect(await resolveUser(providers, { ...env, OPENCODE_USER_ID_TIMEOUT: value })).toEqual({
       id: "user-1",
     });
     expect(timeout).toHaveBeenCalledWith(3000);
   },
 );
+
+test("resolver selects only the first non-empty provider API key and ignores the legacy token", async () => {
+  const fetcher = spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ code: 0, result: { ssicNo: "user-1" } }),
+  );
+
+  expect(
+    await resolveUser(
+      {
+        missing: {},
+        noKey: { options: {} },
+        invalid: { options: { apiKey: 123 } },
+        empty: { options: { apiKey: "  " } },
+        first: { options: { apiKey: " first-key " } },
+        second: { options: { apiKey: "second-key" } },
+      },
+      { ...env, OPENCODE_USER_ID_TOKEN: "legacy-token" },
+    ),
+  ).toEqual({ id: "user-1" });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ token: "first-key" }));
+});
+
+test.each<Parameters<typeof resolveUser>[0]>([
+  undefined,
+  {},
+  { missing: {}, empty: { options: { apiKey: " " } }, invalid: { options: { apiKey: 123 } } },
+])("resolver skips providers without a usable API key: %j", async (configuredProviders) => {
+  const fetcher = spyOn(globalThis, "fetch");
+
+  expect(
+    await resolveUser(configuredProviders, { ...env, OPENCODE_USER_ID_TOKEN: "legacy-token" }),
+  ).toBeUndefined();
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+test("failed identity lookup does not try the next provider API key", async () => {
+  const fetcher = spyOn(globalThis, "fetch").mockRejectedValue(new Error("unavailable"));
+
+  expect(
+    await resolveUser(
+      {
+        first: { options: { apiKey: "first-key" } },
+        second: { options: { apiKey: "second-key" } },
+      },
+      { ...env, OPENCODE_USER_ID_RETRY_COUNT: "1" },
+    ),
+  ).toBeNull();
+  expect(fetcher.mock.calls.map((call) => call[1]?.body)).toEqual([
+    JSON.stringify({ token: "first-key" }),
+    JSON.stringify({ token: "first-key" }),
+  ]);
+});

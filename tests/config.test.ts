@@ -6,14 +6,147 @@ test("telemetry defaults to disabled and does not parse unused exporter settings
   expect(loadConfig({ enabled: false, endpoint: "invalid" }, {})).toEqual({ enabled: false });
 });
 
-test("enabled defaults use OTLP HTTP and leave content capture off", () => {
+test("enabled defaults use OTLP HTTP/JSON and leave content capture off", () => {
   expect(loadConfig({ enabled: true }, {})).toMatchObject({
     enabled: true,
+    otlpProtocol: "http/json",
     endpoint: "http://localhost:4318/v1/traces",
-    tracePrefix: "opencode.",
+    spanNamePrefix: "opencode.",
+    attributePrefix: "opencode.",
     captureContent: false,
+    captureHttpHeaders: false,
+    llmTimingMode: "message",
     spanAttributeCountLimit: 4096,
+    otlpTimeoutMillis: 10_000,
+    batchExportTimeoutMillis: 30_000,
+    forceFlushTimeoutMillis: 30_000,
   });
+});
+
+test.each(["http/json", "http/protobuf", "grpc"])(
+  "OTLP protocol %s is configurable through options and the environment",
+  (otlpProtocol) => {
+    const expected = {
+      otlpProtocol,
+      endpoint:
+        otlpProtocol === "grpc" ? "http://localhost:4317/" : "http://localhost:4318/v1/traces",
+    };
+
+    expect(loadConfig({ enabled: true, otlpProtocol }, {})).toMatchObject(expected);
+    expect(loadConfig({ enabled: true }, { OPENCODE_OTLP_PROTOCOL: otlpProtocol })).toMatchObject(
+      expected,
+    );
+    expect(
+      loadConfig({ enabled: true, otlpProtocol }, { OPENCODE_OTLP_PROTOCOL: "invalid" }),
+    ).toMatchObject(expected);
+    expect(
+      loadConfig(
+        { enabled: true, otlpProtocol, endpoint: "https://collector:1234" },
+        { OPENCODE_OTLP_ENDPOINT: "http://ignored:4321" },
+      ),
+    ).toMatchObject({
+      endpoint:
+        otlpProtocol === "grpc" ? "https://collector:1234/" : "https://collector:1234/v1/traces",
+    });
+  },
+);
+
+test("invalid OTLP protocols are rejected only when telemetry is enabled", () => {
+  for (const otlpProtocol of ["", "HTTP/JSON", "http", "protobuf", "invalid", true, 1, {}, []]) {
+    expect(() => loadConfig({ enabled: true, otlpProtocol }, {})).toThrow("otlpProtocol");
+    expect(() =>
+      loadConfig({ enabled: true }, { OPENCODE_OTLP_PROTOCOL: String(otlpProtocol) }),
+    ).toThrow("otlpProtocol");
+    expect(loadConfig({ otlpProtocol }, { OPENCODE_OTLP_PROTOCOL: "invalid" })).toEqual({
+      enabled: false,
+    });
+  }
+});
+
+test.each(["http/json", "http/protobuf"])(
+  "OTLP %s appends the trace path once and preserves custom paths",
+  (otlpProtocol) => {
+    for (const endpoint of [
+      "https://collector/otel",
+      "https://collector/otel/",
+      "https://collector/otel/v1/traces",
+    ]) {
+      expect(loadConfig({ enabled: true, otlpProtocol, endpoint }, {})).toMatchObject({
+        endpoint: "https://collector/otel/v1/traces",
+      });
+    }
+  },
+);
+
+test("OTLP gRPC rejects endpoints whose path, query, or fragment would be ignored", () => {
+  for (const endpoint of [
+    "http://collector/v1/traces",
+    "http://collector/otel",
+    "http://collector?token=value",
+    "http://collector#fragment",
+    "grpc://collector:4317",
+  ]) {
+    expect(() => loadConfig({ enabled: true, otlpProtocol: "grpc", endpoint }, {})).toThrow("OTLP");
+  }
+});
+
+test.each([
+  { option: "otlpTimeoutMillis", env: "OPENCODE_OTLP_TIMEOUT" },
+  { option: "batchExportTimeoutMillis", env: "OPENCODE_BATCH_EXPORT_TIMEOUT" },
+  { option: "forceFlushTimeoutMillis", env: "OPENCODE_FORCE_FLUSH_TIMEOUT" },
+])("$option validates milliseconds and options override the environment", ({ option, env }) => {
+  expect(loadConfig({ enabled: true }, { [env]: "45000" })).toMatchObject({ [option]: 45_000 });
+  expect(loadConfig({ enabled: true, [option]: 20_000 }, { [env]: "45000" })).toMatchObject({
+    [option]: 20_000,
+  });
+  expect(loadConfig({ enabled: true, [option]: "15000" }, {})).toMatchObject({
+    [option]: 15_000,
+  });
+  expect(loadConfig({ enabled: true, [option]: 2_147_483_647 }, {})).toMatchObject({
+    [option]: 2_147_483_647,
+  });
+
+  for (const value of [0, -1, 1.5, "", " ", "invalid", NaN, Infinity, 2_147_483_648, true, []]) {
+    expect(() => loadConfig({ enabled: true, [option]: value }, {})).toThrow(option);
+    expect(() => loadConfig({ enabled: true }, { [env]: String(value) })).toThrow(option);
+  }
+
+  expect(loadConfig({ [option]: "invalid" }, { [env]: "invalid" })).toEqual({ enabled: false });
+});
+
+test.each([true, false, "true", "false", "1", "0"])(
+  "HTTP header capture parses boolean option and environment value %s",
+  (value) => {
+    const expected = value === true || value === "true" || value === "1";
+    expect(loadConfig({ enabled: true, captureHttpHeaders: value }, {})).toMatchObject({
+      captureContent: false,
+      captureHttpHeaders: expected,
+    });
+    expect(
+      loadConfig({ enabled: true }, { OPENCODE_CAPTURE_HTTP_HEADERS: String(value) }),
+    ).toMatchObject({ captureHttpHeaders: expected });
+  },
+);
+
+test("HTTP header capture defaults off with content enabled and rejects invalid values", () => {
+  expect(loadConfig({ enabled: true, captureContent: true }, {})).toMatchObject({
+    captureHttpHeaders: false,
+  });
+  expect(() => loadConfig({ enabled: true, captureHttpHeaders: "yes" }, {})).toThrow();
+  expect(() => loadConfig({ enabled: true }, { OPENCODE_CAPTURE_HTTP_HEADERS: "yes" })).toThrow();
+});
+
+test("LLM timing mode validates values and options override the environment", () => {
+  expect(loadConfig({ enabled: true }, { OPENCODE_LLM_TIMING_MODE: "fetch" })).toMatchObject({
+    llmTimingMode: "fetch",
+  });
+  expect(
+    loadConfig({ enabled: true, llmTimingMode: "message" }, { OPENCODE_LLM_TIMING_MODE: "fetch" }),
+  ).toMatchObject({ llmTimingMode: "message" });
+  for (const llmTimingMode of [true, "FETCH", "network", "", 1]) {
+    expect(() => loadConfig({ enabled: true, llmTimingMode }, {})).toThrow("llmTimingMode");
+  }
+  expect(loadConfig({ llmTimingMode: "invalid" }, {})).toEqual({ enabled: false });
 });
 
 test("options take precedence over environment variables, including explicit false", () => {
@@ -22,20 +155,58 @@ test("options take precedence over environment variables, including explicit fal
       {
         enabled: true,
         captureContent: false,
+        captureHttpHeaders: false,
         tracePrefix: "",
         endpoint: "https://collector/otel/v1/traces",
       },
       {
         OPENCODE_ENABLE_TELEMETRY: "false",
         OPENCODE_CAPTURE_CONTENT: "true",
+        OPENCODE_CAPTURE_HTTP_HEADERS: "true",
         OPENCODE_TRACE_PREFIX: "env.",
       },
     ),
   ).toMatchObject({
     enabled: true,
     captureContent: false,
-    tracePrefix: "",
+    captureHttpHeaders: false,
+    spanNamePrefix: "",
     endpoint: "https://collector/otel/v1/traces",
+  });
+});
+
+test.each(["app.", "", "raw"])(
+  "attribute prefix %j is independent and preserves literal strings",
+  (attributePrefix) => {
+    expect(loadConfig({ enabled: true, attributePrefix }, {})).toMatchObject({
+      spanNamePrefix: "opencode.",
+      attributePrefix,
+    });
+    expect(
+      loadConfig({ enabled: true }, { OPENCODE_ATTRIBUTE_PREFIX: attributePrefix }),
+    ).toMatchObject({
+      spanNamePrefix: "opencode.",
+      attributePrefix,
+    });
+    expect(
+      loadConfig(
+        { enabled: true, tracePrefix: "spans.", attributePrefix },
+        { OPENCODE_ATTRIBUTE_PREFIX: "env." },
+      ),
+    ).toMatchObject({ spanNamePrefix: "spans.", attributePrefix });
+  },
+);
+
+test("attribute prefix defaults independently of the span name prefix and validates strings", () => {
+  expect(loadConfig({ enabled: true, tracePrefix: "spans." }, {})).toMatchObject({
+    attributePrefix: "opencode.",
+  });
+  expect(loadConfig({ enabled: true }, { OPENCODE_TRACE_PREFIX: "spans." })).toMatchObject({
+    attributePrefix: "opencode.",
+  });
+  [true, 1, {}, []].forEach((attributePrefix) => {
+    expect(() => loadConfig({ enabled: true, attributePrefix }, {})).toThrow();
+    expect(loadConfig({ attributePrefix }, {})).toEqual({ enabled: false });
   });
 });
 

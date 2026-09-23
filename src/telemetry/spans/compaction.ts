@@ -7,45 +7,45 @@ import type {
   ObservationError,
   RunReference,
 } from "../../contract/observer.js";
-import { endSpan, identityAttributes, operationKey, sameRun, type SpanOptions } from "./common.js";
+import {
+  endSpan,
+  agentContextAttributes,
+  operationKey,
+  sameRun,
+  type SpanOptions,
+} from "./common.js";
 
 export function createCompactionSpans(
   options: SpanOptions & {
     parentContext(reference: InteractionReference): Context | undefined;
   },
 ) {
-  const compactions = new Map<string, { reference: CompactionReference; span: Span }>();
-  const finished = new Set<string>();
-  const contexts = new Map<string, { run: RunReference; context: Context }>();
+  const activeSpans = new Map<string, { reference: CompactionReference; span: Span }>();
 
   function finish(input: CompactionFinish) {
     const key = operationKey(input);
-    const compaction = compactions.get(key);
+    const spanState = activeSpans.get(key);
 
-    if (!compaction) {
+    if (!spanState) {
       return;
     }
 
-    compactions.delete(key);
-    finished.add(key);
-    contexts.set(key, {
-      run: compaction.reference.interaction.run,
-      context: trace.setSpanContext(options.rootContext, compaction.span.spanContext()),
-    });
+    activeSpans.delete(key);
+    options.finishedSpanRegistry.add(
+      spanState.reference.interaction.run,
+      "compaction",
+      key,
+      trace.setSpanContext(options.rootContext, spanState.span.spanContext()),
+    );
 
     if (!input.error) {
-      compaction.span.setAttributes({
-        "opencode.compaction.prompt_tokens": input.promptTokens,
-        "opencode.compaction.summary_tokens": input.summaryTokens,
-        "gen_ai.usage.input_tokens": input.usage?.inputTokens,
-        "gen_ai.usage.output_tokens": input.usage?.outputTokens,
-        "gen_ai.usage.reasoning.output_tokens": input.usage?.reasoningTokens,
-        "gen_ai.usage.cache_read.input_tokens": input.usage?.cacheReadTokens,
-        "gen_ai.usage.cache_write.input_tokens": input.usage?.cacheWriteTokens,
+      spanState.span.setAttributes({
+        [`${options.attributePrefix}compaction.prompt_tokens`]: input.promptTokens,
+        [`${options.attributePrefix}compaction.summary_tokens`]: input.summaryTokens,
       });
     }
 
-    endSpan(compaction.span, input.endedAt, input.error);
+    endSpan(spanState.span, input.endedAt, input.error);
   }
 
   return {
@@ -54,27 +54,31 @@ export function createCompactionSpans(
       const key = operationKey(input);
       const parent = options.parentContext(input.interaction);
 
-      if (!parent || compactions.has(key) || finished.has(key)) {
+      if (
+        !parent ||
+        activeSpans.has(key) ||
+        options.finishedSpanRegistry.has(input.interaction.run, "compaction", key)
+      ) {
         return;
       }
 
-      compactions.set(key, {
+      activeSpans.set(key, {
         reference: {
           interaction: { run: { ...input.interaction.run }, id: input.interaction.id },
           id: input.id,
         },
         span: options.tracer.startSpan(
-          `${options.tracePrefix}compaction`,
+          `${options.spanNamePrefix}compaction`,
           {
             kind: SpanKind.INTERNAL,
             startTime: new Date(input.startedAt),
             attributes: {
               ...options.spanAttributes,
-              ...identityAttributes(input.interaction.run, input),
-              "opencode.compaction.id": input.id,
-              "opencode.compaction.auto": input.auto,
-              "opencode.compaction.overflow": input.overflow,
-              "opencode.compaction.trigger_message.id": input.triggerMessageID,
+              ...agentContextAttributes(input.interaction.run, input, options.attributePrefix),
+              [`${options.attributePrefix}compaction.id`]: input.id,
+              [`${options.attributePrefix}compaction.auto`]: input.auto,
+              [`${options.attributePrefix}compaction.overflow`]: input.overflow,
+              [`${options.attributePrefix}compaction.trigger_message.id`]: input.triggerMessageID,
             },
           },
           parent,
@@ -83,16 +87,16 @@ export function createCompactionSpans(
     },
     context(reference: CompactionReference) {
       const key = operationKey(reference);
-      const compaction = compactions.get(key);
-      return compaction
-        ? trace.setSpan(options.rootContext, compaction.span)
-        : contexts.get(key)?.context;
+      const spanState = activeSpans.get(key);
+      return spanState
+        ? trace.setSpan(options.rootContext, spanState.span)
+        : options.finishedSpanRegistry.context(reference.interaction.run, "compaction", key);
     },
-    closeRun(run: RunReference, endedAt: number, error?: ObservationError) {
-      compactions.forEach((compaction) => {
-        if (sameRun(compaction.reference.interaction.run, run)) {
+    finishPendingForRun(run: RunReference, endedAt: number, error?: ObservationError) {
+      activeSpans.forEach((spanState) => {
+        if (sameRun(spanState.reference.interaction.run, run)) {
           finish({
-            ...compaction.reference,
+            ...spanState.reference,
             endedAt,
             error: error ?? {
               type: "_OTHER",
@@ -101,16 +105,11 @@ export function createCompactionSpans(
           });
         }
       });
-      contexts.forEach((value, key) => {
-        if (sameRun(value.run, run)) {
-          contexts.delete(key);
-        }
-      });
     },
-    close(endedAt: number) {
-      compactions.forEach((compaction) =>
+    finishAllOnShutdown(endedAt: number) {
+      activeSpans.forEach((spanState) =>
         finish({
-          ...compaction.reference,
+          ...spanState.reference,
           endedAt,
           error: { type: "_OTHER", message: "plugin disposed before compaction completed" },
         }),

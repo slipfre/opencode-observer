@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import type { E2EFixture, RunResult } from "./fixture.js";
+import type { E2EFixture, CliRunResult } from "./fixture.js";
 import type { ExportedSpan } from "./otlp-receiver.js";
 
 export function oneSpan(spans: ExportedSpan[], name: string) {
@@ -11,13 +11,15 @@ export function oneSpan(spans: ExportedSpan[], name: string) {
 export function expectUnset(span: ExportedSpan) {
   expect(span.status.code ?? 0).toBe(0);
   expect(span.attributes["error.type"]).toBeUndefined();
+  expect(span.attributes["exception.message"]).toBeUndefined();
 }
 
 export function expectError(span: ExportedSpan, type: string) {
   expect(span.status.code).toBe(2);
   expect(span.attributes["error.type"]).toBe(type);
   expect(span.status.message).toBeString();
-  expect(span.status.message!.length).toBeGreaterThan(0);
+  expect(span.status.message!.trim().length).toBeGreaterThan(0);
+  expect(span.attributes["exception.message"]).toBe(span.status.message);
 }
 
 export function messages(span: ExportedSpan, direction: "input" | "output") {
@@ -28,7 +30,7 @@ export function messages(span: ExportedSpan, direction: "input" | "output") {
 
 export function requireSpans(
   fixture: E2EFixture,
-  result: RunResult,
+  result: CliRunResult,
   count: number,
   exitCode = 0,
   traceUserID: string | false = "unknown",
@@ -40,7 +42,7 @@ export function requireSpans(
   }
 
   expect(fixture.llm.errors).toEqual([]);
-  expect(fixture.llm.pending()).toBe(0);
+  expect(fixture.llm.remainingReplyCount()).toBe(0);
   expect(fixture.otlp.errors).toEqual([]);
   const spans = fixture.otlp.spans();
 
@@ -62,7 +64,7 @@ export function requireSpans(
   fixture.llm.hits.forEach((hit) => {
     expect(hit.headers.has("x-opencode-observer-request")).toBe(false);
 
-    if (hit.title || count === 0) {
+    if (hit.isTitleRequest || count === 0) {
       expect(hit.headers.has("traceparent")).toBe(false);
       expect(hit.headers.has("tracestate")).toBe(false);
       return;

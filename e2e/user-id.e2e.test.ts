@@ -26,7 +26,6 @@ function startIdentityServer(status = 200, delayMs = 0, userID: string | null = 
   return {
     env: {
       OPENCODE_USER_ID_ENDPOINT: new URL("/queryUserByToken", server.url).toString(),
-      OPENCODE_USER_ID_TOKEN: "identity-token-secret",
       "OPENCODE_USER_ID_X-Blackbox-Auth": "identity-auth-secret",
       OPENCODE_USER_ID_RETRY_COUNT: "0",
     },
@@ -41,7 +40,7 @@ test("OpenCode sends resolved identity in tracestate without changing the export
   await withE2EFixture(
     {
       env: identity.env,
-      pluginOptions: { spanAttributes: { "user.id": "static-user", team: "identity" } },
+      pluginOptions: { spanAttributes: { team: "identity" } },
       replies: [
         {
           type: "tool",
@@ -60,7 +59,7 @@ test("OpenCode sends resolved identity in tracestate without changing the export
           method: "POST",
           path: "/queryUserByToken",
           auth: "identity-auth-secret",
-          body: { token: "identity-token-secret" },
+          body: { token: "e2e-local-key" },
         },
       ]);
       expect(oneSpan(spans, "e2e.tool.bash").attributes["user.id"]).toBe("e2e-user");
@@ -74,14 +73,12 @@ test("OpenCode sends resolved identity in tracestate without changing the export
         expect(span.attributes["gen_ai.input.messages"]).toBeUndefined();
         expect(span.resource["user.id"]).toBeUndefined();
       });
-      expect(JSON.stringify(fixture.otlp.payloads)).not.toContain("identity-token-secret");
+      expect(JSON.stringify(fixture.otlp.payloads)).not.toContain("e2e-local-key");
       expect(JSON.stringify(fixture.otlp.payloads)).not.toContain("identity-auth-secret");
       expect(result.stdout).toContain("identity resolved");
       spans.forEach((span) => expect(span.traceState).toBeUndefined());
       fixture.llm.hits.forEach((hit) => {
-        expect(JSON.stringify(Object.fromEntries(hit.headers))).not.toContain(
-          "identity-token-secret",
-        );
+        expect(hit.headers.get("tracestate") ?? "").not.toContain("e2e-local-key");
         expect(JSON.stringify(Object.fromEntries(hit.headers))).not.toContain(
           "identity-auth-secret",
         );
@@ -156,13 +153,13 @@ test.each([
     {
       env: {
         ...identity.env,
-        ...(input.token === undefined ? {} : { OPENCODE_USER_ID_TOKEN: input.token }),
         ...(input.endpoint === undefined ? {} : { OPENCODE_USER_ID_ENDPOINT: input.endpoint }),
         OPENCODE_USER_ID_ENABLED: input.userIDEnabled,
         OPENCODE_USER_ID_TIMEOUT: input.delayMs ? "50" : "3000",
         OPENCODE_USER_ID_RETRY_COUNT: input.retryCount ?? "0",
       },
       pluginOptions: { enabled: input.enabled },
+      provider: { test: { options: { apiKey: input.token ?? "e2e-local-key" } } },
       replies: [{ type: "text", text: "continued without identity" }],
     },
     async (fixture) => {
@@ -187,10 +184,39 @@ test.each([
   );
 });
 
-test.each(["options", "environment"])(
-  "OpenCode preserves static span user.id from %s but sends unknown in tracestate when lookup fails",
-  async (source) => {
-    using identity = startIdentityServer(503);
+test("OpenCode resolves identity from the first configured API key instead of the active model provider", async () => {
+  using identity = startIdentityServer();
+
+  await withE2EFixture(
+    {
+      env: { ...identity.env, OPENCODE_USER_ID_TOKEN: "ignored-legacy-token" },
+      provider: {
+        empty: { options: { apiKey: "  " } },
+        identity: { options: { apiKey: " first-provider-key " } },
+      },
+      replies: [{ type: "text", text: "provider identity resolved" }],
+    },
+    async (fixture) => {
+      const result = await fixture.run("answer the question");
+      const spans = requireSpans(fixture, result, 3, 0, "e2e-user");
+
+      expect(identity.requests.map((request) => request.body)).toEqual([
+        { token: "first-provider-key" },
+      ]);
+      spans.forEach((span) => expect(span.attributes["user.id"]).toBe("e2e-user"));
+      expect(JSON.stringify(fixture.otlp.payloads)).not.toContain("first-provider-key");
+      expect(JSON.stringify(fixture.otlp.payloads)).not.toContain("ignored-legacy-token");
+      expect(result.stdout).toContain("provider identity resolved");
+    },
+  );
+});
+
+test.each(
+  ["options", "environment"].flatMap((source) => [200, 503].map((status) => ({ source, status }))),
+)(
+  "OpenCode prioritizes static span user.id from $source when identity lookup returns $status",
+  async (input) => {
+    using identity = startIdentityServer(input.status);
 
     await withE2EFixture(
       {
@@ -201,19 +227,25 @@ test.each(["options", "environment"])(
         // The fixture supplies spanAttributes by default; omit it for the environment case.
         pluginOptions: {
           spanAttributes:
-            source === "options" ? { "user.id": "options-user", team: "options" } : undefined,
+            input.source === "options" ? { "user.id": "options-user", team: "options" } : undefined,
         },
         replies: [{ type: "text", text: "configured identity" }],
       },
       async (fixture) => {
         const result = await fixture.run("answer the question");
-        const spans = requireSpans(fixture, result, 3);
+        const spans = requireSpans(
+          fixture,
+          result,
+          3,
+          0,
+          input.status === 200 ? "e2e-user" : "unknown",
+        );
 
         expect(identity.requests).toHaveLength(1);
         spans.forEach((span) => {
           expectUnset(span);
-          expect(span.attributes["user.id"]).toBe(`${source}-user`);
-          expect(span.attributes.team).toBe(source);
+          expect(span.attributes["user.id"]).toBe(`${input.source}-user`);
+          expect(span.attributes.team).toBe(input.source);
           expect(span.resource["user.id"]).toBeUndefined();
         });
         expect(result.stdout).toContain("configured identity");

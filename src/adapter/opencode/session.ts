@@ -1,37 +1,42 @@
-import type { AgentIdentity, ToolReference } from "../../contract/observer.js";
+import type { AgentContext, RunReference, ToolReference } from "../../contract/observer.js";
 
 export function createSessionRegistry() {
-  const parents = new Map<string, string | undefined>();
-  const tasks = new Map<string, ToolReference>();
+  const parentSessionIDs = new Map<string, string | undefined>();
+  const parentToolsBySessionID = new Map<string, ToolReference>();
 
   return {
     observe(info: { id: string; parentID?: string }) {
-      parents.set(info.id, info.parentID);
+      parentSessionIDs.set(info.id, info.parentID);
     },
-    identity(sessionID: string): AgentIdentity {
+    agentContext(sessionID: string): AgentContext {
       const parentSessionID =
-        tasks.get(sessionID)?.interaction.run.sessionID ?? parents.get(sessionID);
+        parentToolsBySessionID.get(sessionID)?.interaction.run.sessionID ??
+        parentSessionIDs.get(sessionID);
       return {
         parentSessionID,
-        agentType: parentSessionID ? "subagent" : parents.has(sessionID) ? "primary" : undefined,
+        agentType: parentSessionID
+          ? "subagent"
+          : parentSessionIDs.has(sessionID)
+            ? "primary"
+            : undefined,
       };
     },
-    parent: (sessionID: string) => tasks.get(sessionID),
-    bind(sessionID: string, reference: ToolReference) {
+    parentTool: (sessionID: string) => parentToolsBySessionID.get(sessionID),
+    bindParentTool(sessionID: string, reference: ToolReference) {
       if (sessionID !== reference.interaction.run.sessionID) {
-        tasks.set(sessionID, {
+        parentToolsBySessionID.set(sessionID, {
           callID: reference.callID,
           messageID: reference.messageID,
           interaction: { id: reference.interaction.id, run: { ...reference.interaction.run } },
         });
 
-        if (!parents.has(sessionID)) {
-          parents.set(sessionID, reference.interaction.run.sessionID);
+        if (!parentSessionIDs.has(sessionID)) {
+          parentSessionIDs.set(sessionID, reference.interaction.run.sessionID);
         }
       }
     },
-    releaseTool(reference: ToolReference) {
-      tasks.forEach((tool, sessionID) => {
+    unbindTool(reference: ToolReference) {
+      parentToolsBySessionID.forEach((tool, sessionID) => {
         if (
           tool.callID === reference.callID &&
           tool.messageID === reference.messageID &&
@@ -39,13 +44,23 @@ export function createSessionRegistry() {
           tool.interaction.run.id === reference.interaction.run.id &&
           tool.interaction.run.sessionID === reference.interaction.run.sessionID
         ) {
-          tasks.delete(sessionID);
+          parentToolsBySessionID.delete(sessionID);
         }
       });
     },
     remove(sessionID: string) {
-      parents.delete(sessionID);
-      tasks.delete(sessionID);
+      parentSessionIDs.delete(sessionID);
+      parentToolsBySessionID.delete(sessionID);
+    },
+    unbindRun(run: RunReference) {
+      parentToolsBySessionID.forEach((tool, sessionID) => {
+        if (
+          tool.interaction.run.sessionID === run.sessionID &&
+          tool.interaction.run.id === run.id
+        ) {
+          parentToolsBySessionID.delete(sessionID);
+        }
+      });
     },
   };
 }

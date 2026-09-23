@@ -1,5 +1,6 @@
 import { $, type Server } from "bun";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import { Socket } from "node:net";
 import type { Hooks, PluginInput } from "@opencode-ai/plugin";
 import { createOpencodeClient, type AssistantMessage, type UserMessage } from "@opencode-ai/sdk";
 import type { OpenCodeEvent } from "../src/adapter/opencode/coordinator.js";
@@ -48,7 +49,13 @@ afterEach(async () => {
 
 function pluginInput(server: Server<undefined>): PluginInput {
   return {
-    client: createOpencodeClient({ baseUrl: server.url.toString() }),
+    client: createOpencodeClient({
+      baseUrl: server.url.toString(),
+      fetch: (request) =>
+        new URL(request instanceof Request ? request.url : String(request)).pathname === "/log"
+          ? Promise.resolve(Response.json(true))
+          : fetch(request),
+    }),
     project: { id: "project", worktree: "/test", time: { created: 1000 } },
     directory: "/test",
     worktree: "/test",
@@ -90,6 +97,7 @@ test("tool, permission and compaction with summary LLM export through plugin eve
     endpoint: new URL("/v1/traces", server.url).toString(),
   });
   hooks.push(hook);
+  await hook.config?.({});
   const user: UserMessage = {
     id: "u1",
     sessionID: "s1",
@@ -377,6 +385,7 @@ test("AI SDK history and generated tool calls reach OTLP through the plugin", as
     endpoint: server.url.toString(),
   });
   hooks.push(hook);
+  await hook.config?.({});
   const user = {
     id: "u1",
     sessionID: "s1",
@@ -450,8 +459,8 @@ test("AI SDK history and generated tool calls reach OTLP through the plugin", as
   const response = streamText({
     model,
     headers: { ...output.headers },
-    system: "model system",
     messages: [
+      { role: "system", content: "model system" },
       { role: "user", content: "model history" },
       {
         role: "assistant",
@@ -528,6 +537,7 @@ test("AI SDK history and generated tool calls reach OTLP through the plugin", as
     span?.attributes.map((attribute) => [attribute.key, attribute.value.stringValue]) ?? [],
   );
   expect(JSON.parse(attrs["gen_ai.input.messages"] ?? "null")).toEqual([
+    { role: "system", parts: [{ type: "text", content: "model system" }] },
     { role: "user", parts: [{ type: "text", content: "model history" }] },
     {
       role: "assistant",
@@ -547,7 +557,7 @@ test("AI SDK history and generated tool calls reach OTLP through the plugin", as
       ],
     },
   ]);
-  expect(attrs["gen_ai.system_instructions"]).toBe('[{"type":"text","content":"model system"}]');
+  expect(attrs["gen_ai.system_instructions"]).toBeUndefined();
   expect(JSON.stringify(attrs)).not.toContain("fallback text");
   expect(model.doStreamCalls[0]?.headers?.["x-opencode-observer-request"]).toBeUndefined();
 });
@@ -586,6 +596,7 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
     resourceAttributes: { "service.name": "test-opencode", "service.version": "custom-version" },
   });
   hooks.push(hook);
+  await hook.config?.({});
 
   const created = 1_789_000_000_000;
   const start = hook["chat.message"]?.(
@@ -604,7 +615,6 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
   );
 
   // Dispatch subsequent events without awaiting the chat hook, as OpenCode's event bridge can do.
-  const observedBefore = Date.now();
   const llmStart = hook.event?.({
     event: {
       type: "message.part.updated",
@@ -643,7 +653,6 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
       },
     },
   });
-  const observedAfter = Date.now();
   const message = hook.event?.({
     event: {
       type: "message.updated",
@@ -724,7 +733,7 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
     kind: 1,
   });
   expect(interaction?.startTimeUnixNano).toBe(String(BigInt(created) * 1_000_000n));
-  expect(interaction?.endTimeUnixNano).toBe(String(BigInt(created + 200) * 1_000_000n));
+  expect(interaction?.endTimeUnixNano).toBe(span?.endTimeUnixNano);
   expect(interaction?.status.code ?? 0).toBe(0);
   expect(
     Object.fromEntries(
@@ -740,12 +749,8 @@ test("plugin exports run, interaction and LLM in a new trace without querying se
   });
   expect(llm).toMatchObject({ traceId: span?.traceId, parentSpanId: interaction?.spanId, kind: 3 });
   expect(llm?.status.code ?? 0).toBe(0);
-  expect(BigInt(llm?.startTimeUnixNano ?? "0")).toBeGreaterThanOrEqual(
-    BigInt(observedBefore) * 1_000_000n,
-  );
-  expect(BigInt(llm?.endTimeUnixNano ?? "0")).toBeLessThanOrEqual(
-    BigInt(observedAfter) * 1_000_000n,
-  );
+  expect(BigInt(llm?.startTimeUnixNano ?? "0")).toBe(BigInt(created + 100) * 1_000_000n);
+  expect(BigInt(llm?.endTimeUnixNano ?? "0")).toBe(BigInt(created + 200) * 1_000_000n);
   expect(
     Object.fromEntries(
       llm?.attributes.map((attribute) => [attribute.key, attribute.value.stringValue]) ?? [],
@@ -796,6 +801,7 @@ test("idle and disposal await a slow collector while chat hooks remain independe
     endpoint: server.url.toString(),
   });
   hooks.push(hook);
+  await hook.config?.({});
 
   const message = (id: string) =>
     hook["chat.message"]?.(
@@ -909,6 +915,7 @@ test.each([
   });
   const hook = await ObserverPlugin(input, { enabled: true, endpoint: server.url.toString() });
   hooks.push(hook);
+  await hook.config?.({});
 
   await hook["chat.message"]?.(
     { sessionID: "s1" },
@@ -955,9 +962,244 @@ test("disabled plugin installs no hooks, listeners, or network requests", async 
   servers.push(server);
 
   const listeners = process.listenerCount("beforeExit");
+  const input = pluginInput(server);
+  input.client = createOpencodeClient({ baseUrl: server.url.toString() });
+  using connect = spyOn(Socket.prototype, "connect");
 
-  expect(await ObserverPlugin(pluginInput(server), { enabled: false })).toEqual({});
+  expect(await ObserverPlugin(input, { enabled: false })).toEqual({});
   expect(process.listenerCount("beforeExit")).toBe(listeners);
+  expect(requests).toEqual([]);
+  expect(connect).not.toHaveBeenCalled();
+});
+
+test.each(["http/json", "http/protobuf", "grpc"])(
+  "plugin logs initialization and one TCP probe for %s without exposing credentials",
+  async (otlpProtocol) => {
+    const requests: string[] = [];
+    const logs: Array<{
+      service: string;
+      level: string;
+      message: string;
+      extra: Record<string, unknown>;
+    }> = [];
+    const reported = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request) {
+        requests.push(request.url);
+        return Response.json({});
+      },
+    });
+    servers.push(server);
+    const input = pluginInput(server);
+    input.client = createOpencodeClient({
+      baseUrl: "http://opencode.invalid",
+      fetch: async (request) => {
+        if (request.method === "GET") {
+          return Response.json({ healthy: true, version: "1.18.30" });
+        }
+
+        const entry = (await request.json()) as (typeof logs)[number];
+        logs.push(entry);
+        if (entry.message === "OTLP endpoint TCP reachable") {
+          reported.resolve();
+        }
+        return Response.json(true);
+      },
+    });
+    const endpoint = new URL(server.url);
+    if (otlpProtocol !== "grpc") {
+      endpoint.username = "private-user";
+      endpoint.password = "private-password";
+      endpoint.search = "?token=private-query";
+      endpoint.hash = "private-fragment";
+    }
+    const hook = await ObserverPlugin(input, {
+      enabled: true,
+      endpoint: endpoint.toString(),
+      otlpProtocol,
+      otlpHeaders: { authorization: "private-header" },
+    });
+    hooks.push(hook);
+
+    await Promise.all([hook.config?.({}), hook.config?.({})]);
+    await reported.promise;
+    await hook.config?.({});
+    await hook.dispose?.();
+
+    const loggedEndpoint = new URL(
+      otlpProtocol === "grpc" ? "/" : "/v1/traces",
+      server.url,
+    ).toString();
+    expect(logs).toEqual([
+      {
+        service: "opencode-observer",
+        level: "info",
+        message: "Observer plugin initialized",
+        extra: {
+          version,
+          serviceVersion: "1.18.30",
+          endpoint: loggedEndpoint,
+          protocol: otlpProtocol,
+        },
+      },
+      {
+        service: "opencode-observer",
+        level: "info",
+        message: "OTLP endpoint TCP reachable",
+        extra: { endpoint: loggedEndpoint, protocol: otlpProtocol, ms: expect.any(Number) },
+      },
+    ]);
+    expect(JSON.stringify(logs)).not.toContain("private-");
+    expect(requests).toEqual([]);
+  },
+);
+
+test("an unreachable collector produces a warning without failing initialization", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({}) });
+  const input = pluginInput(server);
+  const endpoint = server.url.toString();
+  await server.stop(true);
+  const logs: Array<{ level: string; message: string; extra: Record<string, unknown> }> = [];
+  const reported = Promise.withResolvers<void>();
+  input.client = createOpencodeClient({
+    baseUrl: "http://opencode.invalid",
+    fetch: async (request) => {
+      if (request.method === "GET") {
+        return Response.json({ healthy: true, version: "1.18.30" });
+      }
+
+      const entry = (await request.json()) as (typeof logs)[number];
+      logs.push(entry);
+      if (entry.level === "warn") {
+        reported.resolve();
+      }
+      return Response.json(true);
+    },
+  });
+  const hook = await ObserverPlugin(input, { enabled: true, endpoint });
+  hooks.push(hook);
+
+  await hook.config?.({});
+  await reported.promise;
+  await hook.dispose?.();
+
+  expect(logs.map((entry) => entry.message)).toEqual([
+    "Observer plugin initialized",
+    "OTLP endpoint TCP unreachable; exports may fail",
+  ]);
+  expect(logs[1]?.extra.error).toContain("ECONNREFUSED");
+});
+
+test.each(["throw", "reject", "pending"])(
+  "startup logging that will %s does not block initialization or disposal",
+  async (failure) => {
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({}) });
+    servers.push(server);
+    const input = pluginInput(server);
+    input.client.app.log = (): Promise<never> => {
+      if (failure === "throw") {
+        throw new Error("Synchronous logging failure");
+      }
+      if (failure === "reject") {
+        return Promise.reject(new Error("Asynchronous logging failure"));
+      }
+      return new Promise(() => undefined);
+    };
+    const hook = await ObserverPlugin(input, { enabled: true, endpoint: server.url.toString() });
+    hooks.push(hook);
+
+    await hook.config?.({});
+    await hook.dispose?.();
+  },
+);
+
+test("configuration does not wait for the probe and disposal cancels it without late logging", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({}) });
+  servers.push(server);
+  const messages: string[] = [];
+  const input = pluginInput(server);
+  input.client = createOpencodeClient({
+    baseUrl: "http://opencode.invalid",
+    fetch: async (request) => {
+      if (request.method === "GET") {
+        return Response.json({ healthy: true, version: "1.18.30" });
+      }
+
+      messages.push(((await request.json()) as { message: string }).message);
+      return Response.json(true);
+    },
+  });
+  const hook = await ObserverPlugin(input, { enabled: true, endpoint: server.url.toString() });
+  hooks.push(hook);
+  using connect = spyOn(Socket.prototype, "connect").mockImplementation(function (this: Socket) {
+    return this;
+  });
+
+  await hook.config?.({});
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(connect.mock.results[0]?.value).toMatchObject({ destroyed: false });
+  await hook.dispose?.();
+  await Bun.sleep(0);
+
+  expect(connect.mock.results[0]?.value).toMatchObject({ destroyed: true });
+  expect(messages).toEqual(["Observer plugin initialized"]);
+});
+
+test.each([false, true])(
+  "configuration initializes once and handles disposal during setup: %s",
+  async (disposeDuringSetup) => {
+    const paths: string[] = [];
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        paths.push(new URL(request.url).pathname);
+        started.resolve();
+        await release.promise;
+        return Response.json({ healthy: true, version: "1.18.30" });
+      },
+    });
+    servers.push(server);
+    const hook = await ObserverPlugin(pluginInput(server), { enabled: true });
+    hooks.push(hook);
+
+    expect(paths).toEqual([]);
+
+    const first = hook.config?.({});
+    await started.promise;
+    const second = hook.config?.({});
+    const disposal = disposeDuringSetup ? hook.dispose?.() : undefined;
+    release.resolve();
+    await Promise.all([first, second, disposal]);
+    await hook.config?.({});
+    await hook.dispose?.();
+    await hook.config?.({});
+
+    expect(paths).toEqual(["/global/health"]);
+  },
+);
+
+test("disposal before configuration does not initialize telemetry", async () => {
+  const requests: string[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request) {
+      requests.push(request.url);
+      return Response.json({});
+    },
+  });
+  servers.push(server);
+  const hook = await ObserverPlugin(pluginInput(server), { enabled: true });
+  hooks.push(hook);
+
+  await hook.dispose?.();
+  await hook.config?.({});
+
   expect(requests).toEqual([]);
 });
 
@@ -992,14 +1234,14 @@ test.each(["options", "environment"])(
       throw new Error("Expected enabled telemetry");
     }
 
-    const telemetry = createTelemetry(config);
+    const telemetry = await createTelemetry(config);
 
     for (const id of ["u1", "u2"]) {
       telemetry.startRun({
         sessionID: "s1",
         id,
         startedAt: 1000,
-        parent: undefined,
+        parentTool: undefined,
         parentSessionID: undefined,
       });
       telemetry.finishRun({ sessionID: "s1", id, endedAt: 2000, output: undefined });

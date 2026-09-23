@@ -8,15 +8,27 @@ export function loadConfig(
     return { enabled: false as const };
   }
 
+  const otlpProtocol = options.otlpProtocol ?? env.OPENCODE_OTLP_PROTOCOL ?? "http/json";
+  if (otlpProtocol !== "http/json" && otlpProtocol !== "http/protobuf" && otlpProtocol !== "grpc") {
+    throw new Error('otlpProtocol must be "http/json", "http/protobuf", or "grpc"');
+  }
+
   const endpoint = new URL(
-    parseString(options.endpoint ?? env.OPENCODE_OTLP_ENDPOINT, "http://localhost:4318"),
+    parseString(
+      options.endpoint ?? env.OPENCODE_OTLP_ENDPOINT,
+      otlpProtocol === "grpc" ? "http://localhost:4317" : "http://localhost:4318",
+    ),
   );
 
   if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
     throw new Error("OTLP endpoint must use HTTP or HTTPS");
   }
 
-  if (!endpoint.pathname.endsWith("/v1/traces")) {
+  if (otlpProtocol === "grpc" && (endpoint.pathname !== "/" || endpoint.search || endpoint.hash)) {
+    throw new Error("OTLP gRPC endpoint must not include a path, query, or fragment");
+  }
+
+  if (otlpProtocol !== "grpc" && !endpoint.pathname.endsWith("/v1/traces")) {
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/v1/traces`;
   }
 
@@ -28,18 +40,55 @@ export function loadConfig(
     throw new Error("spanAttributeCountLimit must be a positive integer");
   }
 
+  const llmTimingMode = options.llmTimingMode ?? env.OPENCODE_LLM_TIMING_MODE ?? "message";
+  if (llmTimingMode !== "message" && llmTimingMode !== "fetch") {
+    throw new Error('llmTimingMode must be "message" or "fetch"');
+  }
+
   return {
     enabled: true as const,
+    otlpProtocol: otlpProtocol as "http/json" | "http/protobuf" | "grpc",
     endpoint: endpoint.toString(),
     captureContent: parseBoolean(options.captureContent ?? env.OPENCODE_CAPTURE_CONTENT, false),
-    tracePrefix: parseString(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
-    otlpHeaders: parseAttributes(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
-    resourceAttributes: parseAttributes(
+    captureHttpHeaders: parseBoolean(
+      options.captureHttpHeaders ?? env.OPENCODE_CAPTURE_HTTP_HEADERS,
+      false,
+    ),
+    llmTimingMode: llmTimingMode as "message" | "fetch",
+    spanNamePrefix: parseString(options.tracePrefix ?? env.OPENCODE_TRACE_PREFIX, "opencode."),
+    attributePrefix: parseString(
+      options.attributePrefix ?? env.OPENCODE_ATTRIBUTE_PREFIX,
+      "opencode.",
+    ),
+    otlpHeaders: parseStringMap(options.otlpHeaders ?? env.OPENCODE_OTLP_HEADERS),
+    otlpTimeoutMillis: parseTimeout(
+      options.otlpTimeoutMillis ?? env.OPENCODE_OTLP_TIMEOUT ?? 10_000,
+      "otlpTimeoutMillis",
+    ),
+    batchExportTimeoutMillis: parseTimeout(
+      options.batchExportTimeoutMillis ?? env.OPENCODE_BATCH_EXPORT_TIMEOUT ?? 30_000,
+      "batchExportTimeoutMillis",
+    ),
+    forceFlushTimeoutMillis: parseTimeout(
+      options.forceFlushTimeoutMillis ?? env.OPENCODE_FORCE_FLUSH_TIMEOUT ?? 30_000,
+      "forceFlushTimeoutMillis",
+    ),
+    resourceAttributes: parseStringMap(
       options.resourceAttributes ?? env.OPENCODE_RESOURCE_ATTRIBUTES,
     ),
-    spanAttributes: parseAttributes(options.spanAttributes ?? env.OPENCODE_SPAN_ATTRIBUTES),
+    spanAttributes: parseStringMap(options.spanAttributes ?? env.OPENCODE_SPAN_ATTRIBUTES),
     spanAttributeCountLimit,
   };
+}
+
+function parseTimeout(value: unknown, name: string) {
+  const timeout = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
+  // Larger delays overflow the runtime's signed 32-bit timers and can fire immediately.
+  if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 2_147_483_647) {
+    throw new Error(`${name} must be an integer between 1 and 2147483647 milliseconds`);
+  }
+
+  return timeout;
 }
 
 function parseString(value: unknown, fallback: string) {
@@ -70,7 +119,7 @@ function parseBoolean(value: unknown, fallback: boolean) {
   throw new Error("Expected a boolean configuration value");
 }
 
-function parseAttributes(value: unknown): Record<string, string> {
+function parseStringMap(value: unknown): Record<string, string> {
   if (value === undefined || value === "") {
     return {};
   }

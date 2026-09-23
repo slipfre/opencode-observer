@@ -1,15 +1,15 @@
 ## Project Overview
 
-`opencode-observer` is an OpenCode observability plugin written in TypeScript and developed, built, and tested with Bun. It observes OpenCode hooks/events and supported AI SDK lifecycle callbacks, creates OpenTelemetry spans, and exports traces over OTLP HTTP/JSON. The current implementation covers run, interaction, LLM, tool, compaction, and permission.check spans.
+`opencode-observer` is an OpenCode observability plugin written in TypeScript and developed, built, and tested with Bun. It observes OpenCode hooks/events and supported AI SDK lifecycle callbacks, creates OpenTelemetry spans, and exports traces over OTLP HTTP/JSON by default, with configurable HTTP/Protobuf and gRPC support. The current implementation covers run, interaction, LLM, tool, skill.load, compaction, and permission.check spans.
 
 ### Goals
 
-- Describe task execution with accurate lifecycles, parent-child relationships, usage, and errors, following the [Trace Schema](docs/schemas/trace.md). Omit or explicitly degrade unsupported measurements instead of inventing data.
+- Describe task execution with accurate lifecycles, parent-child relationships, usage, and errors, following the [expected Trace Schema](docs/schemas/trace.md) and the [OpenCode implementation schema](docs/schemas/trace-opencode.md). Omit or explicitly degrade unsupported measurements instead of inventing data; use the implementation schema for current export behavior and tests.
 - Keep OpenCode behavior recognition, observation contracts, and telemetry implementation separate, following the [Architecture](docs/architecture.md). The adapter and telemetry layers depend on the contract, never on each other; the contract is independent of third-party SDKs.
 - Keep observation from changing OpenCode's behavior: isolate telemetry failures, export asynchronously, and keep telemetry and content capture disabled by default.
-- Use `captureContent` for message bodies, LLM tool definitions, and model request/response headers together. Explicit SDK output type is metadata and remains observable when content capture is disabled; do not collect request seed.
+- Use `captureContent` for message bodies and LLM tool definitions. Model request/response HTTP headers require both `captureContent` and `captureHttpHeaders`; the extra header switch defaults to false. SDK output type is metadata and remains observable when content capture is disabled. Record `text` when an SDK callback confirms no `output` was configured; omit the type when the SDK snapshot or an explicit format is unavailable. Do not collect request seed.
 
-See [README.md](README.md) for features, local loading, configuration, and usage limits. Use the [Architecture](docs/architecture.md) for module boundaries, observation contracts, and runtime constraints, the [Adapter Design](docs/adapter.md) for behavior recognition and collection mechanisms, and the [Trace Schema](docs/schemas/trace.md) for exported data semantics.
+See [README.md](README.md) for features, local loading, configuration, and usage limits. Use the [Architecture](docs/architecture.md) for module boundaries, observation contracts, and runtime constraints, the [Adapter Design](docs/adapter.md) for behavior recognition and collection mechanisms, the [expected Trace Schema](docs/schemas/trace.md) for target structure and attributes, and the [OpenCode implementation schema](docs/schemas/trace-opencode.md) for current exported data semantics and limitations.
 
 ## Main Directory Structure
 
@@ -28,7 +28,9 @@ e2e/                     # Tests running real OpenCode CLI processes
 docs/
 ├── architecture.md      # Architecture, responsibilities, and dependency constraints
 ├── adapter.md           # Behavior recognition, model capture, and coordination mechanisms
-└── schemas/trace.md     # Trace topology, lifecycle semantics, and exported fields
+└── schemas/
+    ├── trace.md          # Expected trace topology and span attribute semantics
+    └── trace-opencode.md # Current OpenCode exports, sources, lifecycles, and limitations
 dist/                    # Generated JavaScript, source maps, and type declarations
 ```
 
@@ -55,11 +57,13 @@ bun install --frozen-lockfile
 bun run build
 ```
 
-`build` bundles `src/index.ts` as Bun-targeted ESM with external package dependencies and a linked source map, then generates TypeScript declarations using `tsconfig.build.json`. Output is written to `dist/`; both package entry points (`opencode-observer` and `opencode-observer/server`) resolve to `dist/index.js`.
+`build` runs both `build:package` and `build:standalone`. `build:package` bundles `src/index.ts` as Bun-targeted ESM with external package dependencies and a linked source map, then generates TypeScript declarations using `tsconfig.build.json`. Output is written to `dist/`; both package entry points (`opencode-observer` and `opencode-observer/server`) resolve to `dist/index.js`. `build:standalone` bundles third-party runtime dependencies into `dist/standalone/opencode-observer.js`, which users can copy directly into an OpenCode `plugins/` directory without installing plugin dependencies.
 
 `bun run check` runs formatting, lint, and type checks. Use `bun run format`, `bun run format:check`, `bun run lint`, `bun run lint:fix`, or `bun run typecheck` for individual development tasks.
 
-`bun pm pack` runs the prepack checks, unit tests, and build. The package includes `dist/`, `package.json`, README, and the MIT license.
+`bun pm pack` runs the prepack checks, unit tests, and build. The package includes `dist/` except `dist/standalone/`, plus `package.json`, README, and the MIT license. Distribute the standalone JS separately, for example as a Release attachment.
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which verifies the package version, runs checks and both test suites against a pinned OpenCode revision, and publishes the tested JS and npm tarball with checksums to GitHub Releases. See [Releasing](docs/releasing.md) for the release procedure and retry behavior. Keep release details out of README.
 
 ## Testing and Verification
 
@@ -90,6 +94,8 @@ bun run test:e2e
 Each E2E case uses isolated HOME/XDG temporary directories and random loopback ports, then cleans up processes, servers, and files. Set `OPENCODE_E2E_TMPDIR` to an existing parent directory to control temporary file placement. Each CLI invocation has a 45-second timeout; each test has a 60-second timeout. Missing OpenCode source or build output causes a failure rather than a skipped test. Failure diagnostics include CLI output, model requests, and OTLP payloads. E2E files participate in type checking but are excluded from the published build.
 
 Coverage includes trace structure, content and usage, disabled telemetry/content capture, retries and terminal errors, repeated session runs, real tools and failures, permission denial, foreground subtasks, independent root traces, ignored legacy trace context configuration, collector headers, and compaction success/failure. Assertions must reflect current measurement limits: normal status is `UNSET`, LLM spans require model-step evidence, and retry counts or first-chunk timing must not be presented as measured without precise attempt boundaries.
+
+Standalone coverage copies only the bundled JS into isolated project and user `plugins/` directories, leaves plugin dependencies uninstalled, and verifies automatic discovery, all three OTLP protocols, AI SDK callback capture, and disabled telemetry/content defaults.
 
 ### Required Checks After Changes
 

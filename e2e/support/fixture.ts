@@ -1,28 +1,32 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { Config } from "@opencode-ai/plugin";
 import { startFakeLlm, type LlmReply } from "./fake-llm.js";
 import { startOtlpReceiver } from "./otlp-receiver.js";
 
 type FixtureOptions = {
   replies: LlmReply[];
   pluginEntry?: string;
+  standalone?: "project" | "global";
   pluginOptions?: Record<string, unknown>;
+  provider?: Config["provider"];
   otlpDelayMs?: number;
+  otlpProtocol?: "http/json" | "http/protobuf" | "grpc";
   autoCompact?: boolean;
   permission?: Record<string, "ask" | "allow" | "deny">;
   env?: Record<string, string>;
 };
 export type E2EFixture = Parameters<Parameters<typeof withE2EFixture>[1]>[0];
-export type RunResult = Awaited<ReturnType<E2EFixture["run"]>>;
+export type CliRunResult = Awaited<ReturnType<E2EFixture["run"]>>;
 
 export async function withE2EFixture(
   options: FixtureOptions,
   test: (fixture: {
     directory: string;
     llm: ReturnType<typeof startFakeLlm>;
-    otlp: ReturnType<typeof startOtlpReceiver>;
+    otlp: Awaited<ReturnType<typeof startOtlpReceiver>>;
     run(
       prompt: string,
       args?: string[],
@@ -32,7 +36,10 @@ export async function withE2EFixture(
   const entry = process.env.OPENCODE_E2E_ENTRY
     ? path.resolve(process.env.OPENCODE_E2E_ENTRY)
     : undefined;
-  const plugin = path.resolve(import.meta.dir, "../../dist/index.js");
+  const plugin = path.resolve(
+    import.meta.dir,
+    options.standalone ? "../../dist/standalone/opencode-observer.js" : "../../dist/index.js",
+  );
 
   if (!entry) {
     throw new Error("Set OPENCODE_E2E_ENTRY to the OpenCode packages/opencode/src/index.ts entry.");
@@ -49,8 +56,11 @@ export async function withE2EFixture(
   }
 
   await using workspace = {
-    directory: await mkdtemp(
-      path.join(process.env.OPENCODE_E2E_TMPDIR ?? tmpdir(), "opencode-observer-e2e-"),
+    // Use one canonical path so project and home discovery cannot load the same plugin twice.
+    directory: await realpath(
+      await mkdtemp(
+        path.join(process.env.OPENCODE_E2E_TMPDIR ?? tmpdir(), "opencode-observer-e2e-"),
+      ),
     ),
     async [Symbol.asyncDispose]() {
       await rm(this.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
@@ -58,41 +68,69 @@ export async function withE2EFixture(
   };
   const directory = workspace.directory;
   using llm = startFakeLlm(options.replies);
-  using otlp = startOtlpReceiver(options.otlpDelayMs);
+  using otlp = await startOtlpReceiver(options.otlpDelayMs, options.otlpProtocol);
   const processes = new Set<Bun.Subprocess>();
-  const results: RunResult[] = [];
+  const results: CliRunResult[] = [];
 
   try {
     const configDirectory = path.join(directory, ".config/opencode");
-    await mkdir(path.join(configDirectory, "node_modules"), { recursive: true });
-    // OpenCode checks this lockfile to avoid installing config-directory dependencies.
-    await Bun.write(
-      path.join(configDirectory, "package-lock.json"),
-      JSON.stringify({ packages: { "": { dependencies: { "@opencode-ai/plugin": "0.0.0" } } } }),
+    const directories = [
+      configDirectory,
+      ...(options.standalone === "project" ? [path.join(directory, ".opencode")] : []),
+    ];
+    await Promise.all(
+      directories.map(async (dir) => {
+        await mkdir(path.join(dir, "node_modules"), { recursive: true });
+        // OpenCode checks this lockfile to avoid installing config-directory dependencies.
+        await Bun.write(
+          path.join(dir, "package-lock.json"),
+          JSON.stringify({
+            packages: { "": { dependencies: { "@opencode-ai/plugin": "0.0.0" } } },
+          }),
+        );
+      }),
     );
+
+    if (options.standalone) {
+      await Bun.write(
+        path.join(
+          options.standalone === "project" ? path.join(directory, ".opencode") : configDirectory,
+          "plugins/opencode-observer.js",
+        ),
+        Bun.file(plugin),
+      );
+    }
+
     const config = {
       formatter: false,
       lsp: false,
       share: "disabled",
       permission: options.permission,
-      plugin: [
-        [
-          pathToFileURL(options.pluginEntry ?? plugin).href,
-          {
-            enabled: true,
-            endpoint: otlp.endpoint,
-            tracePrefix: "e2e.",
-            resourceAttributes: { "e2e.resource": "opencode-observer" },
-            spanAttributes: { "e2e.fixture": path.basename(directory) },
-            ...options.pluginOptions,
-          },
-        ],
-      ],
+      plugin: options.standalone
+        ? []
+        : [
+            [
+              pathToFileURL(options.pluginEntry ?? plugin).href,
+              {
+                enabled: true,
+                endpoint: otlp.endpoint,
+                tracePrefix: "e2e.",
+                resourceAttributes: { "e2e.resource": "opencode-observer" },
+                spanAttributes: { "e2e.fixture": path.basename(directory) },
+                ...options.pluginOptions,
+              },
+            ],
+          ],
       provider: {
+        ...options.provider,
         test: {
           name: "Test",
           npm: "@ai-sdk/openai-compatible",
-          options: { apiKey: "e2e-local-key", baseURL: llm.url },
+          options: {
+            apiKey: "e2e-local-key",
+            baseURL: llm.url,
+            ...options.provider?.test?.options,
+          },
           models: {
             "test-model": {
               name: "Test Model",
@@ -115,6 +153,7 @@ export async function withE2EFixture(
           [
             process.execPath,
             "run",
+            ...(options.standalone ? ["--no-install"] : []),
             "--conditions=browser",
             entry,
             "--print-logs",
@@ -139,6 +178,9 @@ export async function withE2EFixture(
                     ),
                 ),
               ),
+              ...(options.standalone
+                ? { OPENCODE_OTLP_ENDPOINT: otlp.endpoint, OPENCODE_TRACE_PREFIX: "e2e." }
+                : {}),
               ...options.env,
               HOME: directory,
               PWD: directory,
@@ -149,7 +191,7 @@ export async function withE2EFixture(
               OPENCODE_TEST_HOME: directory,
               OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
               OPENCODE_AUTH_CONTENT: "{}",
-              OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+              OPENCODE_DISABLE_PROJECT_CONFIG: options.standalone === "project" ? "0" : "1",
               OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
               OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
               OPENCODE_DISABLE_AUTOUPDATE: "1",

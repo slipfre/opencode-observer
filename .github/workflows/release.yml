@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      OPENCODE_OTLP_PROTOCOL: http/json
+      OPENCODE_E2E_ENTRY: ${{ github.workspace }}/.cache/opencode/packages/opencode/src/index.ts
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node for OpenCode native dependencies
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Validate the release version
+        id: version
+        run: |
+          version=$(bun -p 'require("./package.json").version')
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            echo "::error::Tag $RELEASE_TAG must match package.json version v$version"
+            exit 1
+          fi
+
+          prerelease=false
+          if [[ "${version%%+*}" == *-* ]]; then
+            prerelease=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Install plugin dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check formatting, lint and types
+        run: bun run check
+
+      - name: Run unit tests
+        run: bun run test
+
+      - name: Check out the verified OpenCode revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: anomalyco/opencode
+          ref: 7565e03536d19e850f9996c407f9bf5e932b5f7a
+          path: .cache/opencode
+          persist-credentials: false
+
+      - name: Install OpenCode dependencies
+        working-directory: .cache/opencode
+        env:
+          HUSKY: "0"
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: bun install --frozen-lockfile
+
+      - name: Build both plugin artifacts and run E2E tests
+        run: bun run test:e2e
+
+      - name: Package the tested build
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Checks and builds already ran above; preserve the exact tested artifacts.
+          bun pm pack --ignore-scripts --filename "$RUNNER_TEMP/opencode-observer-$RELEASE_VERSION.tgz"
+          cp dist/standalone/opencode-observer.js "$RUNNER_TEMP/opencode-observer.js"
+
+      - name: Generate checksums
+        working-directory: ${{ runner.temp }}
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: sha256sum opencode-observer.js "opencode-observer-$RELEASE_VERSION.tgz" > SHA256SUMS
+
+      - name: Publish the GitHub Release
+        id: publish
+        working-directory: ${{ runner.temp }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          latest=()
+          if [[ "$PRERELEASE" == "true" ]]; then
+            latest+=(--latest=false)
+          fi
+
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft); then
+            if [[ "$draft" != "true" ]]; then
+              echo "::error::Release $RELEASE_TAG is already published; use a new version."
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "$RELEASE_TAG" --generate-notes \
+              --prerelease="$PRERELEASE" "${latest[@]}"
+          fi
+
+          gh release upload "$RELEASE_TAG" \
+            opencode-observer.js "opencode-observer-$RELEASE_VERSION.tgz" SHA256SUMS --clobber
+          gh release edit "$RELEASE_TAG" --draft=false \
+            --prerelease="$PRERELEASE" "${latest[@]}"
