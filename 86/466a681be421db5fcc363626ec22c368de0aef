@@ -1,0 +1,47 @@
+e2e/support/fixture.ts
+  s_9f33c23399a3a6::t_fd7cd20c500109 12,39-42,77-86,90-91,93-103,181-183,194
+  s_9f33c23399a3a6::t_5ba1f0421a45f2 87-89,109-123
+  s_9f33c23399a3a6::t_8ed5c0bc67b93e 1,59-63
+  s_9f33c23399a3a6::t_5fe6dd6216b507 156
+AGENTS.md
+  s_9f33c23399a3a6::t_fa4a2c70b4650e 66
+  s_9f33c23399a3a6::t_5fe6dd6216b507 60,64,98
+  s_9f33c23399a3a6::t_f8fcf276859132 65
+  s_9f33c23399a3a6::t_82224456b9e715 99
+e2e/standalone.e2e.test.ts
+  s_9f33c23399a3a6::t_5ba1f0421a45f2 89,110
+  s_9f33c23399a3a6::t_5fe6dd6216b507 1-88,90-109
+tests/release.test.ts
+  s_9f33c23399a3a6::t_62a9102d49d7b7 1-30,40,61-163,170-171
+  s_9f33c23399a3a6::t_bea59583635063 31-39,41-60
+  s_9f33c23399a3a6::t_b9dfb187d0dc69 164-169
+.github/workflows/release.yml
+  s_9f33c23399a3a6::t_fa4a2c70b4650e 1-99,101-127
+  s_9f33c23399a3a6::t_62a9102d49d7b7 100
+package.json
+  s_9f33c23399a3a6::t_fd7cd20c500109 16-17,35-37
+README.md
+  s_9f33c23399a3a6::t_5ba1f0421a45f2 49-51
+  s_9f33c23399a3a6::t_5fe6dd6216b507 10-12,36-48,52-53,55-57,59-66,113
+  s_9f33c23399a3a6::t_ada54e772329e0 9,13,23,32,54,58,122,126
+  s_9f33c23399a3a6::t_a335c0b2d752e3 109
+docs/releasing.md
+  s_9f33c23399a3a6::t_fa4a2c70b4650e 1-20,26-39
+  s_9f33c23399a3a6::t_8e05aa8be06567 21-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "86466a681be421db5fcc363626ec22c368de0aef",
+  "prompts": {},
+  "sessions": {
+    "s_9f33c23399a3a6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c91c-99e8-79c1-ba6e-0c851c72cbc8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
