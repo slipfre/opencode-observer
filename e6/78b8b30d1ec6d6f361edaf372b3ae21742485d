@@ -1,0 +1,20 @@
+README.md
+  s_626a38676f0991::t_47a158559d101a 173,175,177,179-182,189,205
+  s_626a38676f0991::t_61d19ecad16ea8 172,174,176,178,183-188,190-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e678b8b30d1ec6d6f361edaf372b3ae21742485d",
+  "prompts": {},
+  "sessions": {
+    "s_626a38676f0991": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a173be-68c9-72b2-a086-73d781a34531",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "shenxionghao <sxh139726845@163.com>"
+    }
+  }
+}
