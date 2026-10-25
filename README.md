@@ -169,3 +169,37 @@ export OPENCODE_SPAN_ATTRIBUTES='team.name=platform'
 ```
 
 `otlpHeaders` 用于接收端鉴权。要采集模型请求／响应头，需同时开启 `captureContent` 和 `captureHttpHeaders`；安装示例默认不采集这些请求头。
+
+### Langfuse 对接方式
+
+安装插件后，可通过 [Langfuse 的 OTLP 接口](https://langfuse.com/integrations/native/opentelemetry#opentelemetry-endpoint) 将 trace 直接导出到 Langfuse。接入时需开启遥测，配置接收地址和鉴权请求头，协议选择 `http/json` 或 `http/protobuf`。
+
+以下以 Langfuse Cloud EU 区域为例，接收地址为 `https://cloud.langfuse.com/api/public/otel`。其他区域或自托管部署需替换为对应服务地址，保留 `/api/public/otel` 路径；插件会自动补齐 `/v1/traces`。
+
+Langfuse 使用 Basic Auth。在 Langfuse 项目设置中获取 Public Key 和 Secret Key，按 `Public Key:Secret Key` 的顺序拼接后进行 Base64 编码，将结果配置为 `Authorization: Basic <Base64 字符串>`。
+
+单文件自动加载时，在启动 OpenCode 的终端中设置以下环境变量，将占位符替换为实际密钥。`printf` 避免将末尾换行编码进凭据，`tr` 移除 Base64 输出中的换行：
+
+```sh
+LANGFUSE_AUTH=$(printf '%s:%s' 'pk-lf-...' 'sk-lf-...' | base64 | tr -d '\r\n')
+export OPENCODE_ENABLE_TELEMETRY=true
+export OPENCODE_OTLP_PROTOCOL=http/json
+export OPENCODE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel
+export OPENCODE_OTLP_HEADERS="Authorization=Basic ${LANGFUSE_AUTH}"
+opencode
+```
+
+在 `opencode.json` 中显式加载时，将以下字段放入插件选项对象，并将 `<Base64 字符串>` 替换为上述命令生成的 `LANGFUSE_AUTH` 值：
+
+```json
+{
+  "enabled": true,
+  "otlpProtocol": "http/json",
+  "endpoint": "https://cloud.langfuse.com/api/public/otel",
+  "otlpHeaders": {
+    "Authorization": "Basic <Base64 字符串>"
+  }
+}
+```
+
+保存配置后启动 OpenCode 并执行任务，即可在对应的 Langfuse 项目中查看 trace。正文采集默认关闭；如需查看输入输出正文，可设置 `OPENCODE_CAPTURE_CONTENT=true` 或在插件选项中设置 `"captureContent": true`。
